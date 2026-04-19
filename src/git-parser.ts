@@ -1,0 +1,525 @@
+import 'dotenv/config';
+
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { simpleGit, type FileStatusResult, type StatusResult } from 'simple-git';
+import { z } from 'zod';
+
+import { DEFAULT_SEED, GRID_HEIGHT, GRID_WIDTH, createInitialEntities } from './seed';
+import { createServiceSupabaseClient } from './supabase';
+import { describeStructureNode, getExtension, isBinaryExtension, mapMassToPath } from './mass-mapper';
+import { EntitySchema, type Entity, type GitStatus, type Position } from './types';
+
+const OVERLAY_DIRECTORY = path.join(process.cwd(), '.lux-state');
+const OVERLAY_FILE = path.join(OVERLAY_DIRECTORY, 'repository-overlay.json');
+const ROOT_NODE_PATH = '.';
+const DEFAULT_PREVIEW_LENGTH = 200;
+const DEFAULT_MAX_CONTENT_LENGTH = 16_000;
+
+const RepositoryOverlaySchema = z.object({
+  version: z.literal(1),
+  repoRoot: z.string().min(1),
+  repoName: z.string().min(1),
+  headSha: z.string().min(1),
+  seed: z.string().min(1),
+  importedAt: z.string().min(1),
+  entities: z.array(EntitySchema),
+});
+
+export interface ImportRepositoryOptions {
+  maxContentLength?: number;
+  previewLength?: number;
+  seed?: string;
+}
+
+export interface RepositoryOverlay {
+  version: 1;
+  repoRoot: string;
+  repoName: string;
+  headSha: string;
+  seed: string;
+  importedAt: string;
+  entities: Entity[];
+}
+
+interface RepositoryNode {
+  content: string | null;
+  contentHash: string | null;
+  contentPreview: string | null;
+  depth: number;
+  descriptor: string;
+  extension: string | null;
+  gitStatus: GitStatus | null;
+  isBinary: boolean;
+  name: string;
+  path: string;
+  type: 'directory' | 'file';
+}
+
+function toKey(position: Position): string {
+  return `${position.x},${position.y}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function stableHash(value: string): number {
+  return Number.parseInt(createHash('sha1').update(value).digest('hex').slice(0, 8), 16);
+}
+
+function sanitizeForJson(value: string): string {
+  let sanitized = '';
+
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const nextCode = value.charCodeAt(index + 1);
+      if (Number.isNaN(nextCode) || nextCode < 0xdc00 || nextCode > 0xdfff) {
+        continue;
+      }
+
+      sanitized += value.charAt(index) + value.charAt(index + 1);
+      index += 1;
+      continue;
+    }
+
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      continue;
+    }
+
+    sanitized += value.charAt(index);
+  }
+
+  return sanitized;
+}
+
+function deriveDirectoryPaths(filePaths: string[]): string[] {
+  const directories = new Set<string>([ROOT_NODE_PATH]);
+
+  for (const filePath of filePaths) {
+    const segments = filePath.split('/').filter((segment) => segment.length > 0);
+    for (let index = 1; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join('/'));
+    }
+  }
+
+  return Array.from(directories).sort((left, right) => {
+    const depth = left.split('/').length - right.split('/').length;
+    if (depth !== 0) {
+      return depth;
+    }
+
+    return left.localeCompare(right);
+  });
+}
+
+function inferGitStatus(file: FileStatusResult): GitStatus {
+  const combined = `${file.index}${file.working_dir}`;
+
+  if (combined === '??') {
+    return 'untracked';
+  }
+
+  if (combined.includes('U')) {
+    return 'conflicted';
+  }
+
+  if (combined.includes('R') || file.from) {
+    return 'renamed';
+  }
+
+  if (combined.includes('A')) {
+    return 'added';
+  }
+
+  if (combined.includes('D')) {
+    return 'deleted';
+  }
+
+  if (combined.includes('C')) {
+    return 'copied';
+  }
+
+  if (combined.includes('!')) {
+    return 'ignored';
+  }
+
+  if (combined.includes('M')) {
+    return 'modified';
+  }
+
+  return 'clean';
+}
+
+function buildGitStatusMap(status: StatusResult): Map<string, GitStatus> {
+  const statusMap = new Map<string, GitStatus>();
+
+  for (const file of status.files) {
+    statusMap.set(file.path, inferGitStatus(file));
+    if (file.from) {
+      statusMap.set(file.from, 'renamed');
+    }
+  }
+
+  for (const filePath of status.not_added) {
+    statusMap.set(filePath, 'untracked');
+  }
+
+  for (const filePath of status.conflicted) {
+    statusMap.set(filePath, 'conflicted');
+  }
+
+  for (const filePath of status.created) {
+    statusMap.set(filePath, 'added');
+  }
+
+  for (const filePath of status.deleted) {
+    statusMap.set(filePath, 'deleted');
+  }
+
+  for (const filePath of status.modified) {
+    statusMap.set(filePath, 'modified');
+  }
+
+  for (const renamed of status.renamed) {
+    statusMap.set(renamed.to, 'renamed');
+    statusMap.set(renamed.from, 'renamed');
+  }
+
+  for (const filePath of status.ignored ?? []) {
+    statusMap.set(filePath, 'ignored');
+  }
+
+  return statusMap;
+}
+
+function findDirectoryGitStatus(directoryPath: string, statusMap: Map<string, GitStatus>): GitStatus | null {
+  if (directoryPath === ROOT_NODE_PATH) {
+    for (const gitStatus of statusMap.values()) {
+      if (gitStatus !== 'clean') {
+        return gitStatus;
+      }
+    }
+
+    return 'clean';
+  }
+
+  const prefix = `${directoryPath}/`;
+  for (const [filePath, gitStatus] of statusMap.entries()) {
+    if (filePath === directoryPath || filePath.startsWith(prefix)) {
+      return gitStatus;
+    }
+  }
+
+  return 'clean';
+}
+
+function isProbablyBinary(buffer: Buffer, extension: string | null): boolean {
+  if (isBinaryExtension(extension)) {
+    return true;
+  }
+
+  const sampleLength = Math.min(buffer.length, 512);
+  for (let index = 0; index < sampleLength; index += 1) {
+    if (buffer[index] === 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function readFilePayload(
+  absoluteFilePath: string,
+  relativePath: string,
+  maxContentLength: number,
+  previewLength: number,
+): Promise<{
+  content: string | null;
+  contentHash: string;
+  contentPreview: string | null;
+  extension: string | null;
+  isBinary: boolean;
+}> {
+  const buffer = await readFile(absoluteFilePath);
+  const contentHash = createHash('sha1').update(buffer).digest('hex');
+  const extension = getExtension(relativePath);
+  const binary = isProbablyBinary(buffer, extension);
+
+  if (binary) {
+    return {
+      content: null,
+      contentHash,
+      contentPreview: null,
+      extension,
+      isBinary: true,
+    };
+  }
+
+  const normalizedText = buffer.toString('utf8').replace(/\r\n/g, '\n');
+  const sanitizedText = sanitizeForJson(normalizedText);
+
+  return {
+    content: sanitizedText.length <= maxContentLength ? sanitizedText : null,
+    contentHash,
+    contentPreview: sanitizedText.slice(0, previewLength),
+    extension,
+    isBinary: false,
+  };
+}
+
+function collectReservedPositions(seed: string): Set<string> {
+  const reserved = new Set<string>();
+
+  for (const entity of createInitialEntities(seed)) {
+    if (entity.type === 'agent') {
+      continue;
+    }
+
+    reserved.add(toKey(entity));
+  }
+
+  return reserved;
+}
+
+function findOpenPosition(
+  preferredX: number,
+  preferredY: number,
+  occupied: Set<string>,
+  reserved: Set<string>,
+): Position {
+  for (let radius = 0; radius <= GRID_WIDTH + GRID_HEIGHT; radius += 1) {
+    const minY = Math.max(0, preferredY - radius);
+    const maxY = Math.min(GRID_HEIGHT - 1, preferredY + radius);
+    const minX = Math.max(0, preferredX - radius);
+    const maxX = Math.min(GRID_WIDTH - 1, preferredX + radius);
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const distance = Math.abs(x - preferredX) + Math.abs(y - preferredY);
+        if (distance !== radius) {
+          continue;
+        }
+
+        const key = `${x},${y}`;
+        if (occupied.has(key) || reserved.has(key)) {
+          continue;
+        }
+
+        return { x, y };
+      }
+    }
+  }
+
+  throw new Error('Repository lattice exceeds the available 50x50 grid.');
+}
+
+function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, Position> {
+  const coordinates = new Map<string, Position>();
+  const occupied = new Set<string>();
+  const reserved = collectReservedPositions(seed);
+
+  coordinates.set(ROOT_NODE_PATH, { x: 0, y: 0 });
+  occupied.add('0,0');
+
+  for (const node of nodes.filter((candidate) => candidate.path !== ROOT_NODE_PATH)) {
+    const preferredY = clamp(
+      node.type === 'directory' ? (node.depth * 5) : ((node.depth * 5) + 2),
+      0,
+      GRID_HEIGHT - 1,
+    );
+    const preferredX = stableHash(`${node.type}:${node.path}`) % GRID_WIDTH;
+    const position = findOpenPosition(preferredX, preferredY, occupied, reserved);
+
+    coordinates.set(node.path, position);
+    occupied.add(toKey(position));
+  }
+
+  return coordinates;
+}
+
+async function buildRepositoryNodes(
+  repoRoot: string,
+  statusMap: Map<string, GitStatus>,
+  maxContentLength: number,
+  previewLength: number,
+): Promise<RepositoryNode[]> {
+  const git = simpleGit(repoRoot);
+  const rawTree = await git.raw(['ls-tree', '-r', '--full-tree', '--name-only', 'HEAD']);
+  const filePaths = rawTree
+    .split('\n')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .sort((left, right) => left.localeCompare(right));
+
+  const directoryPaths = deriveDirectoryPaths(filePaths);
+  const directoryNodes: RepositoryNode[] = directoryPaths.map((directoryPath) => ({
+    content: null,
+    contentHash: null,
+    contentPreview: null,
+    depth: directoryPath === ROOT_NODE_PATH ? 0 : directoryPath.split('/').length,
+    descriptor: directoryPath === ROOT_NODE_PATH ? 'Repository root cluster' : describeStructureNode(directoryPath, 'directory'),
+    extension: null,
+    gitStatus: findDirectoryGitStatus(directoryPath, statusMap),
+    isBinary: false,
+    name: directoryPath === ROOT_NODE_PATH ? path.basename(repoRoot) : path.basename(directoryPath),
+    path: directoryPath,
+    type: 'directory',
+  }));
+
+  const fileNodes = await Promise.all(
+    filePaths.map(async (filePath): Promise<RepositoryNode> => {
+      const absoluteFilePath = path.join(repoRoot, filePath);
+      const payload = await readFilePayload(
+        absoluteFilePath,
+        filePath,
+        maxContentLength,
+        previewLength,
+      );
+
+      return {
+        content: payload.content,
+        contentHash: payload.contentHash,
+        contentPreview: payload.contentPreview,
+        depth: filePath.split('/').length,
+        descriptor: describeStructureNode(filePath, 'file'),
+        extension: payload.extension,
+        gitStatus: statusMap.get(filePath) ?? 'clean',
+        isBinary: payload.isBinary,
+        name: path.basename(filePath),
+        path: filePath,
+        type: 'file',
+      };
+    }),
+  );
+
+  return [...directoryNodes, ...fileNodes].sort((left, right) => {
+    const typeOrder = left.type.localeCompare(right.type);
+    if (typeOrder !== 0) {
+      return typeOrder;
+    }
+
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repoRoot: string): Entity {
+  const position = coordinates.get(node.path);
+  if (!position) {
+    throw new Error(`Missing coordinate assignment for ${node.path}`);
+  }
+
+  return EntitySchema.parse({
+    id: `${node.type}:${node.path}`,
+    type: node.type,
+    x: position.x,
+    y: position.y,
+    mass: mapMassToPath(node.path, node.type),
+    tick_updated: 0,
+    name: sanitizeForJson(node.name),
+    path: sanitizeForJson(node.path),
+    extension: node.extension === null ? null : sanitizeForJson(node.extension),
+    descriptor: sanitizeForJson(node.descriptor),
+    content: node.content === null ? null : sanitizeForJson(node.content),
+    content_preview: node.contentPreview === null ? null : sanitizeForJson(node.contentPreview),
+    content_hash: node.contentHash,
+    git_status: node.gitStatus,
+    repo_root: sanitizeForJson(repoRoot),
+    is_binary: node.isBinary,
+  });
+}
+
+export async function createRepositoryOverlay(
+  repositoryPath: string,
+  options: ImportRepositoryOptions = {},
+): Promise<RepositoryOverlay> {
+  const absolutePath = path.resolve(repositoryPath);
+  const git = simpleGit(absolutePath);
+  const isRepository = await git.checkIsRepo();
+
+  if (!isRepository) {
+    throw new Error(`${absolutePath} is not a Git repository.`);
+  }
+
+  const repoRoot = (await git.revparse(['--show-toplevel'])).trim();
+  const headSha = (await git.revparse(['HEAD'])).trim();
+  const status = await git.status();
+  const statusMap = buildGitStatusMap(status);
+  const maxContentLength = options.maxContentLength ?? DEFAULT_MAX_CONTENT_LENGTH;
+  const previewLength = options.previewLength ?? DEFAULT_PREVIEW_LENGTH;
+  const seed = options.seed ?? process.env.LUX_SEED ?? DEFAULT_SEED;
+  const repositoryNodes = await buildRepositoryNodes(
+    repoRoot,
+    statusMap,
+    maxContentLength,
+    previewLength,
+  );
+  const coordinates = assignCoordinates(repositoryNodes, seed);
+  const entities = repositoryNodes.map((node) => toEntity(node, coordinates, repoRoot));
+
+  return {
+    version: 1,
+    repoRoot,
+    repoName: path.basename(repoRoot),
+    headSha,
+    seed,
+    importedAt: new Date().toISOString(),
+    entities,
+  };
+}
+
+export async function importRepository(
+  repositoryPath: string,
+  options: ImportRepositoryOptions = {},
+): Promise<Entity[]> {
+  const overlay = await createRepositoryOverlay(repositoryPath, options);
+  return overlay.entities;
+}
+
+export async function saveRepositoryOverlay(overlay: RepositoryOverlay): Promise<void> {
+  await mkdir(OVERLAY_DIRECTORY, { recursive: true });
+  await writeFile(OVERLAY_FILE, JSON.stringify(overlay, null, 2), 'utf8');
+}
+
+export function loadRepositoryOverlaySync(): Entity[] {
+  if (!existsSync(OVERLAY_FILE)) {
+    return [];
+  }
+
+  const rawOverlay = readFileSync(OVERLAY_FILE, 'utf8');
+  const parsed = RepositoryOverlaySchema.parse(JSON.parse(rawOverlay));
+  return parsed.entities;
+}
+
+export async function syncRepositoryEntitiesToSupabase(entities: Entity[]): Promise<void> {
+  const supabase = createServiceSupabaseClient();
+  if (!supabase) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY must be configured to sync Git entities.');
+  }
+
+  const { error: deleteError } = await supabase
+    .from('entities')
+    .delete()
+    .in('type', ['file', 'directory']);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  if (entities.length === 0) {
+    return;
+  }
+
+  const { error: upsertError } = await supabase
+    .from('entities')
+    .upsert(entities, { onConflict: 'id' });
+
+  if (upsertError) {
+    throw upsertError;
+  }
+}
