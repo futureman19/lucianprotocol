@@ -21,6 +21,12 @@ export type AgentRole = z.infer<typeof AgentRoleSchema>;
 export const NodeStateSchema = z.enum(['task', 'in-progress', 'asymmetry', 'stable', 'verified']);
 export type NodeState = z.infer<typeof NodeStateSchema>;
 
+export const ControlStatusSchema = z.enum(['idle', 'importing', 'active', 'error']);
+export type ControlStatus = z.infer<typeof ControlStatusSchema>;
+
+export const OperatorActionSchema = z.enum(['navigate', 'read', 'explain', 'maintain']);
+export type OperatorAction = z.infer<typeof OperatorActionSchema>;
+
 export const GitStatusSchema = z.enum([
   'clean',
   'modified',
@@ -68,6 +74,11 @@ export const EntitySchema = z.object({
   git_status: GitStatusSchema.nullable().optional(),
   repo_root: z.string().min(1).nullable().optional(),
   is_binary: z.boolean().nullable().optional(),
+  last_commit_sha: z.string().min(1).nullable().optional(),
+  last_commit_message: z.string().nullable().optional(),
+  last_commit_author: z.string().nullable().optional(),
+  last_commit_date: z.string().nullable().optional(),
+  git_diff: z.string().nullable().optional(),
 });
 
 export type Entity = z.infer<typeof EntitySchema>;
@@ -75,15 +86,84 @@ export type Entity = z.infer<typeof EntitySchema>;
 export const WorldStatusSchema = z.enum(['booting', 'running', 'goal-reached', 'stalled']);
 export type WorldStatus = z.infer<typeof WorldStatusSchema>;
 
+export const TaskStatusSchema = z.enum([
+  'pending',
+  'assigned',
+  'in_progress',
+  'awaiting_review',
+  'revision_needed',
+  'approved',
+  'done',
+]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const TaskSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().min(1),
+  target_path: z.string().min(1),
+  status: TaskStatusSchema,
+  assigned_agent_id: z.string().nullable().optional(),
+  original_content: z.string().nullable().optional(),
+  completed_content: z.string().nullable().optional(),
+  review_feedback: z.string().nullable().optional(),
+  created_at_tick: z.number().int().nonnegative(),
+  updated_at_tick: z.number().int().nonnegative(),
+});
+export type Task = z.infer<typeof TaskSchema>;
+
 export const WorldStateSchema = z.object({
   id: z.string().min(1),
   seed: z.string().min(1),
   tick: z.number().int().nonnegative(),
   phase: z.number().int().min(0).max(59),
   status: WorldStatusSchema,
+  active_repo_path: z.string().min(1).nullable().optional(),
+  active_repo_name: z.string().min(1).nullable().optional(),
+  operator_prompt: z.string().nullable().optional(),
+  control_status: ControlStatusSchema.nullable().optional(),
+  control_error: z.string().nullable().optional(),
+  operator_action: OperatorActionSchema.nullable().optional(),
+  operator_target_query: z.string().nullable().optional(),
+  operator_target_path: z.string().nullable().optional(),
+  import_started_at: z.string().nullable().optional(),
+  import_finished_at: z.string().nullable().optional(),
+  last_import_duration_ms: z.number().int().nonnegative().nullable().optional(),
+  last_tick_duration_ms: z.number().int().nonnegative().nullable().optional(),
+  last_ai_latency_ms: z.number().int().nonnegative().nullable().optional(),
+  max_ai_latency_ms: z.number().int().nonnegative().nullable().optional(),
+  queue_depth: z.number().int().nonnegative().optional(),
+  paused: z.boolean().nullable().optional(),
+  saved_overlay_names: z.array(z.string()).nullable().optional(),
+  automate: z.boolean().nullable().optional(),
+  visionary_prompt: z.string().nullable().optional(),
+  architect_prompt: z.string().nullable().optional(),
+  critic_prompt: z.string().nullable().optional(),
+  pending_edit_path: z.string().nullable().optional(),
+  pending_edit_content: z.string().nullable().optional(),
+  commit_message: z.string().nullable().optional(),
+  should_push: z.boolean().nullable().optional(),
+  active_tasks: z.array(TaskSchema).nullable().optional(),
 });
 
 export type WorldState = z.infer<typeof WorldStateSchema>;
+
+export const OperatorControlSchema = z.object({
+  id: z.string().min(1),
+  repo_path: z.string(),
+  operator_prompt: z.string(),
+  paused: z.boolean().nullable().optional(),
+  automate: z.boolean().nullable().optional(),
+  visionary_prompt: z.string().nullable().optional(),
+  architect_prompt: z.string().nullable().optional(),
+  critic_prompt: z.string().nullable().optional(),
+  pending_edit_path: z.string().nullable().optional(),
+  pending_edit_content: z.string().nullable().optional(),
+  commit_message: z.string().nullable().optional(),
+  should_push: z.boolean().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+});
+
+export type OperatorControl = z.infer<typeof OperatorControlSchema>;
 
 export const TileObservationSchema = z.object({
   occupant: TileOccupantSchema,
@@ -107,19 +187,24 @@ export const NeighborhoodScanSchema = z.object({
   agent: PositionSchema,
   goal: PositionSchema,
   objective: PositionSchema,
+  operator_action: OperatorActionSchema.nullable().optional(),
+  operator_target_query: z.string().nullable().optional(),
   objective_path: z.string().nullable().optional(),
+  operator_prompt: z.string().nullable().optional(),
+  agent_prompt: z.string().nullable().optional(),
   current: TileObservationSchema,
   north: TileObservationSchema,
   east: TileObservationSchema,
   south: TileObservationSchema,
   west: TileObservationSchema,
+  task_context: z.string().nullable().optional(),
 });
 
 export type NeighborhoodScan = z.infer<typeof NeighborhoodScanSchema>;
 
 export const AgentDecisionSchema = z
   .object({
-    action: z.enum(['move', 'wait', 'read', 'edit']),
+    action: z.enum(['move', 'wait', 'read', 'edit', 'submit']),
     direction: DirectionSchema.optional(),
     target: z.string().min(1).optional(),
     content: z.string().optional(),
@@ -175,6 +260,12 @@ export interface Database {
         Row: WorldState;
         Insert: WorldState;
         Update: Partial<WorldState>;
+        Relationships: [];
+      };
+      operator_controls: {
+        Row: OperatorControl;
+        Insert: OperatorControl;
+        Update: Partial<OperatorControl>;
         Relationships: [];
       };
     };

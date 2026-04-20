@@ -47,6 +47,19 @@ export function toScreen(
   };
 }
 
+export function fromScreen(
+  sx: number,
+  sy: number,
+  layout: IsoLayout,
+): { x: number; y: number } {
+  const dx = (sx - layout.originX) / layout.halfWidth;
+  const dy = (sy - layout.originY) / layout.halfHeight;
+  return {
+    x: (dx + dy) / 2,
+    y: (dy - dx) / 2,
+  };
+}
+
 export function createCubeProjection(
   x: number,
   y: number,

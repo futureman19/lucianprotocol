@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { FileCode, Folder, GitBranch } from 'lucide-react';
 
 import {
@@ -7,7 +7,6 @@ import {
   countEntityLines,
   getAgentRole,
   getAgentRoleLabel,
-  getNodeState,
   getNodeStateLabel,
   isCriticalMass,
   type HivemindAgentRole,
@@ -16,10 +15,18 @@ import {
 import { createInitialEntities, DEFAULT_SEED, WORLD_STATE_ID, manhattanDistance } from '../src/seed';
 import { isStructureEntity } from '../src/mass-mapper';
 import { createBrowserSupabaseClient } from '../src/supabase';
-import { EntitySchema, WorldStateSchema, type Entity, type WorldState } from '../src/types';
+import {
+  EntitySchema,
+  OperatorControlSchema,
+  WorldStateSchema,
+  type Entity,
+  type OperatorControl,
+  type WorldState,
+  type Task,
+} from '../src/types';
 import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
-import { createIsoLayout, createPrismProjection, toScreen, traceFace, type IsoLayout } from './iso';
+import { createIsoLayout, createPrismProjection, fromScreen, toScreen, traceFace, type IsoLayout } from './iso';
 
 interface Viewport {
   height: number;
@@ -76,6 +83,13 @@ const PREVIEW_WORLD_STATE: WorldState = {
   tick: 0,
   phase: 0,
   status: 'booting',
+};
+
+const DEFAULT_OPERATOR_CONTROL: OperatorControl = {
+  id: 'lux-control',
+  repo_path: '',
+  operator_prompt: '',
+  updated_at: null,
 };
 
 const WORKFORCE_ROLES: readonly HivemindAgentRole[] = ['visionary', 'architect', 'critic'];
@@ -274,25 +288,6 @@ function getInterpolatedPoint(
   return display;
 }
 
-function buildOccupiedPaths(structureNodes: Entity[], agents: Entity[]): Set<string> {
-  const occupiedPaths = new Set<string>();
-
-  for (const structureNode of structureNodes) {
-    if (!structureNode.path) {
-      continue;
-    }
-
-    for (const agent of agents) {
-      if (agent.x === structureNode.x && agent.y === structureNode.y) {
-        occupiedPaths.add(structureNode.path);
-        break;
-      }
-    }
-  }
-
-  return occupiedPaths;
-}
-
 function drawTetherRoute(context: CanvasRenderingContext2D, routeNodes: Entity[], layout: IsoLayout): void {
   if (routeNodes.length < 2) {
     return;
@@ -413,12 +408,24 @@ function drawAgent(
   display: DisplayPoint,
   layout: IsoLayout,
   phase: number,
+  tick: number,
 ): void {
   const role = getAgentRole(entity) ?? 'architect';
   const palette = getAgentPalette(role);
   const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
   const radius = layout.tileHeight * 0.6;
   const pulse = 0.72 + ((phase % 10) * 0.04);
+
+  const idleTicks = tick - entity.tick_updated;
+  const hasObjective = entity.objective_path != null;
+  let opacity = pulse;
+  if (!hasObjective && idleTicks > 30) {
+    opacity = pulse * Math.max(0, 1 - (idleTicks - 30) / 90);
+  }
+
+  if (opacity <= 0.01) {
+    return;
+  }
 
   context.save();
   context.beginPath();
@@ -427,12 +434,12 @@ function drawAgent(
   context.lineTo(center.sx, center.sy + radius);
   context.lineTo(center.sx - (radius * 0.9), center.sy);
   context.closePath();
-  context.fillStyle = withAlpha(palette.fill, pulse);
+  context.fillStyle = withAlpha(palette.fill, opacity);
   context.shadowBlur = 24;
   context.shadowColor = palette.glow;
   context.fill();
   context.lineWidth = 1.5;
-  context.strokeStyle = palette.stroke;
+  context.strokeStyle = withAlpha(palette.stroke, opacity);
   context.stroke();
   context.restore();
 }
@@ -443,7 +450,6 @@ function drawEntities(
   layout: IsoLayout,
   phase: number,
   tick: number,
-  verifiedTicks: Readonly<Record<string, number>>,
   displayPoints: Record<string, DisplayPoint>,
 ): void {
   const activeIds = new Set(entities.map((entity) => entity.id));
@@ -453,9 +459,6 @@ function drawEntities(
     }
   }
 
-  const agents = entities.filter((entity) => entity.type === 'agent');
-  const structureNodes = entities.filter((entity) => isStructureEntity(entity));
-  const occupiedPaths = buildOccupiedPaths(structureNodes, agents);
   const renderables = entities.map((entity) => ({
     depth: entity.x + entity.y + (getPrismHeight(entity) * 0.1),
     entity,
@@ -468,7 +471,7 @@ function drawEntities(
     const display = getInterpolatedPoint(entity, displayPoints);
 
     if (entity.type === 'agent') {
-      drawAgent(context, entity, display, layout, phase);
+      drawAgent(context, entity, display, layout, phase, tick);
       continue;
     }
 
@@ -478,27 +481,19 @@ function drawEntities(
     }
 
     if (isStructureEntity(entity)) {
-      const nodeState = getNodeState(entity, { occupiedPaths, tick, verifiedTicks });
-      drawStructureEntity(context, entity, display, layout, phase, nodeState);
+      drawStructureEntity(
+        context,
+        entity,
+        display,
+        layout,
+        phase,
+        entity.node_state ?? 'stable',
+      );
       continue;
     }
 
     drawStructureEntity(context, entity, display, layout, phase, 'stable');
   }
-}
-
-function findEntityAtPosition(entities: Entity[], x: number, y: number): Entity | null {
-  for (const entity of entities) {
-    if (entity.x === x && entity.y === y) {
-      return entity;
-    }
-  }
-
-  return null;
-}
-
-function describeObservation(entity: Entity | null): string {
-  return entity ? entity.name ?? entity.type : 'empty';
 }
 
 function formatTimestamp(): string {
@@ -516,6 +511,40 @@ function buildBreadcrumb(entity: Entity | null): string {
   }
 
   return entity.path.split('/').join(' > ');
+}
+
+function summarizeDirective(value: string | null | undefined, limit = 96): string {
+  const directive = value?.trim();
+  if (!directive) {
+    return 'No active directive';
+  }
+
+  return directive.length > limit ? `${directive.slice(0, limit - 1)}…` : directive;
+}
+
+function formatDuration(value: number | null | undefined): string {
+  return value == null ? 'n/a' : `${value}ms`;
+}
+
+function formatControlStatus(value: string | null | undefined): string {
+  if (!value) {
+    return 'idle';
+  }
+
+  return value.replace('-', ' ');
+}
+
+function formatTaskStatus(status: Task['status']): string {
+  const labels: Record<Task['status'], string> = {
+    pending: 'Pending',
+    assigned: 'Assigned',
+    in_progress: 'In Progress',
+    awaiting_review: 'Review',
+    revision_needed: 'Revision',
+    approved: 'Approved',
+    done: 'Done',
+  };
+  return labels[status] ?? status;
 }
 
 function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
@@ -659,24 +688,42 @@ function GitTreeItem({ activePathSet, depth, loadedPath, node, nodeStatesByPath 
 function App() {
   const [entities, setEntities] = useState<Entity[]>(PREVIEW_ENTITIES);
   const [worldState, setWorldState] = useState<WorldState>(PREVIEW_WORLD_STATE);
+  const [operatorControl, setOperatorControl] = useState<OperatorControl>(DEFAULT_OPERATOR_CONTROL);
+  const [repoInput, setRepoInput] = useState<string>('');
+  const [directiveInput, setDirectiveInput] = useState<string>('');
+  const [visionaryPromptInput, setVisionaryPromptInput] = useState<string>('');
+  const [architectPromptInput, setArchitectPromptInput] = useState<string>('');
+  const [criticPromptInput, setCriticPromptInput] = useState<string>('');
+  const [editPathInput, setEditPathInput] = useState<string>('');
+  const [editContentInput, setEditContentInput] = useState<string>('');
+  const [commitMessageInput, setCommitMessageInput] = useState<string>('');
+  const [shouldPushInput, setShouldPushInput] = useState<boolean>(false);
+  const [controlMessage, setControlMessage] = useState<string>('Enter a repository path and directive, then commit it into the lattice.');
+  const [isSavingControl, setIsSavingControl] = useState(false);
   const [mode, setMode] = useState<'preview' | 'live'>('preview');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ height: 720, width: 1280 });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
 
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const latticeRef = useRef<HTMLDivElement | null>(null);
+  const supabaseRef = useRef<ReturnType<typeof createBrowserSupabaseClient> | null>(null);
   const entityMapRef = useRef<Map<string, Entity>>(entityMapFromList(PREVIEW_ENTITIES));
   const entityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
   const displayPointsRef = useRef<Record<string, DisplayPoint>>({});
+  const controlDirtyRef = useRef(false);
   const phaseRef = useRef<number>(worldState.phase);
   const tickRef = useRef<number>(worldState.tick);
   const routeNodesRef = useRef<Entity[]>([]);
-  const verifiedTicksRef = useRef<Record<string, number>>({});
   const previousTickRef = useRef<number>(-1);
   const previousStatusRef = useRef<string | null>(null);
+  const previousControlStatusRef = useRef<string | null>(null);
+  const previousDirectiveRef = useRef<string | null>(null);
+  const previousTargetPathRef = useRef<string | null>(null);
+  const previousActiveRepoRef = useRef<string | null>(null);
   const previousFocusPathRef = useRef<string | null>(null);
   const previousLoadedPathRef = useRef<string | null>(null);
   const previousAgentPositionRef = useRef<string | null>(null);
@@ -689,7 +736,6 @@ function App() {
   const structureNodes = entities.filter((entity) => isStructureEntity(entity));
   const repositoryRoot =
     structureNodes.find((entity) => entity.type === 'directory' && entity.path === '.') ?? null;
-  const occupiedPaths = buildOccupiedPaths(structureNodes, agents);
   const focus = getNearestStructure(primaryAgent, structureNodes);
   const activeStructure = focus.entity;
   const loadedFile = getLoadedFile(primaryAgent, structureNodes);
@@ -704,64 +750,305 @@ function App() {
   const nodeStatesByPath = new Map(
     structureNodes
       .filter((entity) => entity.path !== null && entity.path !== undefined)
-      .map((entity) => [
-        entity.path as string,
-        getNodeState(entity, {
-          occupiedPaths,
-          tick: worldState.tick,
-          verifiedTicks: verifiedTicksRef.current,
-        }),
-      ]),
+      .map((entity) => [entity.path as string, entity.node_state ?? 'stable']),
   );
   const activeStructureState = activeStructure
-    ? getNodeState(activeStructure, {
-      occupiedPaths,
-      tick: worldState.tick,
-      verifiedTicks: verifiedTicksRef.current,
-    })
+    ? (activeStructure.node_state ?? 'stable')
     : null;
   const loadedFileState = loadedFile
-    ? getNodeState(loadedFile, {
-      occupiedPaths,
-      tick: worldState.tick,
-      verifiedTicks: verifiedTicksRef.current,
-    })
+    ? (loadedFile.node_state ?? 'stable')
     : null;
   const criticalMassNodes = structureNodes.filter((entity) => isCriticalMass(entity));
-  const asymmetryNodes = structureNodes.filter(
-    (entity) =>
-      getNodeState(entity, {
-        occupiedPaths,
-        tick: worldState.tick,
-        verifiedTicks: verifiedTicksRef.current,
-      }) === 'asymmetry',
-  );
-  const genesisNodes = structureNodes.filter(
-    (entity) =>
-      getNodeState(entity, {
-        occupiedPaths,
-        tick: worldState.tick,
-        verifiedTicks: verifiedTicksRef.current,
-      }) === 'task',
-  );
-  const verifiedNodes = structureNodes.filter(
-    (entity) =>
-      getNodeState(entity, {
-        occupiedPaths,
-        tick: worldState.tick,
-        verifiedTicks: verifiedTicksRef.current,
-      }) === 'verified',
-  );
+  const asymmetryNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'asymmetry');
+  const genesisNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'task');
+  const verifiedNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'verified');
   const workforce: WorkforceStatus[] = WORKFORCE_ROLES.map((role) => ({
     agents: agents.filter((entity) => (getAgentRole(entity) ?? 'architect') === role),
     label: getAgentRoleLabel(role),
     role,
   }));
   const codePreview = getCodePreview(loadedFile);
+  const activeRepositoryName =
+    worldState.active_repo_name ??
+    repositoryRoot?.name ??
+    operatorControl.repo_path.split(/[\\/]/).filter(Boolean).at(-1) ??
+    'Unloaded';
+  const activeRepositoryPath =
+    worldState.active_repo_path ??
+    repositoryRoot?.repo_root ??
+    (operatorControl.repo_path.trim().length > 0 ? operatorControl.repo_path : null) ??
+    null;
+  const activeDirective = summarizeDirective(worldState.operator_prompt ?? operatorControl.operator_prompt);
+  const controlStatus = worldState.control_status ?? 'idle';
+  const operatorAction = worldState.operator_action ?? null;
+  const operatorTargetPath = worldState.operator_target_path ?? null;
+  const operatorTargetQuery = worldState.operator_target_query ?? null;
+
+  const isPaused = worldState.paused ?? operatorControl.paused ?? false;
+  const isAutomated = worldState.automate ?? operatorControl.automate ?? false;
+
+  const handleToggleAutomate = async (): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase browser keys are missing, so automate cannot be toggled from this browser.');
+      return;
+    }
+
+    const nextAutomate = !isAutomated;
+    setControlMessage(nextAutomate ? 'Enabling automate mode...' : 'Disabling automate mode...');
+
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: directiveInput.trim(),
+            paused: isPaused,
+            automate: nextAutomate,
+            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+            pending_edit_path: operatorControl.pending_edit_path,
+            pending_edit_content: operatorControl.pending_edit_content,
+            commit_message: operatorControl.commit_message,
+            should_push: operatorControl.should_push,
+          },
+          { onConflict: 'id' },
+        );
+
+      if (error) {
+        throw error;
+      }
+
+      setControlMessage(nextAutomate ? 'Automate enabled. The lattice will loop indefinitely.' : 'Automate disabled.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown automate toggle failure';
+      setControlMessage(`Automate toggle failed: ${message}`);
+    }
+  };
+
+  const handleTogglePause = async (): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase browser keys are missing, so pause cannot be toggled from this browser.');
+      return;
+    }
+
+    const nextPaused = !isPaused;
+    setControlMessage(nextPaused ? 'Pausing the lattice...' : 'Resuming the lattice...');
+
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: directiveInput.trim(),
+            paused: nextPaused,
+            automate: isAutomated,
+            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+            pending_edit_path: operatorControl.pending_edit_path,
+            pending_edit_content: operatorControl.pending_edit_content,
+            commit_message: operatorControl.commit_message,
+            should_push: operatorControl.should_push,
+          },
+          { onConflict: 'id' },
+        );
+
+      if (error) {
+        throw error;
+      }
+
+      setControlMessage(nextPaused ? 'Lattice paused. Agents will finish their current tick and freeze.' : 'Lattice resumed.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown pause toggle failure';
+      setControlMessage(`Pause toggle failed: ${message}`);
+    }
+  };
+
+  const handleControlSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase browser keys are missing, so controls cannot be committed from this browser.');
+      return;
+    }
+
+    const nextControl = {
+      id: DEFAULT_OPERATOR_CONTROL.id,
+      repo_path: repoInput.trim(),
+      operator_prompt: directiveInput.trim(),
+      paused: isPaused,
+      automate: isAutomated,
+      visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+      architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+      critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+      pending_edit_path: operatorControl.pending_edit_path,
+      pending_edit_content: operatorControl.pending_edit_content,
+      commit_message: operatorControl.commit_message,
+      should_push: operatorControl.should_push,
+    };
+
+    setIsSavingControl(true);
+    setControlMessage('Committing operator control to the lattice...');
+
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(nextControl, { onConflict: 'id' });
+
+      if (error) {
+        throw error;
+      }
+
+      controlDirtyRef.current = false;
+      setOperatorControl({
+        ...DEFAULT_OPERATOR_CONTROL,
+        ...nextControl,
+        updated_at: new Date().toISOString(),
+      });
+      setControlMessage(
+        nextControl.repo_path.length > 0
+          ? 'Repository import queued. The engine will hot-swap overlays on its next control poll.'
+          : 'Directive committed. The current overlay stays loaded and the agents will adopt the new instruction.',
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown operator control failure';
+      setControlMessage(`Control write failed: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
+
+  const handleStageEdit = async (): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase keys missing; cannot stage edit.');
+      return;
+    }
+    if (!editPathInput.trim()) {
+      setControlMessage('Provide a file path to stage an edit.');
+      return;
+    }
+    setIsSavingControl(true);
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: directiveInput.trim(),
+            paused: isPaused,
+            automate: isAutomated,
+            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+            pending_edit_path: editPathInput.trim(),
+            pending_edit_content: editContentInput,
+            commit_message: operatorControl.commit_message,
+            should_push: operatorControl.should_push,
+          },
+          { onConflict: 'id' },
+        );
+      if (error) throw error;
+      setControlMessage(`Edit staged for ${editPathInput.trim()}. The engine will apply it on the next poll.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setControlMessage(`Stage edit failed: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
+
+  const handleCommit = async (): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase keys missing; cannot commit.');
+      return;
+    }
+    if (!commitMessageInput.trim()) {
+      setControlMessage('Provide a commit message.');
+      return;
+    }
+    setIsSavingControl(true);
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: directiveInput.trim(),
+            paused: isPaused,
+            automate: isAutomated,
+            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+            pending_edit_path: operatorControl.pending_edit_path,
+            pending_edit_content: operatorControl.pending_edit_content,
+            commit_message: commitMessageInput.trim(),
+            should_push: shouldPushInput,
+          },
+          { onConflict: 'id' },
+        );
+      if (error) throw error;
+      setControlMessage(`Commit queued: "${commitMessageInput.trim()}"${shouldPushInput ? ' with push' : ''}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setControlMessage(`Commit failed: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
 
   useEffect(() => {
     entityListRef.current = entities;
   }, [entities]);
+
+  useEffect(() => {
+    if (mode !== 'live' || isSavingControl) {
+      return;
+    }
+
+    if (worldState.control_status === 'error') {
+      setControlMessage(worldState.control_error ?? 'Operator control failed.');
+      return;
+    }
+
+    if (worldState.control_status === 'importing') {
+      setControlMessage(`Importing ${operatorControl.repo_path.trim() || activeRepositoryPath || 'repository'} into the lattice...`);
+      return;
+    }
+
+    if (worldState.control_status === 'active') {
+      if (worldState.operator_target_path) {
+        setControlMessage(
+          `${formatControlStatus(worldState.control_status).toUpperCase()}: ${worldState.operator_action ?? 'maintain'} -> ${worldState.operator_target_path}`,
+        );
+      } else {
+        setControlMessage('Directive committed. The lattice has accepted the current operator instruction.');
+      }
+      return;
+    }
+
+    setControlMessage('Enter a repository path and directive, then commit it into the lattice.');
+  }, [
+    activeRepositoryPath,
+    isSavingControl,
+    mode,
+    operatorControl.repo_path,
+    worldState.control_error,
+    worldState.control_status,
+    worldState.operator_action,
+    worldState.operator_target_path,
+  ]);
 
   useEffect(() => {
     phaseRef.current = worldState.phase;
@@ -782,6 +1069,58 @@ function App() {
     if (previousStatusRef.current !== worldState.status) {
       nextLogs.push(createLogEntry('state', worldState.tick, `STATE -> ${worldState.status.toUpperCase()}`));
       previousStatusRef.current = worldState.status;
+    }
+
+    if (controlStatus !== previousControlStatusRef.current) {
+      nextLogs.push(
+        createLogEntry(
+          controlStatus === 'error' ? 'alert' : 'state',
+          worldState.tick,
+          `CONTROL -> ${formatControlStatus(controlStatus).toUpperCase()}${worldState.control_error ? ` (${worldState.control_error})` : ''}`,
+        ),
+      );
+      previousControlStatusRef.current = controlStatus;
+    }
+
+    const activeRepoPath = worldState.active_repo_path ?? null;
+    if (activeRepoPath !== previousActiveRepoRef.current && activeRepoPath) {
+      nextLogs.push(
+        createLogEntry(
+          'state',
+          worldState.tick,
+          `REPO -> ${worldState.active_repo_name ?? activeRepoPath}`,
+        ),
+      );
+      previousActiveRepoRef.current = activeRepoPath;
+    }
+
+    const directive = worldState.operator_prompt?.trim() ? worldState.operator_prompt.trim() : null;
+    if (directive !== previousDirectiveRef.current) {
+      nextLogs.push(
+        createLogEntry(
+          'state',
+          worldState.tick,
+          directive
+            ? `DIRECTIVE -> ${summarizeDirective(directive, 84)}`
+            : 'DIRECTIVE -> cleared',
+        ),
+      );
+      previousDirectiveRef.current = directive;
+    }
+
+    if (operatorTargetPath !== previousTargetPathRef.current && operatorTargetPath) {
+      nextLogs.push(
+        createLogEntry(
+          'state',
+          worldState.tick,
+          `TARGET -> ${(operatorAction ?? 'maintain').toUpperCase()} ${operatorTargetPath}`,
+        ),
+      );
+      previousTargetPathRef.current = operatorTargetPath;
+    }
+
+    if (operatorTargetPath === null) {
+      previousTargetPathRef.current = null;
     }
 
     const agentPosition = primaryAgent ? `${primaryAgent.x},${primaryAgent.y}` : null;
@@ -810,17 +1149,6 @@ function App() {
 
     const loadedPath = loadedFile?.path ?? null;
     if (loadedPath && loadedPath !== previousLoadedPathRef.current) {
-      verifiedTicksRef.current = {
-        ...verifiedTicksRef.current,
-        [loadedPath]: worldState.tick,
-      };
-
-      for (const [path, tick] of Object.entries(verifiedTicksRef.current)) {
-        if ((worldState.tick - tick) > 12) {
-          delete verifiedTicksRef.current[path];
-        }
-      }
-
       nextLogs.push(createLogEntry('read', worldState.tick, `READ -> spatial context loaded for ${loadedPath}`));
 
       if (loadedFileState !== 'asymmetry') {
@@ -854,20 +1182,6 @@ function App() {
       previousCriticalMassSignatureRef.current = '';
     }
 
-    if (primaryAgent && worldState.tick % 8 === 0) {
-      const north = describeObservation(findEntityAtPosition(entityListRef.current, primaryAgent.x, primaryAgent.y - 1));
-      const east = describeObservation(findEntityAtPosition(entityListRef.current, primaryAgent.x + 1, primaryAgent.y));
-      const south = describeObservation(findEntityAtPosition(entityListRef.current, primaryAgent.x, primaryAgent.y + 1));
-      const west = describeObservation(findEntityAtPosition(entityListRef.current, primaryAgent.x - 1, primaryAgent.y));
-      nextLogs.push(
-        createLogEntry(
-          'scan',
-          worldState.tick,
-          `SCAN -> {"north":"${north}","east":"${east}","south":"${south}","west":"${west}"}`,
-        ),
-      );
-    }
-
     if (nextLogs.length > 0) {
       setLogEntries((previous) => [...previous, ...nextLogs].slice(-90));
     }
@@ -877,11 +1191,18 @@ function App() {
     activeStructure,
     activeStructureState,
     asymmetryNodes,
+    controlStatus,
     criticalMassNodes,
     loadedFile,
     loadedFileState,
+    operatorAction,
+    operatorTargetPath,
     primaryAgent,
     primaryRole,
+    worldState.control_error,
+    worldState.active_repo_name,
+    worldState.active_repo_path,
+    worldState.operator_prompt,
     worldState.status,
     worldState.tick,
   ]);
@@ -921,6 +1242,38 @@ function App() {
       return undefined;
     }
 
+    const handleCanvasClick = (event: MouseEvent): void => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const layout = createIsoLayout(viewport.width, viewport.height);
+      const grid = fromScreen(sx, sy, layout);
+      const gx = Math.round(grid.x);
+      const gy = Math.round(grid.y);
+
+      const candidates = entityListRef.current.filter((entity) =>
+        entity.x === gx && entity.y === gy && isStructureEntity(entity),
+      );
+
+      if (candidates.length > 0) {
+        setSelectedEntity(candidates[0] ?? null);
+      } else {
+        setSelectedEntity(null);
+      }
+    };
+
+    canvas.addEventListener('click', handleCanvasClick);
+    return () => {
+      canvas.removeEventListener('click', handleCanvasClick);
+    };
+  }, [viewport]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return undefined;
+    }
+
     const context = canvas.getContext('2d');
     if (!context) {
       return undefined;
@@ -946,7 +1299,6 @@ function App() {
         layout,
         phaseRef.current,
         tickRef.current,
-        verifiedTicksRef.current,
         displayPointsRef.current,
       );
 
@@ -975,6 +1327,7 @@ function App() {
     }
 
     const supabase = createBrowserSupabaseClient(url, anonKey);
+    supabaseRef.current = supabase;
     let cancelled = false;
 
     const flushEntityState = (): void => {
@@ -991,10 +1344,15 @@ function App() {
     };
 
     const loadSnapshot = async (): Promise<void> => {
-      const [{ data: entityRows, error: entityError }, { data: worldRows, error: worldError }] =
+      const [
+        { data: entityRows, error: entityError },
+        { data: worldRows, error: worldError },
+        { data: controlRow, error: controlError },
+      ] =
         await Promise.all([
           supabase.from('entities').select('*'),
           supabase.from('world_state').select('*').limit(1),
+          supabase.from('operator_controls').select('*').eq('id', DEFAULT_OPERATOR_CONTROL.id).maybeSingle(),
         ]);
 
       if (entityError) {
@@ -1003,6 +1361,10 @@ function App() {
 
       if (worldError) {
         throw worldError;
+      }
+
+      if (controlError) {
+        throw controlError;
       }
 
       const parsedEntities = (entityRows ?? [])
@@ -1022,6 +1384,18 @@ function App() {
         const parsedWorldState = WorldStateSchema.safeParse(worldRow);
         if (parsedWorldState.success) {
           setWorldState(parsedWorldState.data);
+        }
+      }
+
+      if (controlRow) {
+        const parsedControl = OperatorControlSchema.safeParse(controlRow);
+        if (parsedControl.success) {
+          setOperatorControl(parsedControl.data);
+
+          if (!controlDirtyRef.current) {
+            setRepoInput(parsedControl.data.repo_path);
+            setDirectiveInput(parsedControl.data.operator_prompt);
+          }
         }
       }
 
@@ -1070,6 +1444,23 @@ function App() {
           }
         }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'operator_controls' }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          return;
+        }
+
+        const parsedControl = OperatorControlSchema.safeParse(payload.new);
+        if (!parsedControl.success) {
+          return;
+        }
+
+        setOperatorControl(parsedControl.data);
+
+        if (!controlDirtyRef.current) {
+          setRepoInput(parsedControl.data.repo_path);
+          setDirectiveInput(parsedControl.data.operator_prompt);
+        }
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setMode('live');
@@ -1082,6 +1473,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      supabaseRef.current = null;
       window.clearInterval(pollHandle);
 
       if (flushFrameRef.current !== null) {
@@ -1106,23 +1498,266 @@ function App() {
 
         <div className="repo-chip">
           <span className="repo-chip-label">Repository</span>
-          <span className="repo-chip-value">{repositoryRoot?.name ?? 'Unloaded'}</span>
+          <span className="repo-chip-value">{activeRepositoryName}</span>
+          <span className="repo-chip-path">{activeRepositoryPath ?? 'No repository overlay loaded yet.'}</span>
         </div>
+
+        <form className="control-card" onSubmit={(event) => { void handleControlSubmit(event); }}>
+          <div className="control-card-header">
+            <div className="protocol-card-title">Operator Control</div>
+            <span className={`control-status status-${controlStatus} ${isSavingControl ? 'is-busy' : 'is-ready'}`}>
+              {isSavingControl ? 'writing' : formatControlStatus(controlStatus)}
+            </span>
+          </div>
+
+          <label className="control-field">
+            <span className="control-label">Repository Path</span>
+            <input
+              className="control-input"
+              onChange={(event) => {
+                controlDirtyRef.current = true;
+                setRepoInput(event.target.value);
+              }}
+              placeholder="C:\\Users\\Futureman\\Desktop\\lucianprotocol"
+              spellCheck={false}
+              type="text"
+              value={repoInput}
+            />
+            {worldState.saved_overlay_names && worldState.saved_overlay_names.length > 0 && (
+              <select
+                className="control-select"
+                onChange={(event) => {
+                  if (event.target.value) {
+                    controlDirtyRef.current = true;
+                    setRepoInput(event.target.value);
+                  }
+                }}
+                value=""
+              >
+                <option value="">— Load saved overlay —</option>
+                {worldState.saved_overlay_names.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
+
+          <label className="control-field">
+            <span className="control-label">Directive</span>
+            <textarea
+              className="control-textarea"
+              onChange={(event) => {
+                controlDirtyRef.current = true;
+                setDirectiveInput(event.target.value);
+              }}
+              placeholder="Navigate to src/engine.ts and explain what the Architect is doing."
+              rows={4}
+              spellCheck={false}
+              value={directiveInput}
+            />
+          </label>
+
+          <div className="control-actions">
+            <button className="control-button" disabled={isSavingControl} type="submit">
+              {isSavingControl ? 'Committing...' : 'Apply To Lattice'}
+            </button>
+            <button
+              className={`control-button ${isPaused ? 'is-paused' : ''}`}
+              disabled={isSavingControl}
+              onClick={() => { void handleTogglePause(); }}
+              type="button"
+            >
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+            <button
+              className={`control-button ${isAutomated ? 'is-active' : ''}`}
+              disabled={isSavingControl}
+              onClick={() => { void handleToggleAutomate(); }}
+              type="button"
+            >
+              {isAutomated ? 'Automate On' : 'Automate'}
+            </button>
+          </div>
+
+          <details className="control-details">
+            <summary className="control-summary">Edit &amp; Commit</summary>
+            <label className="control-field">
+              <span className="control-label">Edit Path</span>
+              <input
+                className="control-input"
+                onChange={(event) => setEditPathInput(event.target.value)}
+                placeholder="src/engine.ts"
+                spellCheck={false}
+                type="text"
+                value={editPathInput}
+              />
+            </label>
+            <label className="control-field">
+              <span className="control-label">Edit Content</span>
+              <textarea
+                className="control-textarea"
+                onChange={(event) => setEditContentInput(event.target.value)}
+                placeholder="Paste new file content..."
+                rows={4}
+                spellCheck={false}
+                value={editContentInput}
+              />
+            </label>
+            <div className="control-actions">
+              <button
+                className="control-button"
+                disabled={isSavingControl || !editPathInput.trim()}
+                onClick={() => { void handleStageEdit(); }}
+                type="button"
+              >
+                Stage Edit
+              </button>
+            </div>
+            <label className="control-field">
+              <span className="control-label">Commit Message</span>
+              <input
+                className="control-input"
+                onChange={(event) => setCommitMessageInput(event.target.value)}
+                placeholder="feat: update engine logic"
+                spellCheck={false}
+                type="text"
+                value={commitMessageInput}
+              />
+            </label>
+            <label className="control-field checkbox-field">
+              <input
+                checked={shouldPushInput}
+                onChange={(event) => setShouldPushInput(event.target.checked)}
+                type="checkbox"
+              />
+              <span className="control-label">Push to remote after commit</span>
+            </label>
+            <div className="control-actions">
+              <button
+                className="control-button"
+                disabled={isSavingControl || !commitMessageInput.trim()}
+                onClick={() => { void handleCommit(); }}
+                type="button"
+              >
+                Commit{shouldPushInput ? ' & Push' : ''}
+              </button>
+            </div>
+          </details>
+
+          <div className="control-note">
+            Leave the repo path unchanged to keep the current overlay and only swap the operator prompt.
+          </div>
+          <div className="control-feedback">{controlMessage}</div>
+          <div className="control-metrics">
+            <span>Action {operatorAction ?? 'maintain'}</span>
+            <span>Target {operatorTargetPath ?? operatorTargetQuery ?? 'none'}</span>
+            <span>Import {formatDuration(worldState.last_import_duration_ms)}</span>
+          </div>
+        </form>
+
+        {worldState.active_tasks && worldState.active_tasks.length > 0 ? (
+          <div className="protocol-card">
+            <div className="protocol-card-title">Task Pipeline</div>
+            <div className="task-stats">
+              <span className="task-stat is-pending">{worldState.active_tasks.filter((t) => t.status === 'pending').length} pending</span>
+              <span className="task-stat is-active">{worldState.active_tasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length} active</span>
+              <span className="task-stat is-review">{worldState.active_tasks.filter((t) => t.status === 'awaiting_review').length} review</span>
+              <span className="task-stat is-done">{worldState.active_tasks.filter((t) => t.status === 'done').length} done</span>
+            </div>
+            <div className="task-list">
+              {worldState.active_tasks.map((task) => (
+                <div className={`task-row status-${task.status}`} key={task.id}>
+                  <span className="task-id">{task.id}</span>
+                  <span className="task-path">{task.target_path}</span>
+                  <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="protocol-card">
           <div className="protocol-card-title">Hivemind Workforce</div>
           <div className="workforce-list">
-            {workforce.map((member) => (
-              <div className={`workforce-row role-${member.role}`} key={member.role}>
-                <span className={`role-swatch role-${member.role}`} />
-                <span className="workforce-label">{member.label}</span>
-                <span className="workforce-value">
-                  {member.agents[0]
-                    ? `online ${member.agents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}`
-                    : 'standby'}
-                </span>
-              </div>
-            ))}
+            {workforce.map((member) => {
+              const promptValue = member.role === 'visionary'
+                ? visionaryPromptInput
+                : member.role === 'architect'
+                  ? architectPromptInput
+                  : criticPromptInput;
+              const promptSource = member.role === 'visionary'
+                ? worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''
+                : member.role === 'architect'
+                  ? worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''
+                  : worldState.critic_prompt ?? operatorControl.critic_prompt ?? '';
+
+              return (
+                <div className={`workforce-row role-${member.role}`} key={member.role}>
+                  <span className={`role-swatch role-${member.role}`} />
+                  <span className="workforce-label">{member.label}</span>
+                  <span className="workforce-value">
+                    {member.agents[0]
+                      ? `online ${member.agents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}`
+                      : 'standby'}
+                  </span>
+                  <details className="agent-prompt-details">
+                    <summary className="agent-prompt-summary">
+                      {promptSource.length > 0 ? 'Directive set' : 'Set directive'}
+                    </summary>
+                    <textarea
+                      className="control-textarea agent-prompt-textarea"
+                      onChange={(event) => {
+                        if (member.role === 'visionary') setVisionaryPromptInput(event.target.value);
+                        else if (member.role === 'architect') setArchitectPromptInput(event.target.value);
+                        else setCriticPromptInput(event.target.value);
+                      }}
+                      placeholder={`Specific instruction for the ${member.label}...`}
+                      rows={3}
+                      spellCheck={false}
+                      value={promptValue}
+                    />
+                    <button
+                      className="control-button agent-prompt-button"
+                      disabled={isSavingControl}
+                      onClick={async () => {
+                        const supabase = supabaseRef.current;
+                        if (!supabase) {
+                          setControlMessage('Supabase keys missing; cannot set agent directive.');
+                          return;
+                        }
+                        try {
+                          const { error } = await supabase
+                            .from('operator_controls')
+                            .upsert(
+                              {
+                                id: DEFAULT_OPERATOR_CONTROL.id,
+                                repo_path: repoInput.trim(),
+                                operator_prompt: directiveInput.trim(),
+                                paused: isPaused,
+                                automate: isAutomated,
+                                visionary_prompt: member.role === 'visionary' ? promptValue.trim() : (worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''),
+                                architect_prompt: member.role === 'architect' ? promptValue.trim() : (worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''),
+                                critic_prompt: member.role === 'critic' ? promptValue.trim() : (worldState.critic_prompt ?? operatorControl.critic_prompt ?? ''),
+                              },
+                              { onConflict: 'id' },
+                            );
+                          if (error) throw error;
+                          setControlMessage(`${member.label} directive committed.`);
+                        } catch (error) {
+                          const message = error instanceof Error ? error.message : 'Unknown error';
+                          setControlMessage(`Directive failed: ${message}`);
+                        }
+                      }}
+                      type="button"
+                    >
+                      Commit Directive
+                    </button>
+                  </details>
+                </div>
+              );
+            })}
           </div>
           <div className="protocol-stats">
             <span>Genesis {genesisNodes.length}</span>
@@ -1161,6 +1796,11 @@ function App() {
           <div className="hud-meta">
             <span>Role: {getAgentRoleLabel(primaryRole)}</span>
             <span>Node: {getNodeStateLabel(loadedFileState ?? activeStructureState ?? 'stable')}</span>
+          </div>
+          <div className="hud-focus">Directive: {activeDirective}</div>
+          <div className="hud-meta">
+            <span>Control: {formatControlStatus(controlStatus)}</span>
+            <span>Target: {operatorTargetPath ?? 'none'}</span>
           </div>
         </div>
 
@@ -1229,6 +1869,42 @@ function App() {
           </div>
         ) : null}
 
+        {selectedEntity ? (
+          <div className="context-window inspect-panel">
+            <div className="context-header">
+              <div>
+                <div className="context-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
+                <div className="context-path">{selectedEntity.path ?? selectedEntity.id}</div>
+              </div>
+              <button
+                className="inspect-close"
+                onClick={() => setSelectedEntity(null)}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="context-meta">
+              <span>{selectedEntity.type}</span>
+              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
+              <span>Mass {selectedEntity.mass}</span>
+              <span>Chiral {computeChiralMass(selectedEntity)}</span>
+              <span>{selectedEntity.git_status ?? 'clean'}</span>
+              <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
+            </div>
+            {selectedEntity.content_preview || selectedEntity.content ? (
+              <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
+            ) : (
+              <div className="code-frame">
+                <div className="code-line">
+                  <span className="code-gutter">—</span>
+                  <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+
         {errorMessage ? <div className="hud-alert">{errorMessage}</div> : null}
       </section>
 
@@ -1250,6 +1926,11 @@ function App() {
                 ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
                 : 'awaiting structure lock'}
           </span>
+        </div>
+
+        <div className="directive-strip">
+          <span className="directive-label">Operator Prompt</span>
+          <span className="directive-value">{activeDirective}</span>
         </div>
 
         <div className="laws-strip">
@@ -1280,6 +1961,9 @@ function App() {
           <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
           <div>Verified: {verifiedNodes.length}</div>
           <div>Critical Mass: {criticalMassNodes.length}</div>
+          <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
+          <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
+          <div>Queue: {worldState.queue_depth ?? 0}</div>
         </div>
       </aside>
     </main>

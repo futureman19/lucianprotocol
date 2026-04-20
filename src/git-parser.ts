@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -57,6 +57,11 @@ interface RepositoryNode {
   name: string;
   path: string;
   type: 'directory' | 'file';
+  lastCommitSha: string | null;
+  lastCommitMessage: string | null;
+  lastCommitAuthor: string | null;
+  lastCommitDate: string | null;
+  gitDiff: string | null;
 }
 
 function toKey(position: Position): string {
@@ -246,9 +251,27 @@ async function readFilePayload(
   extension: string | null;
   isBinary: boolean;
 }> {
-  const buffer = await readFile(absoluteFilePath);
-  const contentHash = createHash('sha1').update(buffer).digest('hex');
   const extension = getExtension(relativePath);
+  let buffer: Buffer;
+
+  try {
+    buffer = await readFile(absoluteFilePath);
+  } catch (error: unknown) {
+    const message = error as NodeJS.ErrnoException;
+    if (message.code === 'ENOENT') {
+      return {
+        content: null,
+        contentHash: createHash('sha1').update(`missing:${relativePath}`).digest('hex'),
+        contentPreview: null,
+        extension,
+        isBinary: isBinaryExtension(extension),
+      };
+    }
+
+    throw error;
+  }
+
+  const contentHash = createHash('sha1').update(buffer).digest('hex');
   const binary = isProbablyBinary(buffer, extension);
 
   if (binary) {
@@ -277,17 +300,13 @@ function collectReservedPositions(seed: string): Set<string> {
   const reserved = new Set<string>();
 
   for (const entity of createInitialEntities(seed)) {
-    if (entity.type === 'agent') {
-      continue;
-    }
-
     reserved.add(toKey(entity));
   }
 
   return reserved;
 }
 
-function findOpenPosition(
+export function findOpenPosition(
   preferredX: number,
   preferredY: number,
   occupied: Set<string>,
@@ -324,8 +343,9 @@ function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, P
   const occupied = new Set<string>();
   const reserved = collectReservedPositions(seed);
 
-  coordinates.set(ROOT_NODE_PATH, { x: 0, y: 0 });
-  occupied.add('0,0');
+  const rootPosition = findOpenPosition(0, 0, occupied, reserved);
+  coordinates.set(ROOT_NODE_PATH, rootPosition);
+  occupied.add(toKey(rootPosition));
 
   for (const node of nodes.filter((candidate) => candidate.path !== ROOT_NODE_PATH)) {
     const preferredY = clamp(
@@ -370,6 +390,11 @@ async function buildRepositoryNodes(
     name: directoryPath === ROOT_NODE_PATH ? path.basename(repoRoot) : path.basename(directoryPath),
     path: directoryPath,
     type: 'directory',
+    lastCommitSha: null,
+    lastCommitMessage: null,
+    lastCommitAuthor: null,
+    lastCommitDate: null,
+    gitDiff: null,
   }));
 
   const fileNodes = await Promise.all(
@@ -382,6 +407,37 @@ async function buildRepositoryNodes(
         previewLength,
       );
 
+      const gitStatus = statusMap.get(filePath) ?? 'clean';
+      let lastCommitSha: string | null = null;
+      let lastCommitMessage: string | null = null;
+      let lastCommitAuthor: string | null = null;
+      let lastCommitDate: string | null = null;
+      let gitDiff: string | null = null;
+
+      try {
+        const log = await git.log({ file: filePath, n: 1 });
+        const latest = log.latest;
+        if (latest) {
+          lastCommitSha = latest.hash;
+          lastCommitMessage = latest.message;
+          lastCommitAuthor = latest.author_name;
+          lastCommitDate = latest.date;
+        }
+      } catch {
+        // ignore log errors for new files
+      }
+
+      if (gitStatus === 'modified' || gitStatus === 'added' || gitStatus === 'deleted' || gitStatus === 'renamed') {
+        try {
+          gitDiff = await git.diff(['--', filePath]);
+          if (gitDiff && gitDiff.length > 2000) {
+            gitDiff = gitDiff.slice(0, 2000) + '\n... (truncated)';
+          }
+        } catch {
+          // ignore diff errors
+        }
+      }
+
       return {
         content: payload.content,
         contentHash: payload.contentHash,
@@ -389,11 +445,16 @@ async function buildRepositoryNodes(
         depth: filePath.split('/').length,
         descriptor: describeStructureNode(filePath, 'file'),
         extension: payload.extension,
-        gitStatus: statusMap.get(filePath) ?? 'clean',
+        gitStatus,
         isBinary: payload.isBinary,
         name: path.basename(filePath),
         path: filePath,
         type: 'file',
+        lastCommitSha,
+        lastCommitMessage,
+        lastCommitAuthor,
+        lastCommitDate,
+        gitDiff: gitDiff ? sanitizeForJson(gitDiff) : null,
       };
     }),
   );
@@ -431,6 +492,11 @@ function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repo
     git_status: node.gitStatus,
     repo_root: sanitizeForJson(repoRoot),
     is_binary: node.isBinary,
+    last_commit_sha: node.lastCommitSha,
+    last_commit_message: node.lastCommitMessage === null ? null : sanitizeForJson(node.lastCommitMessage),
+    last_commit_author: node.lastCommitAuthor,
+    last_commit_date: node.lastCommitDate,
+    git_diff: node.gitDiff,
   });
 }
 
@@ -481,9 +547,15 @@ export async function importRepository(
   return overlay.entities;
 }
 
+export function getNamedOverlayFile(name: string): string {
+  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  return path.join(OVERLAY_DIRECTORY, `${safeName}.json`);
+}
+
 export async function saveRepositoryOverlay(overlay: RepositoryOverlay): Promise<void> {
   await mkdir(OVERLAY_DIRECTORY, { recursive: true });
   await writeFile(OVERLAY_FILE, JSON.stringify(overlay, null, 2), 'utf8');
+  await writeFile(getNamedOverlayFile(overlay.repoName), JSON.stringify(overlay, null, 2), 'utf8');
 }
 
 export function loadRepositoryOverlaySync(): Entity[] {
@@ -492,6 +564,28 @@ export function loadRepositoryOverlaySync(): Entity[] {
   }
 
   const rawOverlay = readFileSync(OVERLAY_FILE, 'utf8');
+  const parsed = RepositoryOverlaySchema.parse(JSON.parse(rawOverlay));
+  return parsed.entities;
+}
+
+export function listSavedRepositoryOverlays(): string[] {
+  if (!existsSync(OVERLAY_DIRECTORY)) {
+    return [];
+  }
+
+  const entries = readdirSync(OVERLAY_DIRECTORY, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'repository-overlay.json')
+    .map((entry) => entry.name.replace(/\.json$/, ''));
+}
+
+export function loadNamedRepositoryOverlaySync(name: string): Entity[] {
+  const filePath = getNamedOverlayFile(name);
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  const rawOverlay = readFileSync(filePath, 'utf8');
   const parsed = RepositoryOverlaySchema.parse(JSON.parse(rawOverlay));
   return parsed.entities;
 }

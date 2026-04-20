@@ -1,9 +1,14 @@
 import 'dotenv/config';
 
+import { writeFile } from 'node:fs/promises';
+import { performance } from 'node:perf_hooks';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { simpleGit } from 'simple-git';
 
 import { GeminiNavigator } from './ai';
 import { computeChiralMass, getAgentRole } from './hivemind';
+import { resolveOperatorDirective } from './operator-control';
 import {
   CLOCK_PERIOD,
   DEFAULT_SEED,
@@ -20,23 +25,39 @@ import {
   step,
   toIndex,
 } from './seed';
-import { loadRepositoryOverlaySync } from './git-parser';
+import {
+  createRepositoryOverlay,
+  listSavedRepositoryOverlays,
+  loadNamedRepositoryOverlaySync,
+  loadRepositoryOverlaySync,
+  saveRepositoryOverlay,
+} from './git-parser';
 import { isStructureEntity } from './mass-mapper';
 import { createServiceSupabaseClient } from './supabase';
-import type {
-  AgentDecision,
-  AgentRole,
-  Direction,
-  Entity,
-  NeighborhoodScan,
-  NodeState,
-  Position,
-  QueuedDecision,
-  TileObservation,
-  WorldSnapshot,
-  WorldState,
-  WorldStatus,
+import {
+  OperatorControlSchema,
+  type AgentDecision,
+  type AgentRole,
+  type ControlStatus,
+  type Direction,
+  type Entity,
+  type NeighborhoodScan,
+  type NodeState,
+  type OperatorAction,
+  type OperatorControl,
+  type Position,
+  type QueuedDecision,
+  type TileObservation,
+  type WorldSnapshot,
+  type WorldState,
+  type WorldStatus,
+  type Task,
 } from './types';
+
+interface PendingAiRequest {
+  runId: number;
+  startedAtMs: number;
+}
 
 const CLOCKWISE_SHIFT: Record<Direction, Direction> = {
   north: 'east',
@@ -55,6 +76,44 @@ const COUNTER_CLOCKWISE_SHIFT: Record<Direction, Direction> = {
 const VERIFICATION_TTL_TICKS = 12;
 const ARCHITECT_WORK_TICKS = 4;
 const CRITIC_REVIEW_TICKS = 3;
+const CONTROL_ROW_ID = 'lux-control';
+const CONTROL_POLL_INTERVAL_TICKS = 10;
+
+export function findReadableTargetInEntities(
+  entities: readonly Entity[],
+  agent: Position,
+  targetName: string | undefined,
+): Entity | null {
+  if (!targetName) {
+    return null;
+  }
+
+  const positions: Position[] = [
+    { x: agent.x, y: agent.y },
+    { x: agent.x, y: agent.y - 1 },
+    { x: agent.x + 1, y: agent.y },
+    { x: agent.x, y: agent.y + 1 },
+    { x: agent.x - 1, y: agent.y },
+  ];
+
+  for (const position of positions) {
+    for (const entity of entities) {
+      if (entity.x !== position.x || entity.y !== position.y) {
+        continue;
+      }
+
+      if (entity.type !== 'file' && entity.type !== 'directory') {
+        continue;
+      }
+
+      if (entity.name === targetName || entity.path === targetName) {
+        return entity;
+      }
+    }
+  }
+
+  return null;
+}
 
 export class LuxEngine {
   private readonly entities = new Map<string, Entity>();
@@ -62,20 +121,58 @@ export class LuxEngine {
     { length: GRID_WIDTH * GRID_HEIGHT },
     () => null,
   );
+  private readonly positionIndex = new Map<string, string[]>();
   private readonly agentIds: string[] = [];
   private readonly decisionQueue = new Map<string, QueuedDecision>();
-  private readonly pendingAiAgents = new Map<string, number>();
+  private readonly pendingAiAgents = new Map<string, PendingAiRequest>();
   private readonly aiNavigator = new GeminiNavigator();
   private readonly supabase = createServiceSupabaseClient();
   private readonly syncPipeline: Promise<void> = Promise.resolve();
 
   private absoluteTick = 0;
+  private structureEntitiesCache: Entity[] | null = null;
+  private activeRepoName: string | null = null;
+  private activeRepoPath: string | null = null;
+  private controlStatus: ControlStatus = 'idle';
+  private controlError: string | null = null;
+  private operatorAction: OperatorAction | null = null;
+  private operatorTargetQuery: string | null = null;
+  private operatorTargetPath: string | null = null;
+  private importStartedAt: string | null = null;
+  private importFinishedAt: string | null = null;
+  private lastImportDurationMs: number | null = null;
+  private lastTickDurationMs: number | null = null;
+  private lastAiLatencyMs: number | null = null;
+  private maxAiLatencyMs: number | null = null;
+  private lastControlSignature = '';
+  private lastControlPollTick = -CONTROL_POLL_INTERVAL_TICKS;
+  private operatorPrompt = '';
+  private paused = false;
+  private automate = false;
+  private visionaryPrompt = '';
+  private architectPrompt = '';
+  private criticPrompt = '';
+  private pendingOverlay:
+    | {
+      entities: Entity[];
+      repoName: string;
+      repoPath: string;
+    }
+    | null = null;
+  private pendingStructurePurge = false;
+  private repoImportPromise: Promise<void> | null = null;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private restartHandle: ReturnType<typeof setTimeout> | null = null;
   private goalId = '';
   private hasLoggedSupabaseDisabled = false;
   private syncQueue = Promise.resolve();
   private currentRunId = 0;
+  private savedOverlayNames: string[] = [];
+  private activeTasks: Task[] = [];
+  private lastOperatorPromptForPlanning = '';
+  private visionaryPlanningPromise: Promise<void> | null = null;
+  private criticReviewPromise: Promise<void> | null = null;
+  private visionaryFinalReviewPromise: Promise<void> | null = null;
 
   public constructor(
     private readonly seed: string,
@@ -98,9 +195,7 @@ export class LuxEngine {
   }
 
   private startRun(mode: 'boot' | 'reset'): void {
-    const structureCount = Array.from(this.entities.values()).filter((entity) =>
-      isStructureEntity(entity),
-    ).length;
+    const structureCount = this.getStructureEntities().length;
 
     console.log(
       `[${mode}] Lux engine seed=${this.seed} interval=${this.tickIntervalMs}ms period=${CLOCK_PERIOD} max_ticks=${this.maxTicks} ai=${this.aiNavigator.isConfigured() ? 'configured' : 'wait-only'} supabase=${this.supabase ? 'configured' : 'disabled'} loop=${this.loopRuns ? 'on' : 'off'} structures=${structureCount}`,
@@ -124,23 +219,39 @@ export class LuxEngine {
     }
   }
 
-  private resetWorld(): void {
+  private resetWorld(structureEntities?: Entity[]): void {
     this.currentRunId += 1;
     this.absoluteTick = 0;
     this.goalId = '';
+    this.lastTickDurationMs = null;
+    this.lastAiLatencyMs = null;
+    this.maxAiLatencyMs = null;
     this.entities.clear();
+    this.invalidateStructureCache();
     this.agentIds.length = 0;
     this.decisionQueue.clear();
     this.pendingAiAgents.clear();
     this.solidGrid.fill(null);
+    this.positionIndex.clear();
+    this.savedOverlayNames = listSavedRepositoryOverlays();
+    this.activeTasks = [];
+    this.lastOperatorPromptForPlanning = '';
+    this.visionaryPlanningPromise = null;
+    this.criticReviewPromise = null;
+    this.visionaryFinalReviewPromise = null;
 
     for (const entity of createInitialEntities(this.seed)) {
       this.registerEntity(entity);
     }
 
-    for (const entity of loadRepositoryOverlaySync()) {
+    const repositoryEntities = structureEntities ?? loadRepositoryOverlaySync();
+
+    for (const entity of repositoryEntities) {
       this.registerEntity(entity);
     }
+
+    this.updateActiveRepositoryMetadata(repositoryEntities);
+    this.syncOperatorIntent(repositoryEntities);
 
     this.updateHivemindState();
 
@@ -149,8 +260,208 @@ export class LuxEngine {
     }
   }
 
+  private updateActiveRepositoryMetadata(structureEntities: Entity[]): void {
+    const repositoryRoot =
+      structureEntities.find((entity) => entity.type === 'directory' && entity.path === '.')
+      ?? structureEntities[0]
+      ?? null;
+
+    this.activeRepoPath = repositoryRoot?.repo_root ?? this.activeRepoPath;
+    this.activeRepoName = repositoryRoot?.name ?? this.activeRepoName;
+  }
+
+  private nowIsoString(): string {
+    return new Date().toISOString();
+  }
+
+  private normalizeRepositoryPath(value: string): string {
+    return value.trim().length === 0
+      ? ''
+      : path.resolve(value).replace(/\\/g, '/');
+  }
+
+  private getQueueDepth(): number {
+    return this.decisionQueue.size + this.pendingAiAgents.size;
+  }
+
+  private getOperatorTargetEntity(): Entity | null {
+    if (!this.operatorTargetPath) {
+      return null;
+    }
+
+    for (const entity of this.getStructureEntities()) {
+      if (entity.path === this.operatorTargetPath) {
+        return entity;
+      }
+    }
+
+    return null;
+  }
+
+  private syncOperatorIntent(structureEntities = this.getStructureEntities()): void {
+    const directive = resolveOperatorDirective(this.operatorPrompt, structureEntities);
+
+    this.operatorAction = directive.normalizedPrompt ? directive.action : null;
+    this.operatorTargetQuery = directive.targetQuery;
+    this.operatorTargetPath = directive.target?.path ?? null;
+
+    if (directive.normalizedPrompt === null) {
+      this.controlStatus = 'idle';
+      this.controlError = null;
+      return;
+    }
+
+    if (directive.targetQuery && directive.target === null) {
+      this.controlStatus = 'error';
+      this.controlError = `Target "${directive.targetQuery}" was not found in the active repository.`;
+      return;
+    }
+
+    this.controlStatus = 'active';
+    this.controlError = null;
+  }
+
+  private applyPendingOverlayIfReady(): void {
+    if (this.pendingOverlay === null) {
+      return;
+    }
+
+    const overlay = this.pendingOverlay;
+    this.pendingOverlay = null;
+    this.activeRepoPath = overlay.repoPath;
+    this.activeRepoName = overlay.repoName;
+    this.pendingStructurePurge = true;
+    this.resetWorld(overlay.entities);
+    this.syncOperatorIntent(overlay.entities);
+    console.log(`[control] activated repository overlay repo=${overlay.repoName} path=${overlay.repoPath}`);
+  }
+
+  private pollOperatorControlsIfNeeded(): void {
+    if (!this.supabase || this.repoImportPromise !== null) {
+      return;
+    }
+
+    const supabase = this.supabase;
+
+    if ((this.absoluteTick - this.lastControlPollTick) < CONTROL_POLL_INTERVAL_TICKS) {
+      return;
+    }
+
+    this.lastControlPollTick = this.absoluteTick;
+
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('operator_controls')
+          .select('*')
+          .eq('id', CONTROL_ROW_ID)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        if (!data) {
+          return;
+        }
+
+        const parsedControl = OperatorControlSchema.parse(data);
+        await this.handleOperatorControl(parsedControl);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown control poll error';
+        console.error(`[control] ${message}`);
+      }
+    })();
+  }
+
+  private async handleOperatorControl(control: OperatorControl): Promise<void> {
+    const nextRepoPath = control.repo_path.trim();
+    const normalizedRepoPath = this.normalizeRepositoryPath(nextRepoPath);
+    const nextPrompt = control.operator_prompt.trim();
+    const signature = `${normalizedRepoPath}\n${nextPrompt}`;
+
+    if (signature === this.lastControlSignature && this.paused === (control.paused ?? false) && this.automate === (control.automate ?? false)) {
+      await this.processPendingEdits(control);
+      await this.processCommitAndPush(control);
+      return;
+    }
+
+    this.paused = control.paused ?? false;
+    this.automate = control.automate ?? false;
+    this.visionaryPrompt = control.visionary_prompt ?? '';
+    this.architectPrompt = control.architect_prompt ?? '';
+    this.criticPrompt = control.critic_prompt ?? '';
+    this.operatorPrompt = nextPrompt;
+
+    await this.processPendingEdits(control);
+    await this.processCommitAndPush(control);
+
+    if (normalizedRepoPath.length === 0 || normalizedRepoPath === this.activeRepoPath) {
+      this.syncOperatorIntent();
+      this.lastControlSignature = signature;
+      console.log('[control] updated operator prompt');
+      return;
+    }
+
+    this.controlStatus = 'importing';
+    this.controlError = null;
+    this.importStartedAt = this.nowIsoString();
+    this.importFinishedAt = null;
+    this.lastImportDurationMs = null;
+
+    const importStartedAtMs = performance.now();
+
+    try {
+      this.repoImportPromise = this.importRepositoryOverlay(normalizedRepoPath)
+        .finally(() => {
+          this.repoImportPromise = null;
+        });
+
+      await this.repoImportPromise;
+      this.importFinishedAt = this.nowIsoString();
+      this.lastImportDurationMs = Math.max(0, Math.round(performance.now() - importStartedAtMs));
+      this.lastControlSignature = signature;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown repository import failure';
+      this.controlStatus = 'error';
+      this.controlError = message;
+      this.importFinishedAt = this.nowIsoString();
+      this.lastImportDurationMs = Math.max(0, Math.round(performance.now() - importStartedAtMs));
+      this.lastControlSignature = signature;
+      console.error(`[control] ${message}`);
+    }
+  }
+
+  private async importRepositoryOverlay(repositoryPath: string): Promise<void> {
+    const normalizedName = path.basename(repositoryPath).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+
+    if (loadNamedRepositoryOverlaySync(normalizedName).length > 0) {
+      console.log(`[control] loading saved overlay name=${normalizedName}`);
+      const entities = loadNamedRepositoryOverlaySync(normalizedName);
+      this.pendingOverlay = {
+        entities,
+        repoName: normalizedName,
+        repoPath: repositoryPath,
+      };
+      return;
+    }
+
+    console.log(`[control] importing repository path=${repositoryPath}`);
+    const overlay = await createRepositoryOverlay(repositoryPath, { seed: this.seed });
+    await saveRepositoryOverlay(overlay);
+
+    this.savedOverlayNames = listSavedRepositoryOverlays();
+
+    this.pendingOverlay = {
+      entities: overlay.entities,
+      repoName: overlay.repoName,
+      repoPath: overlay.repoRoot,
+    };
+  }
+
   private registerEntity(entity: Entity): void {
     this.entities.set(entity.id, entity);
+    this.invalidateStructureCache();
 
     if (entity.type === 'agent') {
       this.agentIds.push(entity.id);
@@ -163,6 +474,11 @@ export class LuxEngine {
     if (isSolidEntity(entity)) {
       this.solidGrid[toIndex(entity.x, entity.y)] = entity.id;
     }
+
+    const key = `${entity.x},${entity.y}`;
+    const list = this.positionIndex.get(key) ?? [];
+    list.push(entity.id);
+    this.positionIndex.set(key, list);
   }
 
   private patchEntity(entityId: string, patch: Partial<Entity>): Entity | null {
@@ -177,7 +493,30 @@ export class LuxEngine {
     };
 
     this.entities.set(entityId, updatedEntity);
+    this.invalidateStructureCache();
+
+    if ((patch.x !== undefined && patch.x !== entity.x) || (patch.y !== undefined && patch.y !== entity.y)) {
+      const oldKey = `${entity.x},${entity.y}`;
+      const newKey = `${updatedEntity.x},${updatedEntity.y}`;
+      const oldList = this.positionIndex.get(oldKey);
+      if (oldList) {
+        const filtered = oldList.filter((id) => id !== entityId);
+        if (filtered.length === 0) {
+          this.positionIndex.delete(oldKey);
+        } else {
+          this.positionIndex.set(oldKey, filtered);
+        }
+      }
+      const newList = this.positionIndex.get(newKey) ?? [];
+      newList.push(entityId);
+      this.positionIndex.set(newKey, newList);
+    }
+
     return updatedEntity;
+  }
+
+  private invalidateStructureCache(): void {
+    this.structureEntitiesCache = null;
   }
 
   private getAgentByRole(role: AgentRole): Entity | null {
@@ -196,7 +535,14 @@ export class LuxEngine {
   }
 
   private getStructureEntities(): Entity[] {
-    return Array.from(this.entities.values()).filter((entity) => isStructureEntity(entity));
+    if (this.structureEntitiesCache !== null) {
+      return this.structureEntitiesCache;
+    }
+
+    this.structureEntitiesCache = Array.from(this.entities.values()).filter((entity) =>
+      isStructureEntity(entity),
+    );
+    return this.structureEntitiesCache;
   }
 
   private getEntityPath(entity: Entity): string {
@@ -278,24 +624,38 @@ export class LuxEngine {
   }
 
   private tickLoop(): void {
-    this.applyQueuedDecisions();
-    this.updateHivemindState();
-    this.queueAiDecisions();
-    this.queueSupabaseSync();
-    this.logTickIfNeeded();
+    const tickStartedAtMs = performance.now();
 
-    const agent = this.getPrimaryAgent();
-    if (this.isGoalReached(agent)) {
-      this.finishRun(`goal reached at tick ${this.absoluteTick}`);
-      return;
+    try {
+      this.pollOperatorControlsIfNeeded();
+      this.queueSupabaseSync();
+
+      if (this.paused) {
+        return;
+      }
+
+      this.applyPendingOverlayIfReady();
+      this.applyQueuedDecisions();
+      this.updateHivemindState();
+      this.processTaskPipeline();
+      this.queueAiDecisions();
+      this.logTickIfNeeded();
+
+      const agent = this.getPrimaryAgent();
+      if (this.isGoalReached(agent)) {
+        this.finishRun(`goal reached at tick ${this.absoluteTick}`);
+        return;
+      }
+
+      if (this.absoluteTick >= this.maxTicks) {
+        this.finishRun(`tick budget exhausted at tick ${this.absoluteTick}`);
+        return;
+      }
+
+      this.absoluteTick += 1;
+    } finally {
+      this.lastTickDurationMs = Math.max(0, Math.round(performance.now() - tickStartedAtMs));
     }
-
-    if (this.absoluteTick >= this.maxTicks) {
-      this.finishRun(`tick budget exhausted at tick ${this.absoluteTick}`);
-      return;
-    }
-
-    this.absoluteTick += 1;
   }
 
   private updateHivemindState(): void {
@@ -306,7 +666,10 @@ export class LuxEngine {
     const visionary = this.getAgentByRole('visionary');
     if (visionary) {
       const target = this.selectVisionaryTarget(visionary);
-      this.patchEntity(visionary.id, { objective_path: target?.path ?? null });
+      this.patchEntity(visionary.id, {
+        objective_path: target?.path ?? null,
+        descriptor: this.visionaryPrompt.length > 0 ? this.visionaryPrompt : visionary.descriptor,
+      });
 
       if (
         target &&
@@ -322,7 +685,10 @@ export class LuxEngine {
     const architect = this.getAgentByRole('architect');
     if (architect) {
       const target = this.selectArchitectTarget(architect);
-      this.patchEntity(architect.id, { objective_path: target?.path ?? null });
+      this.patchEntity(architect.id, {
+        objective_path: target?.path ?? null,
+        descriptor: this.architectPrompt.length > 0 ? this.architectPrompt : architect.descriptor,
+      });
 
       if (
         target &&
@@ -342,7 +708,10 @@ export class LuxEngine {
     const critic = this.getAgentByRole('critic');
     if (critic) {
       const target = this.selectCriticTarget(critic);
-      this.patchEntity(critic.id, { objective_path: target?.path ?? null });
+      this.patchEntity(critic.id, {
+        objective_path: target?.path ?? null,
+        descriptor: this.criticPrompt.length > 0 ? this.criticPrompt : critic.descriptor,
+      });
 
       if (
         target &&
@@ -359,6 +728,206 @@ export class LuxEngine {
         );
       }
     }
+  }
+
+  private processTaskPipeline(): void {
+    this.triggerVisionaryPlanningIfNeeded();
+    this.assignPendingTasks();
+    this.processCriticReviews();
+    this.processVisionaryFinalReviews();
+  }
+
+  private triggerVisionaryPlanningIfNeeded(): void {
+    if (this.visionaryPlanningPromise !== null) {
+      return;
+    }
+
+    const hasIncompleteTasks = this.activeTasks.some((t) => t.status !== 'done');
+    if (hasIncompleteTasks) {
+      return;
+    }
+
+    const prompt = this.operatorPrompt.trim();
+    if (prompt.length === 0) {
+      return;
+    }
+
+    if (prompt === this.lastOperatorPromptForPlanning && this.activeTasks.length > 0) {
+      return;
+    }
+
+    this.visionaryPlanningPromise = this.runVisionaryPlanning(prompt).finally(() => {
+      this.visionaryPlanningPromise = null;
+    });
+  }
+
+  private async runVisionaryPlanning(prompt: string): Promise<void> {
+    const codebaseSummary = this.getStructureEntities()
+      .map((e) => `${e.type}: ${e.path ?? e.name ?? e.id}`)
+      .join('\n');
+
+    const tasks = await this.aiNavigator.requestVisionaryPlan(prompt, codebaseSummary);
+
+    if (tasks.length === 0) {
+      return;
+    }
+
+    this.activeTasks = tasks.map((t) => ({
+      id: t.id,
+      description: t.description,
+      target_path: t.target_path,
+      status: 'pending' as const,
+      assigned_agent_id: null,
+      original_content: null,
+      completed_content: null,
+      review_feedback: null,
+      created_at_tick: this.absoluteTick,
+      updated_at_tick: this.absoluteTick,
+    }));
+
+    this.lastOperatorPromptForPlanning = prompt;
+    console.log(`[visionary] planned ${tasks.length} tasks from operator prompt`);
+  }
+
+  private assignPendingTasks(): void {
+    const architects = this.agentIds
+      .map((id) => this.entities.get(id))
+      .filter((agent): agent is Entity => agent?.type === 'agent' && getAgentRole(agent) === 'architect');
+
+    for (const task of this.activeTasks) {
+      if (task.status !== 'pending') {
+        continue;
+      }
+
+      const busyArchitectIds = new Set(
+        this.activeTasks
+          .filter((t) => t.status !== 'done' && t.status !== 'pending' && t.assigned_agent_id)
+          .map((t) => t.assigned_agent_id!),
+      );
+
+      const availableArchitect = architects.find((arch) => !busyArchitectIds.has(arch.id));
+
+      if (availableArchitect) {
+        task.status = 'assigned';
+        task.assigned_agent_id = availableArchitect.id;
+        task.updated_at_tick = this.absoluteTick;
+
+        const targetEntity = this.findStructureByPath(task.target_path);
+        if (targetEntity) {
+          task.original_content = targetEntity.content ?? targetEntity.content_preview ?? '';
+        }
+      }
+    }
+  }
+
+  private processCriticReviews(): void {
+    if (this.criticReviewPromise !== null) {
+      return;
+    }
+
+    const critic = this.getAgentByRole('critic');
+    if (!critic) {
+      return;
+    }
+
+    const reviewTask = this.activeTasks.find((t) => t.status === 'awaiting_review');
+    if (!reviewTask) {
+      return;
+    }
+
+    const targetEntity = this.findStructureByPath(reviewTask.target_path);
+    if (!targetEntity) {
+      return;
+    }
+
+    if (critic.x !== targetEntity.x || critic.y !== targetEntity.y) {
+      return;
+    }
+
+    if (this.absoluteTick - reviewTask.updated_at_tick < 3) {
+      return;
+    }
+
+    this.criticReviewPromise = this.runCriticReview(reviewTask, targetEntity).finally(() => {
+      this.criticReviewPromise = null;
+    });
+  }
+
+  private async runCriticReview(task: Task, targetEntity: Entity): Promise<void> {
+    const original = task.original_content ?? '';
+    const current = targetEntity.content ?? targetEntity.content_preview ?? '';
+
+    const result = await this.aiNavigator.requestCriticReview(
+      task.description,
+      original,
+      current,
+    );
+
+    if (result.approved) {
+      task.status = 'approved';
+      task.review_feedback = result.feedback;
+    } else {
+      task.status = 'revision_needed';
+      task.review_feedback = result.feedback;
+    }
+    task.updated_at_tick = this.absoluteTick;
+
+    console.log(`[critic] task ${task.id} ${result.approved ? 'approved' : 'rejected'}: ${result.feedback}`);
+  }
+
+  private processVisionaryFinalReviews(): void {
+    if (this.visionaryFinalReviewPromise !== null) {
+      return;
+    }
+
+    const approvedTask = this.activeTasks.find((t) => t.status === 'approved');
+    if (!approvedTask) {
+      return;
+    }
+
+    this.visionaryFinalReviewPromise = this.runVisionaryFinalReview(approvedTask).finally(() => {
+      this.visionaryFinalReviewPromise = null;
+    });
+  }
+
+  private async runVisionaryFinalReview(task: Task): Promise<void> {
+    const prompt = this.operatorPrompt.trim();
+
+    if (prompt !== this.lastOperatorPromptForPlanning) {
+      task.status = 'revision_needed';
+      task.review_feedback = 'User intent has changed since this task was planned. Please re-evaluate.';
+      task.updated_at_tick = this.absoluteTick;
+      console.log(`[visionary] task ${task.id} sent back for revision due to changed operator prompt`);
+      return;
+    }
+
+    task.status = 'done';
+    task.updated_at_tick = this.absoluteTick;
+    console.log(`[visionary] task ${task.id} finalized`);
+  }
+
+  private findStructureByPath(targetPath: string): Entity | null {
+    for (const entity of this.getStructureEntities()) {
+      if (entity.path === targetPath) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  private getTaskContextForAgent(agent: Entity): string | null {
+    const task = this.activeTasks.find(
+      (t) =>
+        t.assigned_agent_id === agent.id &&
+        t.status !== 'done' &&
+        t.status !== 'awaiting_review' &&
+        t.status !== 'approved',
+    );
+    if (!task) {
+      return null;
+    }
+    const feedback = task.review_feedback ? ` Feedback: ${task.review_feedback}` : '';
+    return `Task: ${task.description}. Target: ${task.target_path}.${feedback}`;
   }
 
   private initializeStructureNodes(): void {
@@ -444,6 +1013,15 @@ export class LuxEngine {
   }
 
   private selectVisionaryTarget(agent: Entity): Entity | null {
+    // Task pipeline: final review of approved tasks
+    const approvedTask = this.activeTasks.find((t) => t.status === 'approved');
+    if (approvedTask) {
+      const target = this.findStructureByPath(approvedTask.target_path);
+      if (target) {
+        return target;
+      }
+    }
+
     const structureNodes = this.getStructureEntities().filter((entity) => entity.lock_owner == null);
     const criticalMassNodes = structureNodes.filter((entity) => computeChiralMass(entity) >= 8);
     if (criticalMassNodes.length > 0) {
@@ -461,8 +1039,7 @@ export class LuxEngine {
       return this.selectClosestStructure(agent, backlogNodes);
     }
 
-    const maintenanceNodes = structureNodes.filter((entity) => entity.node_state === 'stable');
-    return this.selectRotatingStructure(maintenanceNodes, 1);
+    return null;
   }
 
   private selectArchitectTarget(agent: Entity): Entity | null {
@@ -471,7 +1048,26 @@ export class LuxEngine {
       return currentNode;
     }
 
-    const activeTasks = this.getStructureEntities().filter((entity) =>
+    // Task pipeline: assigned tasks take priority
+    const assignedTask = this.activeTasks.find(
+      (t) =>
+        t.assigned_agent_id === agent.id &&
+        (t.status === 'assigned' || t.status === 'in_progress' || t.status === 'revision_needed'),
+    );
+    if (assignedTask) {
+      const target = this.findStructureByPath(assignedTask.target_path);
+      if (target) {
+        return target;
+      }
+    }
+
+    const operatorTarget = this.getOperatorTargetEntity();
+    if (operatorTarget) {
+      return operatorTarget;
+    }
+
+    const structureNodes = this.getStructureEntities();
+    const activeTasks = structureNodes.filter((entity) =>
       (entity.node_state === 'task' || entity.node_state === 'asymmetry') &&
       (entity.lock_owner == null || entity.lock_owner === agent.id),
     );
@@ -479,11 +1075,7 @@ export class LuxEngine {
       return this.selectClosestStructure(agent, activeTasks);
     }
 
-    const maintenanceNodes = this.getStructureEntities().filter((entity) =>
-      entity.node_state === 'stable' &&
-      entity.lock_owner == null,
-    );
-    return this.selectRotatingStructure(maintenanceNodes, 2);
+    return null;
   }
 
   private selectCriticTarget(agent: Entity): Entity | null {
@@ -492,7 +1084,17 @@ export class LuxEngine {
       return currentNode;
     }
 
-    const architectLocks = this.getStructureEntities().filter((entity) => {
+    // Task pipeline: review awaiting_review tasks first
+    const reviewTask = this.activeTasks.find((t) => t.status === 'awaiting_review');
+    if (reviewTask) {
+      const target = this.findStructureByPath(reviewTask.target_path);
+      if (target) {
+        return target;
+      }
+    }
+
+    const structureNodes = this.getStructureEntities();
+    const architectLocks = structureNodes.filter((entity) => {
       if (!entity.lock_owner) {
         return false;
       }
@@ -504,7 +1106,7 @@ export class LuxEngine {
       return this.selectClosestStructure(agent, architectLocks);
     }
 
-    const reviewTargets = this.getStructureEntities().filter((entity) =>
+    const reviewTargets = structureNodes.filter((entity) =>
       entity.node_state === 'stable' &&
       entity.state_tick != null &&
       entity.state_tick > 0 &&
@@ -515,7 +1117,7 @@ export class LuxEngine {
       return this.selectClosestStructure(agent, reviewTargets);
     }
 
-    const asymmetryTargets = this.getStructureEntities().filter((entity) =>
+    const asymmetryTargets = structureNodes.filter((entity) =>
       entity.node_state === 'asymmetry' &&
       entity.lock_owner == null,
     );
@@ -560,6 +1162,11 @@ export class LuxEngine {
       return;
     }
 
+    if (decision.action === 'submit') {
+      this.executeSubmit(agent);
+      return;
+    }
+
     if (decision.action !== 'move' || decision.direction === undefined) {
       return;
     }
@@ -588,40 +1195,170 @@ export class LuxEngine {
     );
   }
 
+  private async processPendingEdits(control: OperatorControl): Promise<void> {
+    const editPath = control.pending_edit_path?.trim();
+    const editContent = control.pending_edit_content;
+
+    if (!editPath || editContent === undefined || editContent === null) {
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.error('[edit] No active repository to edit.');
+      return;
+    }
+
+    const absolutePath = path.join(repoRoot, editPath);
+
+    try {
+      await writeFile(absolutePath, editContent, 'utf8');
+
+      const git = simpleGit(repoRoot);
+      await git.add(['--', editPath]);
+
+      const entityId = `file:${editPath}`;
+      const entity = this.entities.get(entityId);
+      if (entity) {
+        const preview = editContent.slice(0, 200);
+        this.patchEntity(entityId, {
+          content: editContent,
+          content_preview: preview,
+          git_status: 'modified',
+          tick_updated: this.absoluteTick,
+        });
+      }
+
+      await this.supabase!
+        .from('operator_controls')
+        .update({ pending_edit_path: null, pending_edit_content: null })
+        .eq('id', CONTROL_ROW_ID);
+
+      console.log(`[edit] wrote ${editPath} and staged changes`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown edit failure';
+      console.error(`[edit] ${message}`);
+    }
+  }
+
+  private async processCommitAndPush(control: OperatorControl): Promise<void> {
+    const commitMessage = control.commit_message?.trim();
+    const shouldPush = control.should_push ?? false;
+
+    if (!commitMessage) {
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.error('[git] No active repository to commit.');
+      return;
+    }
+
+    try {
+      const git = simpleGit(repoRoot);
+      await git.commit(commitMessage);
+      console.log(`[git] committed: ${commitMessage}`);
+
+      if (shouldPush) {
+        await git.push();
+        console.log('[git] pushed to remote');
+      }
+
+      await this.supabase!
+        .from('operator_controls')
+        .update({ commit_message: null, should_push: false })
+        .eq('id', CONTROL_ROW_ID);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown git failure';
+      console.error(`[git] ${message}`);
+    }
+  }
+
   private executeEdit(agent: Entity, decision: AgentDecision): void {
+    const target = this.findReadableTarget(agent, decision.target);
+    if (!target || target.type !== 'file') {
+      console.log(
+        `[edit] ${agent.id} failed to edit "${decision.target ?? ''}" at tick ${this.absoluteTick} (not a writable file)`,
+      );
+      return;
+    }
+
+    if (decision.content === undefined || decision.content === null) {
+      console.log(
+        `[edit] ${agent.id} attempted to edit "${decision.target ?? ''}" at tick ${this.absoluteTick} (no content provided)`,
+      );
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.log(`[edit] ${agent.id} cannot edit — no active repo`);
+      return;
+    }
+
+    const filePath = target.path ?? '';
+    const absolutePath = path.join(repoRoot, filePath);
+
+    const newContent = decision.content;
+    void (async () => {
+      try {
+        await writeFile(absolutePath, newContent, 'utf8');
+        const git = simpleGit(repoRoot);
+        await git.add(['--', filePath]);
+
+        const preview = newContent.slice(0, 200);
+        this.patchEntity(target.id, {
+          content: newContent,
+          content_preview: preview,
+          git_status: 'modified',
+          tick_updated: this.absoluteTick,
+        });
+
+        // Update in-progress task status
+        const task = this.activeTasks.find(
+          (t) =>
+            t.assigned_agent_id === agent.id &&
+            t.target_path === filePath &&
+            (t.status === 'assigned' || t.status === 'revision_needed'),
+        );
+        if (task) {
+          task.status = 'in_progress';
+          task.updated_at_tick = this.absoluteTick;
+        }
+
+        console.log(`[edit] ${agent.id} wrote ${filePath} at tick ${this.absoluteTick}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown edit failure';
+        console.error(`[edit] ${message}`);
+      }
+    })();
+  }
+
+  private executeSubmit(agent: Entity): void {
+    const assignedTask = this.activeTasks.find(
+      (t) =>
+        t.assigned_agent_id === agent.id &&
+        (t.status === 'assigned' || t.status === 'in_progress' || t.status === 'revision_needed'),
+    );
+
+    if (!assignedTask) {
+      console.log(`[submit] ${agent.id} has no active task to submit`);
+      return;
+    }
+
+    const targetEntity = this.findStructureByPath(assignedTask.target_path);
+    assignedTask.completed_content = targetEntity?.content ?? targetEntity?.content_preview ?? '';
+    assignedTask.status = 'awaiting_review';
+    assignedTask.updated_at_tick = this.absoluteTick;
+
     console.log(
-      `[edit] ${agent.id} attempted to edit "${decision.target ?? ''}" at tick ${this.absoluteTick} (Week 3 feature, ignored)`,
+      `[submit] ${agent.id} submitted task ${assignedTask.id} (${assignedTask.target_path}) for review`,
     );
   }
 
   private findReadableTarget(agent: Entity, targetName: string | undefined): Entity | null {
-    if (!targetName) {
-      return null;
-    }
-
-    const positions: Position[] = [
-      { x: agent.x, y: agent.y },
-      { x: agent.x, y: agent.y - 1 },
-      { x: agent.x + 1, y: agent.y },
-      { x: agent.x, y: agent.y + 1 },
-      { x: agent.x - 1, y: agent.y },
-    ];
-
-    for (const position of positions) {
-      for (const entity of this.entities.values()) {
-        if (entity.x !== position.x || entity.y !== position.y) {
-          continue;
-        }
-        if (entity.type !== 'file' && entity.type !== 'directory') {
-          continue;
-        }
-        if (entity.name === targetName || entity.path === targetName) {
-          return entity;
-        }
-      }
-    }
-
-    return null;
+    return findReadableTargetInEntities(this.getStructureEntities(), agent, targetName);
   }
 
   private resolveMovement(
@@ -663,6 +1400,17 @@ export class LuxEngine {
       this.solidGrid[toIndex(entity.x, entity.y)] = null;
     }
 
+    const oldKey = `${entity.x},${entity.y}`;
+    const oldList = this.positionIndex.get(oldKey);
+    if (oldList) {
+      const filtered = oldList.filter((id) => id !== entity.id);
+      if (filtered.length === 0) {
+        this.positionIndex.delete(oldKey);
+      } else {
+        this.positionIndex.set(oldKey, filtered);
+      }
+    }
+
     const updatedEntity: Entity = {
       ...entity,
       x: nextPosition.x,
@@ -671,6 +1419,12 @@ export class LuxEngine {
     };
 
     this.entities.set(entity.id, updatedEntity);
+    this.invalidateStructureCache();
+
+    const newKey = `${nextPosition.x},${nextPosition.y}`;
+    const newList = this.positionIndex.get(newKey) ?? [];
+    newList.push(entity.id);
+    this.positionIndex.set(newKey, newList);
 
     if (isSolidEntity(updatedEntity)) {
       this.solidGrid[toIndex(nextPosition.x, nextPosition.y)] = updatedEntity.id;
@@ -679,7 +1433,8 @@ export class LuxEngine {
 
   private queueAiDecisions(): void {
     for (const agentId of this.agentIds) {
-      if (this.pendingAiAgents.get(agentId) === this.currentRunId || this.decisionQueue.has(agentId)) {
+      const pendingRequest = this.pendingAiAgents.get(agentId);
+      if (pendingRequest?.runId === this.currentRunId || this.decisionQueue.has(agentId)) {
         continue;
       }
 
@@ -691,11 +1446,25 @@ export class LuxEngine {
       const issuedAtTick = this.absoluteTick;
       const scan = this.scanNeighborhood(agent);
       const runId = this.currentRunId;
+      const startedAtMs = performance.now();
 
-      this.pendingAiAgents.set(agentId, runId);
+      this.pendingAiAgents.set(agentId, {
+        runId,
+        startedAtMs,
+      });
 
       void this.requestDecisionForAgent(agent, scan)
         .then((decision) => {
+          const pending = this.pendingAiAgents.get(agentId);
+          if (pending?.runId === runId) {
+            const latencyMs = Math.max(0, Math.round(performance.now() - pending.startedAtMs));
+            this.lastAiLatencyMs = latencyMs;
+            this.maxAiLatencyMs =
+              this.maxAiLatencyMs === null
+                ? latencyMs
+                : Math.max(this.maxAiLatencyMs, latencyMs);
+          }
+
           if (runId !== this.currentRunId) {
             return;
           }
@@ -708,7 +1477,7 @@ export class LuxEngine {
           });
         })
         .finally(() => {
-          if (this.pendingAiAgents.get(agentId) === runId) {
+          if (this.pendingAiAgents.get(agentId)?.runId === runId) {
             this.pendingAiAgents.delete(agentId);
           }
         });
@@ -725,9 +1494,25 @@ export class LuxEngine {
     }
 
     const role = getAgentRole(agent) ?? 'architect';
+    const operatorTarget = this.getOperatorTargetEntity();
+
+    if (
+      role === 'architect' &&
+      operatorTarget &&
+      currentNode?.id === operatorTarget.id &&
+      (this.operatorAction === 'read' || this.operatorAction === 'explain')
+    ) {
+      return {
+        action: 'read',
+        target: operatorTarget.path ?? operatorTarget.name ?? 'current-node',
+      };
+    }
 
     if (role === 'architect') {
-      return this.aiNavigator.requestDecision(scan);
+      if (this.operatorPrompt.length > 0 || scan.objective_path != null || scan.task_context != null) {
+        return this.aiNavigator.requestDecision(scan);
+      }
+      return this.requestDeterministicDecision(agent, scan);
     }
 
     return this.requestDeterministicDecision(agent, scan);
@@ -788,6 +1573,13 @@ export class LuxEngine {
       };
   }
 
+  private getAgentPrompt(agent: Entity): string {
+    const role = getAgentRole(agent);
+    if (role === 'visionary') return this.visionaryPrompt;
+    if (role === 'critic') return this.criticPrompt;
+    return this.architectPrompt;
+  }
+
   private getObjectiveForAgent(agent: Entity): { path: string | null; position: Position } {
     const role = getAgentRole(agent) ?? 'architect';
     const target =
@@ -806,7 +1598,7 @@ export class LuxEngine {
 
     return {
       path: null,
-      position: { x: GOAL_POSITION.x, y: GOAL_POSITION.y },
+      position: { x: agent.x, y: agent.y },
     };
   }
 
@@ -820,7 +1612,12 @@ export class LuxEngine {
       agent: { x: agent.x, y: agent.y },
       goal: { x: GOAL_POSITION.x, y: GOAL_POSITION.y },
       objective: objective.position,
+      operator_action: this.operatorAction,
+      operator_target_query: this.operatorTargetQuery,
       objective_path: objective.path,
+      operator_prompt: this.operatorPrompt.length > 0 ? this.operatorPrompt : null,
+      agent_prompt: this.getAgentPrompt(agent).length > 0 ? this.getAgentPrompt(agent) : null,
+      task_context: this.getTaskContextForAgent(agent),
       current: this.lookupTile({ x: agent.x, y: agent.y }, agent.id),
       north: this.lookupTile({ x: agent.x, y: agent.y - 1 }),
       east: this.lookupTile({ x: agent.x + 1, y: agent.y }),
@@ -830,17 +1627,43 @@ export class LuxEngine {
   }
 
   private findEntityAtPosition(position: Position, excludeId?: string): Entity | null {
-    let fallback: Entity | null = null;
+    const ids = this.positionIndex.get(`${position.x},${position.y}`);
+    if (!ids) {
+      return null;
+    }
 
-    for (const entity of this.entities.values()) {
-      if (entity.id === excludeId || entity.x !== position.x || entity.y !== position.y) {
+    // Goal fast path
+    if (this.goalId.length > 0) {
+      const goal = this.entities.get(this.goalId);
+      if (goal && goal.id !== excludeId && goal.x === position.x && goal.y === position.y) {
+        return goal;
+      }
+    }
+
+    // Structure entities take precedence
+    for (const id of ids) {
+      if (id === excludeId) {
         continue;
       }
+      const entity = this.entities.get(id);
+      if (entity && isStructureEntity(entity)) {
+        return entity;
+      }
+    }
 
+    // General fallback
+    let fallback: Entity | null = null;
+    for (const id of ids) {
+      if (id === excludeId) {
+        continue;
+      }
+      const entity = this.entities.get(id);
+      if (!entity) {
+        continue;
+      }
       if (entity.type === 'agent' || entity.type === 'wall' || entity.type === 'file' || entity.type === 'directory' || entity.type === 'goal') {
         return entity;
       }
-
       fallback = entity;
     }
 
@@ -898,8 +1721,21 @@ export class LuxEngine {
     }
 
     const snapshot = this.createSnapshot();
+    const shouldPurgeStructures = this.pendingStructurePurge;
+    this.pendingStructurePurge = false;
     this.syncQueue = this.syncQueue
       .then(async () => {
+        if (shouldPurgeStructures) {
+          const { error: deleteError } = await supabase
+            .from('entities')
+            .delete()
+            .in('type', ['file', 'directory']);
+
+          if (deleteError) {
+            throw deleteError;
+          }
+        }
+
         const { error: entitiesError } = await supabase
           .from('entities')
           .upsert(snapshot.entities, { onConflict: 'id' });
@@ -941,6 +1777,32 @@ export class LuxEngine {
       tick: this.absoluteTick,
       phase: this.getCurrentPhase(),
       status: this.getWorldStatus(),
+      active_repo_path: this.activeRepoPath,
+      active_repo_name: this.activeRepoName,
+      operator_prompt: this.operatorPrompt.length > 0 ? this.operatorPrompt : null,
+      control_status: this.controlStatus,
+      control_error: this.controlError,
+      operator_action: this.operatorAction,
+      operator_target_query: this.operatorTargetQuery,
+      operator_target_path: this.operatorTargetPath,
+      import_started_at: this.importStartedAt,
+      import_finished_at: this.importFinishedAt,
+      last_import_duration_ms: this.lastImportDurationMs,
+      last_tick_duration_ms: this.lastTickDurationMs,
+      last_ai_latency_ms: this.lastAiLatencyMs,
+      max_ai_latency_ms: this.maxAiLatencyMs,
+      queue_depth: this.getQueueDepth(),
+      paused: this.paused,
+      saved_overlay_names: this.savedOverlayNames,
+      automate: this.automate,
+      visionary_prompt: this.visionaryPrompt.length > 0 ? this.visionaryPrompt : null,
+      architect_prompt: this.architectPrompt.length > 0 ? this.architectPrompt : null,
+      critic_prompt: this.criticPrompt.length > 0 ? this.criticPrompt : null,
+      pending_edit_path: null,
+      pending_edit_content: null,
+      commit_message: null,
+      should_push: false,
+      active_tasks: this.activeTasks.length > 0 ? this.activeTasks : null,
     };
   }
 
@@ -990,11 +1852,16 @@ export class LuxEngine {
     const visionary = this.getAgentByRole('visionary');
     const critic = this.getAgentByRole('critic');
     const distance = manhattanDistance(architect, GOAL_POSITION);
-    const taskCount = this.getStructureEntities().filter((entity) => entity.node_state === 'task').length;
-    const asymmetryCount = this.getStructureEntities().filter((entity) => entity.node_state === 'asymmetry').length;
+    const structureNodes = this.getStructureEntities();
+    const taskCount = structureNodes.filter((entity) => entity.node_state === 'task').length;
+    const asymmetryCount = structureNodes.filter((entity) => entity.node_state === 'asymmetry').length;
+    const pendingTasks = this.activeTasks.filter((t) => t.status === 'pending').length;
+    const inProgressTasks = this.activeTasks.filter((t) => t.status === 'in_progress' || t.status === 'assigned').length;
+    const reviewTasks = this.activeTasks.filter((t) => t.status === 'awaiting_review').length;
+    const doneTasks = this.activeTasks.filter((t) => t.status === 'done').length;
 
     console.log(
-      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architect=(${architect.x},${architect.y}) visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} goal_distance=${distance} tasks=${taskCount} asymmetry=${asymmetryCount} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} supabase=${this.supabase ? 'on' : 'off'}`,
+      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architect=(${architect.x},${architect.y}) visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} goal_distance=${distance} nodes_task=${taskCount} nodes_asymmetry=${asymmetryCount} tasks_pending=${pendingTasks} tasks_active=${inProgressTasks} tasks_review=${reviewTasks} tasks_done=${doneTasks} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} queue_depth=${this.getQueueDepth()} tick_ms=${this.lastTickDurationMs ?? 0} ai_latency_ms=${this.lastAiLatencyMs ?? 0} control=${this.controlStatus} supabase=${this.supabase ? 'on' : 'off'}`,
     );
   }
 
