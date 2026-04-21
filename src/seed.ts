@@ -15,6 +15,8 @@ export const START_POSITION: Position = { x: 0, y: 0 };
 export const GOAL_POSITION: Position = { x: 25, y: 25 };
 export const REQUIRED_COLLISION_WALL: Position = { x: 10, y: 10 };
 
+export const ARCHITECT_COUNT = 3;
+
 interface AgentSeedSpec {
   descriptor: string;
   id: string;
@@ -23,29 +25,41 @@ interface AgentSeedSpec {
   role: AgentRole;
 }
 
-const AGENT_SEEDS: readonly AgentSeedSpec[] = [
-  {
-    descriptor: 'Architect workforce node',
-    id: 'agent-architect-01',
-    name: 'Architect',
-    position: { x: 0, y: 0 },
-    role: 'architect',
-  },
-  {
-    descriptor: 'Visionary workforce node',
-    id: 'agent-visionary-01',
-    name: 'Visionary',
-    position: { x: 1, y: 0 },
-    role: 'visionary',
-  },
-  {
-    descriptor: 'Critic workforce node',
-    id: 'agent-critic-01',
-    name: 'Critic',
-    position: { x: 0, y: 1 },
-    role: 'critic',
-  },
-] as const;
+const ARCHITECT_POSITIONS: readonly Position[] = [
+  { x: 0, y: 0 },
+  { x: 2, y: 0 },
+  { x: 0, y: 2 },
+];
+
+const VISIONARY_SEED: AgentSeedSpec = {
+  descriptor: 'Visionary workforce node',
+  id: 'agent-visionary-01',
+  name: 'Visionary',
+  position: { x: 1, y: 0 },
+  role: 'visionary',
+};
+
+const CRITIC_SEED: AgentSeedSpec = {
+  descriptor: 'Critic workforce node',
+  id: 'agent-critic-01',
+  name: 'Critic',
+  position: { x: 0, y: 1 },
+  role: 'critic',
+};
+
+function buildAgentSeeds(): readonly AgentSeedSpec[] {
+  const architects: AgentSeedSpec[] = ARCHITECT_POSITIONS.slice(0, ARCHITECT_COUNT).map(
+    (position, index) => ({
+      descriptor: 'Architect workforce node',
+      id: `agent-architect-${String(index + 1).padStart(2, '0')}`,
+      name: 'Architect',
+      position,
+      role: 'architect',
+    }),
+  );
+
+  return [...architects, VISIONARY_SEED, CRITIC_SEED];
+}
 
 const DIRECTION_VECTORS: Record<Direction, { dx: number; dy: number }> = {
   north: { dx: 0, dy: -1 },
@@ -86,8 +100,9 @@ export function isSolidEntity(entity: Entity): boolean {
 
 export function createInitialEntities(seed: string): Entity[] {
   const rng = seedrandom(seed);
+  const agentSeeds = buildAgentSeeds();
   const entities: Entity[] = [
-    ...AGENT_SEEDS.map((agent) => ({
+    ...agentSeeds.map((agent) => ({
       agent_role: agent.role,
       descriptor: agent.descriptor,
       id: agent.id,
@@ -118,7 +133,7 @@ export function createInitialEntities(seed: string): Entity[] {
 
   const occupied = new Set<string>(
     [
-      ...AGENT_SEEDS.map((agent) => `${agent.position.x},${agent.position.y}`),
+      ...agentSeeds.map((agent) => `${agent.position.x},${agent.position.y}`),
       `${GOAL_POSITION.x},${GOAL_POSITION.y}`,
       `${REQUIRED_COLLISION_WALL.x},${REQUIRED_COLLISION_WALL.y}`,
     ],

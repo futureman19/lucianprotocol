@@ -5,19 +5,39 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { LuxEngine, findReadableTargetInEntities } from './engine';
+import { LuxEngine, findReadableTargetInEntities, resolvePathWithinRoot } from './engine';
 import { createRepositoryOverlay, findOpenPosition } from './git-parser';
 import { computeChiralMass } from './hivemind';
 import { parseOperatorDirective } from './operator-control';
 import { createInitialEntities } from './seed';
-import { AgentDecisionSchema, type Entity, type Position } from './types';
+import { applyDelete, applyInsert, applyPatch } from './surgical-edit';
+import {
+  AgentDecisionSchema,
+  type AgentActivity,
+  type AgentDecision,
+  type Entity,
+  type NeighborhoodScan,
+  type OperatorControl,
+  type Position,
+  type Task,
+} from './types';
 
 interface EngineHarness {
   entities: Map<string, Entity>;
+  executeBroadcast(agent: Entity, decision: AgentDecision): void;
+  executeRead(agent: Entity, decision: AgentDecision): void;
+  expirePheromones(): void;
   getStructureEntities(): Entity[];
   moveEntity(entity: Entity, nextPosition: Position): void;
   patchEntity(entityId: string, patch: Partial<Entity>): Entity | null;
   registerEntity(entity: Entity): void;
+  resetWorld(structureEntities?: Entity[]): void;
+}
+
+interface ControlHarness {
+  architectPrompt: string;
+  handleOperatorControl(control: OperatorControl): Promise<void>;
+  lastControlSignature: string;
   resetWorld(structureEntities?: Entity[]): void;
 }
 
@@ -58,9 +78,21 @@ test('AgentDecisionSchema accepts read actions with a target', () => {
   assert.deepEqual(decision, { action: 'read', target: 'App.tsx' });
 });
 
+test('AgentDecisionSchema accepts broadcast actions with a message', () => {
+  const decision = AgentDecisionSchema.parse({ action: 'broadcast', message: 'claiming src/engine.ts' });
+
+  assert.deepEqual(decision, { action: 'broadcast', message: 'claiming src/engine.ts' });
+});
+
 test('AgentDecisionSchema rejects edit actions without content', () => {
   assert.throws(() => {
     AgentDecisionSchema.parse({ action: 'edit', target: 'App.tsx' });
+  });
+});
+
+test('AgentDecisionSchema rejects broadcast without a message', () => {
+  assert.throws(() => {
+    AgentDecisionSchema.parse({ action: 'broadcast' });
   });
 });
 
@@ -131,11 +163,142 @@ test('LuxEngine invalidates the structure cache when structure entities change',
   assert.equal(afterMove[0]?.y, 3);
 });
 
+test('executeBroadcast creates a pheromone entity with correct TTL', () => {
+  const harness = new LuxEngine('broadcast-create-test', 100, 5, false) as unknown as EngineHarness;
+  harness.resetWorld([]);
+
+  const architect = harness.entities.get('agent-architect-01');
+  assert.ok(architect);
+
+  harness.executeBroadcast(architect, {
+    action: 'broadcast',
+    message: 'claiming src/engine.ts',
+  });
+
+  const pheromones = Array.from(harness.entities.values()).filter((entity) => entity.type === 'pheromone');
+  assert.equal(pheromones.length, 1);
+
+  const pheromone = pheromones[0]!;
+  assert.equal(pheromone.author_id, architect.id);
+  assert.equal(pheromone.message, 'claiming src/engine.ts');
+  assert.equal(pheromone.ttl_ticks, 30);
+  assert.equal(pheromone.x, architect.x);
+  assert.equal(pheromone.y, architect.y);
+
+  const updatedArchitect = harness.entities.get(architect.id);
+  assert.equal(updatedArchitect?.memory?.last_broadcast?.message, 'claiming src/engine.ts');
+  assert.equal(updatedArchitect?.memory?.last_broadcast?.tick, 0);
+});
+
+test('pheromones expire after 30 ticks', () => {
+  const harness = new LuxEngine('broadcast-expiry-test', 100, 5, false) as unknown as EngineHarness;
+  harness.resetWorld([]);
+
+  const architect = harness.entities.get('agent-architect-01');
+  assert.ok(architect);
+
+  harness.executeBroadcast(architect, {
+    action: 'broadcast',
+    message: 'found parser bug',
+  });
+
+  for (let index = 0; index < 29; index += 1) {
+    harness.expirePheromones();
+  }
+
+  const remainingPheromone = Array.from(harness.entities.values()).find((entity) => entity.type === 'pheromone');
+  assert.ok(remainingPheromone);
+  assert.equal(remainingPheromone.ttl_ticks, 1);
+
+  harness.expirePheromones();
+
+  const pheromones = Array.from(harness.entities.values()).filter((entity) => entity.type === 'pheromone');
+  assert.equal(pheromones.length, 0);
+});
+
+test('executeRead records the file in agent memory', () => {
+  const harness = new LuxEngine('read-memory-test', 100, 5, false) as unknown as EngineHarness;
+  const fileEntity: Entity = {
+    id: 'file:src/app.ts',
+    type: 'file',
+    x: 0,
+    y: 0,
+    mass: 3,
+    tick_updated: 0,
+    name: 'app.ts',
+    path: 'src/app.ts',
+    content_hash: 'abc123',
+    content: 'export const app = true;\n',
+  };
+
+  harness.resetWorld([fileEntity]);
+
+  const architect = harness.entities.get('agent-architect-01');
+  assert.ok(architect);
+
+  harness.executeRead(architect, {
+    action: 'read',
+    target: 'src/app.ts',
+  });
+
+  const updatedArchitect = harness.entities.get(architect.id);
+  assert.deepEqual(updatedArchitect?.memory?.files_read['src/app.ts'], {
+    content_hash: 'abc123',
+    tick_read: 0,
+    summary: '',
+  });
+});
+
 test('parseOperatorDirective extracts action and target query from a prompt', () => {
   const directive = parseOperatorDirective('Navigate to `src/engine.ts` and explain the control flow.');
 
   assert.equal(directive.action, 'explain');
   assert.equal(directive.targetQuery, 'src/engine.ts');
+});
+
+test('resolvePathWithinRoot rejects traversal outside the repository root', () => {
+  const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'lux-path-root-'));
+
+  try {
+    const insidePath = resolvePathWithinRoot(repositoryRoot, 'src/engine.ts');
+    const outsidePath = resolvePathWithinRoot(repositoryRoot, '../outside.ts');
+
+    assert.equal(insidePath, path.resolve(repositoryRoot, 'src/engine.ts'));
+    assert.equal(outsidePath, null);
+  } finally {
+    rmSync(repositoryRoot, { force: true, recursive: true });
+  }
+});
+
+test('handleOperatorControl applies per-agent prompt updates when repo and operator prompt are unchanged', async () => {
+  const engine = new LuxEngine('control-signature-test', 100, 5, false);
+  const harness = engine as unknown as ControlHarness;
+  const mutableEngine = engine as unknown as {
+    processCommitAndPush(control: OperatorControl): Promise<void>;
+    processPendingEdits(control: OperatorControl): Promise<void>;
+  };
+
+  harness.resetWorld([]);
+  mutableEngine.processPendingEdits = async () => {};
+  mutableEngine.processCommitAndPush = async () => {};
+
+  const control: OperatorControl = {
+    id: 'lux-control',
+    repo_path: '',
+    operator_prompt: 'Inspect the current task graph.',
+    architect_prompt: 'Focus on deterministic movement.',
+  };
+
+  await harness.handleOperatorControl(control);
+  const firstSignature = harness.lastControlSignature;
+
+  await harness.handleOperatorControl({
+    ...control,
+    architect_prompt: 'Focus on deterministic movement and edit safety.',
+  });
+
+  assert.equal(harness.architectPrompt, 'Focus on deterministic movement and edit safety.');
+  assert.notEqual(harness.lastControlSignature, firstSignature);
 });
 
 test('createRepositoryOverlay is deterministic and root avoids reserved spawn positions', async () => {
@@ -186,15 +349,21 @@ test('computeChiralMass adds line-based lift for large files', () => {
 test('createInitialEntities places agents at exact spawn positions', () => {
   const entities = createInitialEntities('lux-alpha-001');
 
-  const architect = entities.find((e) => e.id === 'agent-architect-01');
+  const architect1 = entities.find((e) => e.id === 'agent-architect-01');
+  const architect2 = entities.find((e) => e.id === 'agent-architect-02');
+  const architect3 = entities.find((e) => e.id === 'agent-architect-03');
   const visionary = entities.find((e) => e.id === 'agent-visionary-01');
   const critic = entities.find((e) => e.id === 'agent-critic-01');
 
-  assert.ok(architect);
+  assert.ok(architect1);
+  assert.ok(architect2);
+  assert.ok(architect3);
   assert.ok(visionary);
   assert.ok(critic);
 
-  assert.deepEqual({ x: architect.x, y: architect.y }, { x: 0, y: 0 });
+  assert.deepEqual({ x: architect1.x, y: architect1.y }, { x: 0, y: 0 });
+  assert.deepEqual({ x: architect2.x, y: architect2.y }, { x: 2, y: 0 });
+  assert.deepEqual({ x: architect3.x, y: architect3.y }, { x: 0, y: 2 });
   assert.deepEqual({ x: visionary.x, y: visionary.y }, { x: 1, y: 0 });
   assert.deepEqual({ x: critic.x, y: critic.y }, { x: 0, y: 1 });
 });
@@ -516,4 +685,764 @@ test('findOpenPosition throws when grid is exhausted', () => {
   assert.throws(() => {
     findOpenPosition(0, 0, occupied, reserved);
   }, /Repository lattice exceeds the available 50x50 grid./);
+});
+
+// ---------------------------------------------------------------------------
+// Task pipeline harness
+// ---------------------------------------------------------------------------
+
+interface TaskPipelineHarness {
+  activeTasks: Task[];
+  absoluteTick: number;
+  agentIds: string[];
+  advanceExplanationStream(): void;
+  activeRepoPath: string | null;
+  assignPendingTasks(): void;
+  entities: Map<string, Entity>;
+  executeRead(agent: Entity, decision: AgentDecision): void;
+  executePatch(agent: Entity, decision: AgentDecision): void;
+  executeInsert(agent: Entity, decision: AgentDecision): void;
+  executeDelete(agent: Entity, decision: AgentDecision): void;
+  executeSubmit(agent: Entity): void;
+  explanationPromise: Promise<void> | null;
+  explanationState: {
+    status: string;
+    text: string | null;
+  };
+  findStructureByPath(path: string): Entity | null;
+  lastOperatorPromptForPlanning: string;
+  operatorAction: 'navigate' | 'read' | 'explain' | 'maintain' | null;
+  operatorPrompt: string;
+  operatorTargetPath: string | null;
+  patchEntity(entityId: string, patch: Partial<Entity>): Entity | null;
+  processCriticReviews(): void;
+  processVisionaryFinalReviews(): void;
+  registerEntity(entity: Entity): void;
+  resetWorld(structureEntities?: Entity[]): void;
+  runCriticReview(task: Task, targetEntity: Entity): Promise<void>;
+  runVisionaryFinalReview(task: Task): Promise<void>;
+  runVisionaryPlanning(prompt: string): Promise<void>;
+  pendingEditAgents: Set<string>;
+  requestDecisionForAgent(agent: Entity, scan: NeighborhoodScan): Promise<AgentDecision>;
+  scanNeighborhood(agent: Entity): NeighborhoodScan;
+  computeAgentActivities(): AgentActivity[];
+}
+
+class MockNavigator {
+  visionaryPlanResult: Array<{ id: string; description: string; target_path: string }> = [];
+  criticResult: { approved: boolean; feedback: string } = { approved: true, feedback: 'LGTM' };
+  criticGrounding = '';
+  commitMessageResult: string | null = null;
+  decisionResult: AgentDecision = { action: 'wait' };
+  explanationResult: string | null = null;
+
+  isConfigured() {
+    return true;
+  }
+
+  async requestDecision() {
+    return this.decisionResult;
+  }
+
+  async requestVisionaryPlan() {
+    return this.visionaryPlanResult;
+  }
+
+  async requestCriticReview(
+    _taskDescription: string,
+    _originalContent: string,
+    _newContent: string,
+    groundedValidation: string,
+  ) {
+    this.criticGrounding = groundedValidation;
+    return this.criticResult;
+  }
+
+  async requestExplanation() {
+    return this.explanationResult;
+  }
+
+  async requestCommitMessage() {
+    return this.commitMessageResult;
+  }
+}
+
+function createMockEngine(): { engine: LuxEngine; mock: MockNavigator } {
+  const engine = new LuxEngine('task-pipeline-test', 100, 5, false);
+  const mock = new MockNavigator();
+  (engine as unknown as { aiNavigator: unknown }).aiNavigator = mock;
+  return { engine, mock };
+}
+
+// ---------------------------------------------------------------------------
+// Task pipeline tests
+// ---------------------------------------------------------------------------
+
+test('Visionary planning creates tasks with correct statuses', async () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+  harness.resetWorld([]);
+
+  mock.visionaryPlanResult = [
+    { id: 't1', description: 'Add foo', target_path: 'src/foo.ts' },
+    { id: 't2', description: 'Update bar', target_path: 'src/bar.ts' },
+  ];
+
+  harness.operatorPrompt = 'Implement foo and bar';
+
+  await harness.runVisionaryPlanning('Implement foo and bar');
+
+  assert.equal(harness.activeTasks.length, 2);
+  assert.equal(harness.activeTasks[0]!.id, 't1');
+  assert.equal(harness.activeTasks[0]!.status, 'pending');
+  assert.equal(harness.activeTasks[0]!.assigned_agent_id, null);
+  assert.equal(harness.activeTasks[1]!.id, 't2');
+  assert.equal(harness.activeTasks[1]!.status, 'pending');
+});
+
+test('Task assignment picks the first available architect', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+  harness.resetWorld([]);
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Task one',
+      target_path: 'src/a.ts',
+      status: 'pending',
+      assigned_agent_id: null,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+    {
+      id: 't2',
+      description: 'Task two',
+      target_path: 'src/b.ts',
+      status: 'pending',
+      assigned_agent_id: null,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  harness.assignPendingTasks();
+
+  assert.equal(harness.activeTasks[0]!.status, 'assigned');
+  assert.ok(harness.activeTasks[0]!.assigned_agent_id);
+  assert.equal(harness.activeTasks[1]!.status, 'assigned');
+  assert.ok(harness.activeTasks[1]!.assigned_agent_id);
+
+  const agentIds = harness.activeTasks.map((t) => t.assigned_agent_id);
+  assert.notEqual(agentIds[0], agentIds[1], 'Tasks should be assigned to different architects');
+});
+
+test('executeSubmit advances task to awaiting_review', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'original content',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Edit a.ts',
+      target_path: 'src/a.ts',
+      status: 'in_progress',
+      assigned_agent_id: architectId,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.executeSubmit(architect);
+
+  const task = harness.activeTasks[0]!;
+  assert.equal(task.status, 'awaiting_review');
+  assert.equal(task.completed_content, 'original content');
+});
+
+test('requestDecisionForAgent returns wait while an architect edit is still pending', async () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  harness.resetWorld([]);
+  harness.operatorPrompt = 'Finish the assigned task.';
+  mock.decisionResult = { action: 'submit' };
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.pendingEditAgents.add(architect.id);
+  const decision = await harness.requestDecisionForAgent(architect, harness.scanNeighborhood(architect));
+
+  assert.deepEqual(decision, { action: 'wait' });
+});
+
+test('executeSubmit does not advance a task while its edit is still pending', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  harness.resetWorld([]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Edit a.ts',
+      target_path: 'src/a.ts',
+      status: 'assigned',
+      assigned_agent_id: architectId,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.pendingEditAgents.add(architect.id);
+  harness.executeSubmit(architect);
+
+  assert.equal(harness.activeTasks[0]!.status, 'assigned');
+  assert.equal(harness.activeTasks[0]!.completed_content, undefined);
+});
+
+test('Critic review transitions tasks to approved or revision_needed', async () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'new content',
+  };
+  harness.resetWorld([fileEntity]);
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Edit a.ts',
+      target_path: 'src/a.ts',
+      status: 'awaiting_review',
+      assigned_agent_id: 'agent-architect-01',
+      original_content: 'original content',
+      completed_content: 'new content',
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  mock.criticResult = { approved: true, feedback: 'Looks good' };
+  await harness.runCriticReview(harness.activeTasks[0]!, fileEntity);
+  assert.equal(harness.activeTasks[0]!.status, 'approved');
+  assert.equal(harness.activeTasks[0]!.review_feedback, 'Looks good');
+
+  harness.activeTasks[0]!.status = 'awaiting_review';
+  mock.criticResult = { approved: false, feedback: 'Needs more work' };
+  await harness.runCriticReview(harness.activeTasks[0]!, fileEntity);
+  assert.equal(harness.activeTasks[0]!.status, 'revision_needed');
+  assert.equal(harness.activeTasks[0]!.review_feedback, 'Needs more work');
+
+  const architectAfterRejection = harness.entities.get('agent-architect-01');
+  assert.deepEqual(architectAfterRejection?.memory?.lessons, ['Needs more work']);
+});
+
+test('Explain reads stream and cache explanation text', async () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'export function greet(name: string) {\n  return `hello ${name}`;\n}\n',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  const architectMoved = harness.entities.get(architectId)!;
+  harness.operatorPrompt = 'Explain what this file does.';
+  harness.operatorAction = 'explain';
+  harness.operatorTargetPath = 'src/a.ts';
+  mock.explanationResult = 'This file exports greet, a small helper that formats a hello string.';
+
+  harness.executeRead(architectMoved, {
+    action: 'read',
+    target: 'src/a.ts',
+  });
+
+  assert.ok(harness.explanationPromise);
+  await harness.explanationPromise;
+  assert.equal(harness.explanationState.status, 'streaming');
+
+  let explanationStatus: string = harness.explanationState.status;
+  while (explanationStatus !== 'complete') {
+    harness.advanceExplanationStream();
+    explanationStatus = harness.explanationState.status;
+  }
+
+  assert.equal(
+    harness.explanationState.text,
+    'This file exports greet, a small helper that formats a hello string.',
+  );
+
+  const cachedDecision = await harness.requestDecisionForAgent(
+    architectMoved,
+    harness.scanNeighborhood(architectMoved),
+  );
+  assert.equal(cachedDecision.explanation_text, 'This file exports greet, a small helper that formats a hello string.');
+});
+
+test('Visionary final review marks done or sends back for revision', async () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+  harness.resetWorld([]);
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Edit a.ts',
+      target_path: 'src/a.ts',
+      status: 'approved',
+      assigned_agent_id: 'agent-architect-01',
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  harness.operatorPrompt = 'Implement feature X';
+  harness.lastOperatorPromptForPlanning = 'Implement feature X';
+
+  await harness.runVisionaryFinalReview(harness.activeTasks[0]!);
+  assert.equal(harness.activeTasks[0]!.status, 'done');
+
+  harness.activeTasks[0]!.status = 'approved';
+  harness.operatorPrompt = 'Implement feature Y';
+
+  await harness.runVisionaryFinalReview(harness.activeTasks[0]!);
+  assert.equal(harness.activeTasks[0]!.status, 'revision_needed');
+  assert.ok(harness.activeTasks[0]!.review_feedback?.includes('intent has changed'));
+});
+
+
+// ---------------------------------------------------------------------------
+// Surgical editing — pure functions
+// ---------------------------------------------------------------------------
+
+test('applyPatch replaces the first occurrence of old_text', () => {
+  const result = applyPatch('hello world', 'world', 'universe');
+  assert.equal(result, 'hello universe');
+});
+
+test('applyPatch throws when old_text is not found', () => {
+  assert.throws(() => {
+    applyPatch('hello world', 'missing', 'replacement');
+  }, /old_text not found/);
+});
+
+test('applyInsert prepends when after_line is 0', () => {
+  const result = applyInsert('line1\nline2', 0, 'header');
+  assert.equal(result, 'header\nline1\nline2');
+});
+
+test('applyInsert appends when after_line exceeds line count', () => {
+  const result = applyInsert('line1\nline2', 10, 'footer');
+  assert.equal(result, 'line1\nline2\nfooter');
+});
+
+test('applyInsert inserts in the middle', () => {
+  const result = applyInsert('line1\nline2\nline3', 1, 'mid');
+  assert.equal(result, 'line1\nmid\nline2\nline3');
+});
+
+test('applyInsert handles empty content', () => {
+  const result = applyInsert('', 0, 'first');
+  assert.equal(result, 'first');
+});
+
+test('applyDelete removes the specified lines', () => {
+  const result = applyDelete('a\nb\nc\nd', 2, 3);
+  assert.equal(result, 'a\nd');
+});
+
+test('applyDelete removes from start', () => {
+  const result = applyDelete('a\nb\nc', 1, 2);
+  assert.equal(result, 'c');
+});
+
+test('applyDelete removes to end', () => {
+  const result = applyDelete('a\nb\nc', 2, 5);
+  assert.equal(result, 'a');
+});
+
+test('applyDelete returns empty string when deleting all lines', () => {
+  const result = applyDelete('a\nb', 1, 2);
+  assert.equal(result, '');
+});
+
+test('applyDelete throws on invalid range', () => {
+  assert.throws(() => {
+    applyDelete('a\nb', 5, 6);
+  }, /invalid line range/);
+});
+
+// ---------------------------------------------------------------------------
+// Surgical editing — engine integration
+// ---------------------------------------------------------------------------
+
+test('scanNeighborhood includes full_content when agent is locked on a file', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'export const foo = 1;\nexport const bar = 2;',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  // Move architect onto the file
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+
+  // Re-fetch because patchEntity replaces the object in the map
+  const architectMoved = harness.entities.get(architectId)!;
+
+  // Without lock, full_content should be null
+  const scanUnlocked = harness.scanNeighborhood(architectMoved);
+  assert.equal(scanUnlocked.full_content, null);
+
+  // With lock, full_content should be present
+  harness.patchEntity(fileEntity.id, { lock_owner: architectId });
+  const scanLocked = harness.scanNeighborhood(architectMoved);
+  assert.equal(scanLocked.full_content, 'export const foo = 1;\nexport const bar = 2;');
+});
+
+test('executePatch rejects when old_text is not found', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'const x = 1;',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  const architectMoved = harness.entities.get(architectId)!;
+
+  harness.executePatch(architectMoved, {
+    action: 'patch',
+    target: 'a.ts',
+    old_text: 'not-found',
+    new_text: 'replacement',
+  });
+
+  assert.ok(!harness.pendingEditAgents.has(architect.id));
+});
+
+test('executeDelete rejects when line range is invalid', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'line1\nline2',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  const architectMoved = harness.entities.get(architectId)!;
+
+  harness.executeDelete(architectMoved, {
+    action: 'delete',
+    target: 'a.ts',
+    start_line: 5,
+    end_line: 10,
+  });
+
+  assert.ok(!harness.pendingEditAgents.has(architect.id));
+});
+
+test('executeInsert sets pendingEditAgents and updates task status', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'line1\nline2',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  const architectMoved = harness.entities.get(architectId)!;
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Add line',
+      target_path: 'src/a.ts',
+      status: 'assigned',
+      assigned_agent_id: architectId,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  // Use a temp directory so the test does not write to the real repo
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'lux-test-'));
+  (engine as unknown as { activeRepoPath: string | null }).activeRepoPath = tempDir;
+
+  harness.executeInsert(architectMoved, {
+    action: 'insert',
+    target: 'a.ts',
+    after_line: 1,
+    text: 'inserted',
+  });
+
+  assert.ok(harness.pendingEditAgents.has(architectMoved.id));
+  assert.equal(harness.activeTasks[0]!.status, 'in_progress');
+
+  // Clean up temp directory
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+
+// ---------------------------------------------------------------------------
+// Agent activity computation
+// ---------------------------------------------------------------------------
+
+test('computeAgentActivities returns idle for agents with no objective', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+  harness.resetWorld([]);
+
+  const activities = harness.computeAgentActivities();
+  assert.ok(activities.length >= 3);
+
+  for (const activity of activities) {
+    assert.equal(activity.status, 'idle');
+    assert.equal(activity.target_path, null);
+  }
+});
+
+test('computeAgentActivities returns walking when agent has objective_path', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 10,
+    y: 10,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'const x = 1;',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  harness.patchEntity(architectId, { objective_path: 'src/a.ts' });
+
+  const activities = harness.computeAgentActivities();
+  const architectActivity = activities.find((a) => a.agent_id === architectId);
+  assert.ok(architectActivity);
+  assert.equal(architectActivity.status, 'walking');
+  assert.equal(architectActivity.target_path, 'src/a.ts');
+});
+
+test('computeAgentActivities returns reading when agent is locked on a file', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'export const foo = 1;',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  harness.patchEntity(fileEntity.id, { lock_owner: architectId });
+
+  const activities = harness.computeAgentActivities();
+  const architectActivity = activities.find((a) => a.agent_id === architectId);
+  assert.ok(architectActivity);
+  assert.equal(architectActivity.status, 'reading');
+  assert.equal(architectActivity.target_path, 'src/a.ts');
+});
+
+test('computeAgentActivities returns editing when agent is in pendingEditAgents', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const fileEntity: Entity = {
+    id: 'file:a.ts',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    name: 'a.ts',
+    path: 'src/a.ts',
+    content: 'line1\nline2',
+  };
+  harness.resetWorld([fileEntity]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+  const architect = harness.entities.get(architectId);
+  assert.ok(architect);
+
+  harness.patchEntity(architect.id, { x: 5, y: 5 });
+  const architectMoved = harness.entities.get(architectId)!;
+
+  harness.activeTasks = [
+    {
+      id: 't1',
+      description: 'Add line',
+      target_path: 'src/a.ts',
+      status: 'assigned',
+      assigned_agent_id: architectId,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'lux-test-'));
+  (engine as unknown as { activeRepoPath: string | null }).activeRepoPath = tempDir;
+
+  harness.executeInsert(architectMoved, {
+    action: 'insert',
+    target: 'a.ts',
+    after_line: 1,
+    text: 'inserted',
+  });
+
+  const activities = harness.computeAgentActivities();
+  const architectActivity = activities.find((a) => a.agent_id === architectId);
+  assert.ok(architectActivity);
+  assert.equal(architectActivity.status, 'editing');
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('computeAgentActivities returns thinking when agent is in pendingAiAgents', () => {
+  const { engine } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+  harness.resetWorld([]);
+
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  // Manually inject into pendingAiAgents via the internal map
+  (engine as unknown as { pendingAiAgents: Map<string, unknown> }).pendingAiAgents.set(architectId, {
+    runId: 1,
+    startedAtMs: performance.now(),
+  });
+
+  const activities = harness.computeAgentActivities();
+  const architectActivity = activities.find((a) => a.agent_id === architectId);
+  assert.ok(architectActivity);
+  assert.equal(architectActivity.status, 'thinking');
 });

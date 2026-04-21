@@ -9,7 +9,7 @@ export const PositionSchema = z.object({
 
 export type Position = z.infer<typeof PositionSchema>;
 
-export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory']);
+export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory', 'pheromone']);
 export type EntityType = z.infer<typeof EntityTypeSchema>;
 
 export const DirectionSchema = z.enum(['north', 'east', 'south', 'west']);
@@ -51,6 +51,29 @@ export const TileOccupantSchema = z.enum([
 ]);
 export type TileOccupant = z.infer<typeof TileOccupantSchema>;
 
+export const AgentFileReadSchema = z.object({
+  content_hash: z.string().min(1),
+  tick_read: z.number().int().nonnegative(),
+  summary: z.string(),
+});
+
+export type AgentFileRead = z.infer<typeof AgentFileReadSchema>;
+
+export const AgentBroadcastRecordSchema = z.object({
+  message: z.string().min(1),
+  tick: z.number().int().nonnegative(),
+});
+
+export type AgentBroadcastRecord = z.infer<typeof AgentBroadcastRecordSchema>;
+
+export const AgentMemorySchema = z.object({
+  files_read: z.record(z.string(), AgentFileReadSchema),
+  lessons: z.array(z.string()),
+  last_broadcast: AgentBroadcastRecordSchema.nullable(),
+});
+
+export type AgentMemory = z.infer<typeof AgentMemorySchema>;
+
 export const EntitySchema = z.object({
   id: z.string().min(1),
   type: EntityTypeSchema,
@@ -64,6 +87,10 @@ export const EntitySchema = z.object({
   lock_tick: z.number().int().nonnegative().nullable().optional(),
   state_tick: z.number().int().nonnegative().nullable().optional(),
   objective_path: z.string().min(1).nullable().optional(),
+  memory: AgentMemorySchema.nullable().optional(),
+  author_id: z.string().min(1).nullable().optional(),
+  message: z.string().min(1).nullable().optional(),
+  ttl_ticks: z.number().int().nonnegative().nullable().optional(),
   name: z.string().min(1).nullable().optional(),
   path: z.string().min(0).nullable().optional(),
   extension: z.string().min(1).nullable().optional(),
@@ -97,6 +124,24 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const ValidationStatusSchema = z.enum(['idle', 'running', 'clean', 'warnings', 'errors']);
+export type ValidationStatus = z.infer<typeof ValidationStatusSchema>;
+
+export const TaskValidationResultSchema = z.object({
+  status: ValidationStatusSchema,
+  summary: z.string().nullable().optional(),
+  output: z.string().nullable().optional(),
+  command: z.string().nullable().optional(),
+  checked_at_tick: z.number().int().nonnegative().nullable().optional(),
+});
+export type TaskValidationResult = z.infer<typeof TaskValidationResultSchema>;
+
+export const TaskValidationSchema = z.object({
+  lint: TaskValidationResultSchema.nullable().optional(),
+  typecheck: TaskValidationResultSchema.nullable().optional(),
+});
+export type TaskValidation = z.infer<typeof TaskValidationSchema>;
+
 export const TaskSchema = z.object({
   id: z.string().min(1),
   description: z.string().min(1),
@@ -106,10 +151,23 @@ export const TaskSchema = z.object({
   original_content: z.string().nullable().optional(),
   completed_content: z.string().nullable().optional(),
   review_feedback: z.string().nullable().optional(),
+  validation: TaskValidationSchema.nullable().optional(),
   created_at_tick: z.number().int().nonnegative(),
   updated_at_tick: z.number().int().nonnegative(),
 });
 export type Task = z.infer<typeof TaskSchema>;
+
+export const AgentActivitySchema = z.object({
+  agent_id: z.string().min(1),
+  agent_role: z.enum(['visionary', 'architect', 'critic']),
+  status: z.enum(['thinking', 'walking', 'reading', 'editing', 'idle']),
+  target_path: z.string().nullable().optional(),
+  tick: z.number().int().nonnegative(),
+});
+export type AgentActivity = z.infer<typeof AgentActivitySchema>;
+
+export const ExplainStatusSchema = z.enum(['idle', 'pending', 'streaming', 'complete', 'error']);
+export type ExplainStatus = z.infer<typeof ExplainStatusSchema>;
 
 export const WorldStateSchema = z.object({
   id: z.string().min(1),
@@ -142,7 +200,15 @@ export const WorldStateSchema = z.object({
   pending_edit_content: z.string().nullable().optional(),
   commit_message: z.string().nullable().optional(),
   should_push: z.boolean().nullable().optional(),
+  explanation_status: ExplainStatusSchema.nullable().optional(),
+  explanation_target_path: z.string().nullable().optional(),
+  explanation_agent_id: z.string().nullable().optional(),
+  explanation_content_hash: z.string().nullable().optional(),
+  explanation_text: z.string().nullable().optional(),
+  explanation_error: z.string().nullable().optional(),
+  explanation_updated_at_tick: z.number().int().nonnegative().nullable().optional(),
   active_tasks: z.array(TaskSchema).nullable().optional(),
+  agent_activities: z.array(AgentActivitySchema).nullable().optional(),
 });
 
 export type WorldState = z.infer<typeof WorldStateSchema>;
@@ -180,6 +246,14 @@ export const TileObservationSchema = z.object({
 
 export type TileObservation = z.infer<typeof TileObservationSchema>;
 
+export const PheromoneSignalSchema = z.object({
+  author_id: z.string().min(1),
+  message: z.string().min(1),
+  ttl_remaining: z.number().int().nonnegative(),
+});
+
+export type PheromoneSignal = z.infer<typeof PheromoneSignalSchema>;
+
 export const NeighborhoodScanSchema = z.object({
   current_tick: z.number().int().min(0).max(59),
   absolute_tick: z.number().int().nonnegative(),
@@ -197,17 +271,29 @@ export const NeighborhoodScanSchema = z.object({
   east: TileObservationSchema,
   south: TileObservationSchema,
   west: TileObservationSchema,
+  pheromones: z.array(PheromoneSignalSchema),
+  agent_memory: AgentMemorySchema,
   task_context: z.string().nullable().optional(),
+  full_content: z.string().nullable().optional(),
 });
 
 export type NeighborhoodScan = z.infer<typeof NeighborhoodScanSchema>;
 
 export const AgentDecisionSchema = z
   .object({
-    action: z.enum(['move', 'wait', 'read', 'edit', 'submit']),
+    action: z.enum(['move', 'wait', 'read', 'edit', 'submit', 'broadcast', 'patch', 'insert', 'delete']),
     direction: DirectionSchema.optional(),
     target: z.string().min(1).optional(),
     content: z.string().optional(),
+    message: z.string().min(1).optional(),
+    old_text: z.string().optional(),
+    new_text: z.string().optional(),
+    after_line: z.number().int().nonnegative().optional(),
+    start_line: z.number().int().positive().optional(),
+    end_line: z.number().int().positive().optional(),
+    text: z.string().optional(),
+    explanation_cache_key: z.string().min(1).optional(),
+    explanation_text: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.action === 'move' && value.direction === undefined) {
@@ -229,6 +315,34 @@ export const AgentDecisionSchema = z
         code: z.ZodIssueCode.custom,
         message: 'content is required when action is edit',
         path: ['content'],
+      });
+    }
+    if (value.action === 'broadcast' && value.message === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'message is required when action is broadcast',
+        path: ['message'],
+      });
+    }
+    if (value.action === 'patch' && (!value.target || value.old_text === undefined || value.new_text === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'target, old_text, and new_text are required when action is patch',
+        path: ['target'],
+      });
+    }
+    if (value.action === 'insert' && (!value.target || value.after_line === undefined || value.text === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'target, after_line, and text are required when action is insert',
+        path: ['target'],
+      });
+    }
+    if (value.action === 'delete' && (!value.target || value.start_line === undefined || value.end_line === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'target, start_line, and end_line are required when action is delete',
+        path: ['target'],
       });
     }
   });

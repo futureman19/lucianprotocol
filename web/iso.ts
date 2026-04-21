@@ -1,4 +1,17 @@
+export interface Camera {
+  panX: number;
+  panY: number;
+  zoom: number;
+}
+
+export const DEFAULT_CAMERA: Camera = {
+  panX: 0,
+  panY: 0,
+  zoom: 1,
+};
+
 export interface IsoLayout {
+  camera: Camera;
   halfHeight: number;
   halfWidth: number;
   originX: number;
@@ -20,15 +33,21 @@ export interface CubeProjection {
   top: ScreenPoint[];
 }
 
-export function createIsoLayout(viewportWidth: number, viewportHeight: number): IsoLayout {
-  const tileWidth = Math.max(16, Math.min(viewportWidth / 30, viewportHeight / 15));
-  const tileHeight = Math.max(8, tileWidth * 0.5);
+export function createIsoLayout(
+  viewportWidth: number,
+  viewportHeight: number,
+  camera: Camera = DEFAULT_CAMERA,
+): IsoLayout {
+  const baseTileWidth = Math.max(16, Math.min(viewportWidth / 30, viewportHeight / 15));
+  const tileWidth = Math.max(8, baseTileWidth * camera.zoom);
+  const tileHeight = Math.max(4, tileWidth * 0.5);
 
   return {
+    camera,
     halfHeight: tileHeight / 2,
     halfWidth: tileWidth / 2,
-    originX: viewportWidth / 2,
-    originY: Math.max(100, tileHeight * 2.6),
+    originX: (viewportWidth / 2) + camera.panX,
+    originY: Math.max(80, tileHeight * 2.6) + camera.panY,
     tileHeight,
     tileWidth,
     tileZ: tileHeight * 0.9,

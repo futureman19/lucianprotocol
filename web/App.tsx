@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { FileCode, Folder, GitBranch } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, PanelRight, X } from 'lucide-react';
 
 import {
   HIVEMIND_LAWS,
@@ -19,14 +19,26 @@ import {
   EntitySchema,
   OperatorControlSchema,
   WorldStateSchema,
+  type AgentActivity,
   type Entity,
   type OperatorControl,
+  type TaskValidationResult,
   type WorldState,
   type Task,
 } from '../src/types';
+import { computeLineDiff, type DiffLine } from './diff';
 import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
-import { createIsoLayout, createPrismProjection, fromScreen, toScreen, traceFace, type IsoLayout } from './iso';
+import {
+  createIsoLayout,
+  createPrismProjection,
+  DEFAULT_CAMERA,
+  fromScreen,
+  toScreen,
+  traceFace,
+  type Camera,
+  type IsoLayout,
+} from './iso';
 
 interface Viewport {
   height: number;
@@ -38,7 +50,7 @@ interface DisplayPoint {
   y: number;
 }
 
-type LogKind = 'scan' | 'move' | 'read' | 'state' | 'alert' | 'verify';
+type LogKind = 'scan' | 'move' | 'read' | 'state' | 'alert' | 'verify' | 'decision';
 
 interface LogEntry {
   id: string;
@@ -402,6 +414,132 @@ function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: Iso
   context.restore();
 }
 
+function drawHoverHighlight(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  const display = getInterpolatedPoint(entity, displayPoints);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.5, layout);
+  const radius = layout.tileHeight * 1.1;
+
+  context.save();
+  context.strokeStyle = 'rgba(86, 217, 255, 0.55)';
+  context.lineWidth = 1.5;
+  context.shadowBlur = 16;
+  context.shadowColor = 'rgba(86, 217, 255, 0.35)';
+  context.setLineDash([4, 4]);
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+function drawSelectionRing(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+  phase: number,
+): void {
+  const display = getInterpolatedPoint(entity, displayPoints);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.5, layout);
+  const radius = layout.tileHeight * 1.25;
+  const pulse = 0.7 + ((phase % 12) * 0.04);
+
+  context.save();
+  context.strokeStyle = `rgba(86, 217, 255, ${pulse})`;
+  context.lineWidth = 2.2;
+  context.shadowBlur = 22;
+  context.shadowColor = 'rgba(86, 217, 255, 0.55)';
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+
+  context.fillStyle = `rgba(86, 217, 255, ${pulse * 0.15})`;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius * 0.85, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function drawAgentTethers(
+  context: CanvasRenderingContext2D,
+  agents: Entity[],
+  entities: Entity[],
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  for (const agent of agents) {
+    if (!agent.objective_path) {
+      continue;
+    }
+
+    const target = entities.find((e) => e.path === agent.objective_path);
+    if (!target) {
+      continue;
+    }
+
+    const agentDisplay = getInterpolatedPoint(agent, displayPoints);
+    const agentCenter = toScreen(agentDisplay.x + 0.5, agentDisplay.y + 0.5, 0.85, layout);
+    const targetCenter = toScreen(target.x + 0.5, target.y + 0.5, 0.5, layout);
+
+    context.save();
+    context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+    context.lineWidth = 1.2;
+    context.setLineDash([6, 4]);
+    context.beginPath();
+    context.moveTo(agentCenter.sx, agentCenter.sy);
+    context.lineTo(targetCenter.sx, targetCenter.sy);
+    context.stroke();
+
+    context.fillStyle = 'rgba(16, 185, 129, 0.5)';
+    context.beginPath();
+    context.arc(targetCenter.sx, targetCenter.sy, 3, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+}
+
+function drawPheromone(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+): void {
+  const ttl = entity.ttl_ticks ?? 0;
+  const maxTtl = 30;
+  const life = ttl / maxTtl;
+  if (life <= 0) {
+    return;
+  }
+
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.1, layout);
+  const baseRadius = layout.tileHeight * 0.75;
+  const pulse = 1 + ((phase % 8) * 0.03);
+  const radius = baseRadius * pulse;
+  const alpha = life * 0.35;
+
+  context.save();
+  context.strokeStyle = `rgba(167, 139, 250, ${alpha})`;
+  context.lineWidth = 1.5;
+  context.shadowBlur = 10 * life;
+  context.shadowColor = `rgba(167, 139, 250, ${alpha * 0.6})`;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+
+  context.strokeStyle = `rgba(167, 139, 250, ${alpha * 0.4})`;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius * 0.6, 0, Math.PI * 2);
+  context.stroke();
+
+  context.restore();
+}
+
 function drawAgent(
   context: CanvasRenderingContext2D,
   entity: Entity,
@@ -469,6 +607,11 @@ function drawEntities(
   for (const item of renderables) {
     const { entity } = item;
     const display = getInterpolatedPoint(entity, displayPoints);
+
+    if (entity.type === 'pheromone') {
+      drawPheromone(context, entity, display, layout, phase);
+      continue;
+    }
 
     if (entity.type === 'agent') {
       drawAgent(context, entity, display, layout, phase, tick);
@@ -545,6 +688,76 @@ function formatTaskStatus(status: Task['status']): string {
     done: 'Done',
   };
   return labels[status] ?? status;
+}
+
+function formatValidationStatus(status: TaskValidationResult['status']): string {
+  const labels: Record<TaskValidationResult['status'], string> = {
+    idle: 'Idle',
+    running: 'Running',
+    clean: 'Clean',
+    warnings: 'Warnings',
+    errors: 'Errors',
+  };
+  return labels[status] ?? status;
+}
+
+function formatExplanationStatus(value: string | null | undefined): string {
+  if (!value) {
+    return 'Idle';
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatActivityStatus(status: AgentActivity['status']): string {
+  const labels: Record<AgentActivity['status'], string> = {
+    thinking: 'Thinking',
+    walking: 'Walking',
+    reading: 'Reading',
+    editing: 'Editing',
+    idle: 'Idle',
+  };
+  return labels[status] ?? status;
+}
+
+function getActivitySwatchClass(status: AgentActivity['status']): string {
+  switch (status) {
+    case 'thinking':
+      return 'is-thinking';
+    case 'walking':
+      return 'is-walking';
+    case 'reading':
+      return 'is-reading';
+    case 'editing':
+      return 'is-editing';
+    case 'idle':
+      return 'is-idle';
+    default:
+      return '';
+  }
+}
+
+function shouldShowDiff(task: Task): boolean {
+  return (
+    (task.status === 'awaiting_review' || task.status === 'done') &&
+    task.original_content != null &&
+    task.completed_content != null
+  );
+}
+
+function TaskDiff({ lines }: { lines: DiffLine[] }) {
+  return (
+    <div className="task-diff">
+      {lines.map((line, index) => (
+        <div className={`diff-line diff-${line.type}`} key={`${line.type}-${index}`}>
+          <span className="diff-prefix">
+            {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+          </span>
+          <span className="diff-text">{line.text}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
@@ -705,6 +918,11 @@ function App() {
   const [viewport, setViewport] = useState<Viewport>({ height: 720, width: 1280 });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
+  const [contextTab, setContextTab] = useState<'code' | 'explanation'>('code');
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
+  const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
 
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
@@ -729,6 +947,9 @@ function App() {
   const previousAgentPositionRef = useRef<string | null>(null);
   const previousCriticalMassSignatureRef = useRef<string>('');
   const previousAsymmetrySignatureRef = useRef<string>('');
+  const previousAgentActivitiesRef = useRef<Record<string, AgentActivity>>({});
+  const selectedEntityRef = useRef<Entity | null>(null);
+  const inspectPanelRef = useRef<HTMLDivElement | null>(null);
 
   const agents = entities.filter((entity) => entity.type === 'agent');
   const primaryAgent = agents[0] ?? null;
@@ -767,7 +988,21 @@ function App() {
     label: getAgentRoleLabel(role),
     role,
   }));
-  const codePreview = getCodePreview(loadedFile);
+  const explanationTargetPath = worldState.explanation_target_path ?? null;
+  const explanationTargetEntity = explanationTargetPath ? entityByPath.get(explanationTargetPath) ?? null : null;
+  const explanationStatus = worldState.explanation_status ?? 'idle';
+  const explanationText = worldState.explanation_text ?? '';
+  const explanationError = worldState.explanation_error ?? null;
+  const hasExplanationTab =
+    explanationTargetPath !== null ||
+    explanationStatus !== 'idle' ||
+    explanationText.length > 0 ||
+    explanationError !== null;
+  const contextEntity = explanationTargetEntity ?? loadedFile;
+  const contextNodeState = explanationTargetEntity
+    ? (explanationTargetEntity.node_state ?? 'stable')
+    : loadedFileState;
+  const codePreview = getCodePreview(contextEntity);
   const activeRepositoryName =
     worldState.active_repo_name ??
     repositoryRoot?.name ??
@@ -786,6 +1021,24 @@ function App() {
 
   const isPaused = worldState.paused ?? operatorControl.paused ?? false;
   const isAutomated = worldState.automate ?? operatorControl.automate ?? false;
+
+  const inspectPopupPosition = ((): { left: number; top: number } | null => {
+    if (!selectedEntity) return null;
+    const layout = createIsoLayout(viewport.width, viewport.height, camera);
+    const center = toScreen(
+      selectedEntity.x + 0.5,
+      selectedEntity.y + 0.5,
+      getPrismHeight(selectedEntity) + 0.8,
+      layout,
+    );
+    const popupWidth = 320;
+    const popupHeight = 280;
+    let left = center.sx - popupWidth / 2;
+    let top = center.sy - popupHeight - layout.tileHeight * 0.5;
+    left = Math.max(12, Math.min(viewport.width - popupWidth - 12, left));
+    top = Math.max(12, Math.min(viewport.height - popupHeight - 12, top));
+    return { left, top };
+  })();
 
   const handleToggleAutomate = async (): Promise<void> => {
     const supabase = supabaseRef.current;
@@ -967,6 +1220,44 @@ function App() {
     }
   };
 
+  const dispatchFileAction = async (action: 'read' | 'explain' | 'repair', targetPath: string): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setControlMessage('Supabase keys missing; cannot dispatch file action from browser.');
+      return;
+    }
+    const prompt = `${action} ${targetPath}`;
+    setIsSavingControl(true);
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: prompt,
+            paused: isPaused,
+            automate: isAutomated,
+            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+            pending_edit_path: operatorControl.pending_edit_path,
+            pending_edit_content: operatorControl.pending_edit_content,
+            commit_message: operatorControl.commit_message,
+            should_push: operatorControl.should_push,
+          },
+          { onConflict: 'id' },
+        );
+      if (error) throw error;
+      setControlMessage(`Dispatched: ${prompt}. An architect will pick it up on the next tick.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setControlMessage(`Dispatch failed: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
+
   const handleCommit = async (): Promise<void> => {
     const supabase = supabaseRef.current;
     if (!supabase) {
@@ -1058,6 +1349,42 @@ function App() {
   useEffect(() => {
     routeNodesRef.current = routeNodes;
   }, [routeNodes]);
+
+  useEffect(() => {
+    selectedEntityRef.current = selectedEntity;
+  }, [selectedEntity]);
+
+  useEffect(() => {
+    if (selectedEntity && !leftPanelOpen) {
+      setLeftPanelOpen(true);
+    }
+  // Only react to selection changes, not leftPanelOpen toggles
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEntity]);
+
+  useEffect(() => {
+    if (selectedEntity && inspectPanelRef.current) {
+      inspectPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selectedEntity]);
+
+  useEffect(() => {
+    if (!hasExplanationTab) {
+      if (contextTab === 'explanation') {
+        setContextTab('code');
+      }
+      return;
+    }
+
+    if (
+      explanationStatus === 'pending' ||
+      explanationStatus === 'streaming' ||
+      explanationStatus === 'complete' ||
+      explanationError !== null
+    ) {
+      setContextTab('explanation');
+    }
+  }, [contextTab, explanationError, explanationStatus, explanationTargetPath, hasExplanationTab]);
 
   useEffect(() => {
     const nextLogs: LogEntry[] = [];
@@ -1182,6 +1509,34 @@ function App() {
       previousCriticalMassSignatureRef.current = '';
     }
 
+    const agentActivities = worldState.agent_activities ?? [];
+    const previousActivities = previousAgentActivitiesRef.current;
+    for (const activity of agentActivities) {
+      const previous = previousActivities[activity.agent_id];
+      if (!previous || previous.status !== activity.status || previous.target_path !== activity.target_path) {
+        const roleLabel = getAgentRoleLabel(activity.agent_role).toLowerCase();
+        const target = activity.target_path ?? 'lattice';
+        switch (activity.status) {
+          case 'thinking':
+            nextLogs.push(createLogEntry('decision', worldState.tick, `THINK -> ${roleLabel} requesting decision for ${target}`));
+            break;
+          case 'walking':
+            nextLogs.push(createLogEntry('decision', worldState.tick, `WALK -> ${roleLabel} moving toward ${target}`));
+            break;
+          case 'reading':
+            nextLogs.push(createLogEntry('decision', worldState.tick, `READ -> ${roleLabel} locked on ${target}`));
+            break;
+          case 'editing':
+            nextLogs.push(createLogEntry('decision', worldState.tick, `EDIT -> ${roleLabel} applying changes to ${target}`));
+            break;
+          case 'idle':
+            nextLogs.push(createLogEntry('decision', worldState.tick, `IDLE -> ${roleLabel} dormant`));
+            break;
+        }
+      }
+    }
+    previousAgentActivitiesRef.current = Object.fromEntries(agentActivities.map((a) => [a.agent_id, a]));
+
     if (nextLogs.length > 0) {
       setLogEntries((previous) => [...previous, ...nextLogs].slice(-90));
     }
@@ -1205,6 +1560,7 @@ function App() {
     worldState.operator_prompt,
     worldState.status,
     worldState.tick,
+    worldState.agent_activities,
   ]);
 
   useEffect(() => {
@@ -1242,31 +1598,130 @@ function App() {
       return undefined;
     }
 
-    const handleCanvasClick = (event: MouseEvent): void => {
+    const DRAG_THRESHOLD = 4;
+    let isMouseDown = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let isPanning = false;
+    let lastPanX = 0;
+    let lastPanY = 0;
+
+    const handleWheel = (event: WheelEvent): void => {
+      event.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      const sx = event.clientX - rect.left;
-      const sy = event.clientY - rect.top;
-      const layout = createIsoLayout(viewport.width, viewport.height);
-      const grid = fromScreen(sx, sy, layout);
-      const gx = Math.round(grid.x);
-      const gy = Math.round(grid.y);
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
 
-      const candidates = entityListRef.current.filter((entity) =>
-        entity.x === gx && entity.y === gy && isStructureEntity(entity),
-      );
+      setCamera((prev) => {
+        const oldLayout = createIsoLayout(viewport.width, viewport.height, prev);
+        const worldBefore = fromScreen(mouseX, mouseY, oldLayout);
+        const newZoom = Math.max(0.3, Math.min(4, prev.zoom * (event.deltaY < 0 ? 1.12 : 0.88)));
+        const next: Camera = { ...prev, zoom: newZoom };
+        const newLayout = createIsoLayout(viewport.width, viewport.height, next);
+        const worldAfter = fromScreen(mouseX, mouseY, newLayout);
+        return {
+          ...next,
+          panX: prev.panX + ((worldAfter.x - worldBefore.x) * newLayout.tileWidth * 0.5),
+          panY: prev.panY + ((worldAfter.y - worldBefore.y) * newLayout.tileHeight * 0.5),
+        };
+      });
+    };
 
-      if (candidates.length > 0) {
-        setSelectedEntity(candidates[0] ?? null);
-      } else {
-        setSelectedEntity(null);
+    const handleMouseDown = (event: MouseEvent): void => {
+      if (event.button === 0) {
+        isMouseDown = true;
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+        isPanning = false;
+      } else if (event.button === 1) {
+        isPanning = true;
+        lastPanX = event.clientX;
+        lastPanY = event.clientY;
+        canvas.style.cursor = 'grabbing';
       }
     };
 
-    canvas.addEventListener('click', handleCanvasClick);
-    return () => {
-      canvas.removeEventListener('click', handleCanvasClick);
+    const handleMouseMove = (event: MouseEvent): void => {
+      if (isMouseDown && !isPanning) {
+        const dx = event.clientX - dragStartX;
+        const dy = event.clientY - dragStartY;
+        if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+          isPanning = true;
+          lastPanX = event.clientX;
+          lastPanY = event.clientY;
+          canvas.style.cursor = 'grabbing';
+        }
+      }
+
+      if (isPanning) {
+        const dx = event.clientX - lastPanX;
+        const dy = event.clientY - lastPanY;
+        lastPanX = event.clientX;
+        lastPanY = event.clientY;
+        setCamera((prev) => ({ ...prev, panX: prev.panX + dx, panY: prev.panY + dy }));
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const layout = createIsoLayout(viewport.width, viewport.height, camera);
+
+      const nearest = entityListRef.current
+        .filter((e) => isStructureEntity(e))
+        .map((entity) => {
+          const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
+          const dist = Math.hypot(center.sx - sx, center.sy - sy);
+          return { entity, dist };
+        })
+        .filter((item) => item.dist < layout.tileHeight * 1.2)
+        .sort((a, b) => a.dist - b.dist)[0];
+
+      setHoveredEntityId(nearest?.entity.id ?? null);
+      canvas.style.cursor = nearest ? 'pointer' : 'default';
     };
-  }, [viewport]);
+
+    const handleMouseUp = (event: MouseEvent): void => {
+      if (isPanning) {
+        isPanning = false;
+        isMouseDown = false;
+        canvas.style.cursor = 'default';
+        return;
+      }
+
+      if (isMouseDown) {
+        isMouseDown = false;
+        const rect = canvas.getBoundingClientRect();
+        const sx = event.clientX - rect.left;
+        const sy = event.clientY - rect.top;
+        const layout = createIsoLayout(viewport.width, viewport.height, camera);
+
+        const nearest = entityListRef.current
+          .filter((e) => isStructureEntity(e))
+          .map((entity) => {
+            const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
+            const dist = Math.hypot(center.sx - sx, center.sy - sy);
+            return { entity, dist };
+          })
+          .filter((item) => item.dist < layout.tileHeight * 1.4)
+          .sort((a, b) => a.dist - b.dist)[0];
+
+        setSelectedEntity(nearest?.entity ?? null);
+      }
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [viewport, camera]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1289,10 +1744,17 @@ function App() {
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
       context.clearRect(0, 0, viewport.width, viewport.height);
 
-      const layout = createIsoLayout(viewport.width, viewport.height);
+      const layout = createIsoLayout(viewport.width, viewport.height, camera);
       drawBackdrop(context, viewport);
       drawGrid(context, layout);
       drawTetherRoute(context, routeNodesRef.current, layout);
+      drawAgentTethers(
+        context,
+        agents,
+        entityListRef.current,
+        layout,
+        displayPointsRef.current,
+      );
       drawEntities(
         context,
         entityListRef.current,
@@ -1301,6 +1763,18 @@ function App() {
         tickRef.current,
         displayPointsRef.current,
       );
+
+      if (hoveredEntityId) {
+        const hovered = entityListRef.current.find((e) => e.id === hoveredEntityId);
+        if (hovered && isStructureEntity(hovered)) {
+          drawHoverHighlight(context, hovered, layout, displayPointsRef.current);
+        }
+      }
+
+      const selected = selectedEntityRef.current;
+      if (selected && isStructureEntity(selected)) {
+        drawSelectionRing(context, selected, layout, displayPointsRef.current, phaseRef.current);
+      }
 
       frameRef.current = window.requestAnimationFrame(render);
     };
@@ -1313,7 +1787,7 @@ function App() {
         frameRef.current = null;
       }
     };
-  }, [viewport]);
+  }, [viewport, camera, hoveredEntityId, agents]);
 
   useEffect(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
@@ -1487,12 +1961,22 @@ function App() {
 
   return (
     <main className="lux-shell">
-      <aside className="lux-panel lux-panel-left">
-        <div className="panel-header">
-          <div className="panel-title-wrap">
-            <GitBranch size={14} strokeWidth={1.85} />
-            <span className="panel-title">Git Overlay</span>
-          </div>
+      <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
+        <button
+          className="panel-toggle"
+          onClick={() => setLeftPanelOpen(!leftPanelOpen)}
+          title={leftPanelOpen ? 'Collapse left panel' : 'Expand left panel'}
+          type="button"
+        >
+          {leftPanelOpen ? <ChevronLeft size={16} /> : <PanelLeft size={16} />}
+        </button>
+        {leftPanelOpen ? (
+          <>
+            <div className="panel-header">
+              <div className="panel-title-wrap">
+                <GitBranch size={14} strokeWidth={1.85} />
+                <span className="panel-title">Git Overlay</span>
+              </div>
           <span className="panel-subtitle">{structureNodes.length} nodes</span>
         </div>
 
@@ -1667,13 +2151,38 @@ function App() {
               <span className="task-stat is-done">{worldState.active_tasks.filter((t) => t.status === 'done').length} done</span>
             </div>
             <div className="task-list">
-              {worldState.active_tasks.map((task) => (
-                <div className={`task-row status-${task.status}`} key={task.id}>
-                  <span className="task-id">{task.id}</span>
-                  <span className="task-path">{task.target_path}</span>
-                  <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
-                </div>
-              ))}
+              {worldState.active_tasks.map((task) => {
+                const diffLines = shouldShowDiff(task)
+                  ? computeLineDiff(task.original_content ?? '', task.completed_content ?? '')
+                  : null;
+                const validationBadges = [
+                  { label: 'Lint', value: task.validation?.lint },
+                  { label: 'Types', value: task.validation?.typecheck },
+                ].filter((entry): entry is { label: string; value: TaskValidationResult } => entry.value != null);
+                return (
+                  <div className={`task-row status-${task.status}`} key={task.id}>
+                    <span className="task-id">{task.id}</span>
+                    <span className="task-path">{task.target_path}</span>
+                    <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
+                    {validationBadges.length > 0 ? (
+                      <div className="task-validation-strip">
+                        {validationBadges.map((entry) => (
+                          <span
+                            className={`task-validation-badge status-${entry.value.status}`}
+                            key={`${task.id}-${entry.label}`}
+                            title={entry.value.summary ?? `${entry.label} ${formatValidationStatus(entry.value.status)}`}
+                          >
+                            {entry.label} {formatValidationStatus(entry.value.status)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {diffLines && diffLines.length > 0 ? (
+                      <TaskDiff lines={diffLines} />
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -1779,33 +2288,337 @@ function App() {
             <p className="panel-placeholder">No Git structure overlay loaded yet.</p>
           )}
         </div>
+
+        {contextEntity || hasExplanationTab ? (
+          <div className="panel-card context-panel">
+            <div className="panel-card-header">
+              <div className="panel-card-title">Spatial Context</div>
+              <div className="context-badge">
+                {contextTab === 'explanation' && hasExplanationTab
+                  ? formatExplanationStatus(explanationStatus)
+                  : getNodeStateLabel(contextNodeState ?? 'stable')}
+              </div>
+            </div>
+            <div className="context-meta">
+              <span>{contextEntity?.descriptor ?? 'Source artifact'}</span>
+              {contextEntity ? <span>Mass {contextEntity.mass}</span> : null}
+              {contextEntity ? <span>Chiral {computeChiralMass(contextEntity)}</span> : null}
+              {contextEntity ? <span>{contextEntity.git_status ?? 'clean'}</span> : null}
+              {hasExplanationTab ? <span>Explain {formatExplanationStatus(explanationStatus)}</span> : null}
+            </div>
+            {hasExplanationTab ? (
+              <div className="context-tabs">
+                <button
+                  className={`context-tab ${contextTab === 'code' ? 'is-active' : ''}`}
+                  onClick={() => setContextTab('code')}
+                  type="button"
+                >
+                  Code
+                </button>
+                <button
+                  className={`context-tab ${contextTab === 'explanation' ? 'is-active' : ''}`}
+                  onClick={() => setContextTab('explanation')}
+                  type="button"
+                >
+                  Explanation
+                </button>
+              </div>
+            ) : null}
+            {contextTab === 'explanation' && hasExplanationTab ? (
+              <div className="explanation-frame">
+                <div className={`explanation-status status-${explanationStatus}`}>
+                  {formatExplanationStatus(explanationStatus)}
+                </div>
+                {explanationError ? (
+                  <div className="explanation-placeholder is-error">{explanationError}</div>
+                ) : explanationText.trim().length > 0 ? (
+                  <div className="explanation-body">{explanationText}</div>
+                ) : (
+                  <div className="explanation-placeholder">
+                    {explanationStatus === 'pending'
+                      ? 'Awaiting Gemini explanation for this file.'
+                      : explanationStatus === 'streaming'
+                        ? 'Streaming explanation into the lattice.'
+                        : 'No explanation captured yet.'}
+                  </div>
+                )}
+              </div>
+            ) : contextEntity ? (
+              <CodeSyntaxPreview code={codePreview} />
+            ) : (
+              <div className="explanation-placeholder">No file content is loaded for this target yet.</div>
+            )}
+          </div>
+        ) : null}
+
+        {selectedEntity ? (
+          <div className="panel-card inspect-panel" ref={inspectPanelRef}>
+            <div className="panel-card-header">
+              <div className="panel-card-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
+              <button
+                className="inspect-close"
+                onClick={() => setSelectedEntity(null)}
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="context-meta">
+              <span>{selectedEntity.type}</span>
+              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
+              <span>Mass {selectedEntity.mass}</span>
+              <span>Chiral {computeChiralMass(selectedEntity)}</span>
+              <span>{selectedEntity.git_status ?? 'clean'}</span>
+              <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
+            </div>
+            {selectedEntity.path ? (
+              <div className="inspect-actions">
+                <button
+                  className="inspect-action-btn"
+                  onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Send Architect
+                </button>
+                <button
+                  className="inspect-action-btn is-repair"
+                  onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Repair File
+                </button>
+                <button
+                  className="inspect-action-btn is-explain"
+                  onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Explain
+                </button>
+              </div>
+            ) : null}
+            {selectedEntity.content_preview || selectedEntity.content ? (
+              <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
+            ) : (
+              <div className="code-frame">
+                <div className="code-line">
+                  <span className="code-gutter">—</span>
+                  <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+          </>
+        ) : null}
       </aside>
 
       <section className="lux-lattice" ref={latticeRef}>
         <canvas className="lux-canvas" ref={canvasRef} />
 
-        <div className="hud-card hud-top-left">
-          <div className="hud-label">Global Clock</div>
-          <div className="hud-value">{worldState.tick} / {worldState.phase}</div>
-          <div className="hud-meta">
-            <span>Status: {worldState.status}</span>
-            <span>Mode: {mode}</span>
-            <span>Agent: {primaryAgent ? `(${primaryAgent.x}, ${primaryAgent.y})` : 'offline'}</span>
-          </div>
-          <div className="hud-focus">Focus: {buildBreadcrumb(loadedFile ?? activeStructure)}</div>
-          <div className="hud-meta">
-            <span>Role: {getAgentRoleLabel(primaryRole)}</span>
-            <span>Node: {getNodeStateLabel(loadedFileState ?? activeStructureState ?? 'stable')}</span>
-          </div>
-          <div className="hud-focus">Directive: {activeDirective}</div>
-          <div className="hud-meta">
-            <span>Control: {formatControlStatus(controlStatus)}</span>
-            <span>Target: {operatorTargetPath ?? 'none'}</span>
-          </div>
+        <div className="hud-minibar">
+          <span className="hud-minibar-item">
+            T{worldState.tick}:{worldState.phase}
+          </span>
+          <span className="hud-minibar-item">
+            {worldState.status}
+          </span>
+          <span className="hud-minibar-item">
+            {primaryAgent ? `(${primaryAgent.x},${primaryAgent.y})` : 'offline'}
+          </span>
+          <span className="hud-minibar-item">
+            {getAgentRoleLabel(primaryRole).toLowerCase()}
+          </span>
+          <span className="hud-minibar-item">
+            {formatControlStatus(controlStatus)}
+          </span>
         </div>
 
-        <div className="hud-card hud-bottom-right">
-          <div className="hud-label">Hivemind Taxonomy</div>
+        <div className="zoom-controls">
+          <button
+            className="zoom-button"
+            onClick={() => setCamera((prev) => ({ ...prev, zoom: Math.min(4, prev.zoom * 1.25) }))}
+            title="Zoom in"
+            type="button"
+          >
+            +
+          </button>
+          <button
+            className="zoom-button"
+            onClick={() => setCamera((prev) => ({ ...prev, zoom: Math.max(0.3, prev.zoom / 1.25) }))}
+            title="Zoom out"
+            type="button"
+          >
+            −
+          </button>
+          <button
+            className="zoom-button"
+            onClick={() => setCamera(DEFAULT_CAMERA)}
+            title="Reset view"
+            type="button"
+          >
+            ⌂
+          </button>
+          <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
+        </div>
+
+        {selectedEntity && inspectPopupPosition ? (
+          <div
+            className="canvas-inspect-popup"
+            style={{ left: inspectPopupPosition.left, top: inspectPopupPosition.top }}
+          >
+            <div className="canvas-inspect-popup-header">
+              <div className="canvas-inspect-popup-title">
+                {selectedEntity.name ?? selectedEntity.path ?? 'Unnamed'}
+              </div>
+              <button
+                className="canvas-inspect-popup-close"
+                onClick={() => setSelectedEntity(null)}
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="canvas-inspect-popup-meta">
+              <span>{selectedEntity.type}</span>
+              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
+              <span>Mass {selectedEntity.mass}</span>
+              <span>{selectedEntity.git_status ?? 'clean'}</span>
+            </div>
+            {selectedEntity.path ? (
+              <div className="canvas-inspect-popup-actions">
+                <button
+                  className="inspect-action-btn"
+                  onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Send Architect
+                </button>
+                <button
+                  className="inspect-action-btn is-repair"
+                  onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Repair File
+                </button>
+                <button
+                  className="inspect-action-btn is-explain"
+                  onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
+                  type="button"
+                >
+                  Explain
+                </button>
+              </div>
+            ) : null}
+            <div className="canvas-inspect-popup-body">
+              {selectedEntity.content_preview || selectedEntity.content ? (
+                <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
+              ) : (
+                <div className="code-frame">
+                  <div className="code-line">
+                    <span className="code-gutter">—</span>
+                    <span className="code-content">
+                      {selectedEntity.is_binary
+                        ? 'Binary asset — hash-only transfer.'
+                        : 'No content preview available.'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {errorMessage ? <div className="hud-alert">{errorMessage}</div> : null}
+      </section>
+
+      <aside className={`lux-panel lux-panel-right ${rightPanelOpen ? 'is-open' : 'is-collapsed'}`}>
+        <button
+          className="panel-toggle"
+          onClick={() => setRightPanelOpen(!rightPanelOpen)}
+          title={rightPanelOpen ? 'Collapse right panel' : 'Expand right panel'}
+          type="button"
+        >
+          {rightPanelOpen ? <ChevronRight size={16} /> : <PanelRight size={16} />}
+        </button>
+        {rightPanelOpen ? (
+          <>
+            <div className="panel-header">
+              <div className="panel-title-wrap">
+                <GitBranch size={14} strokeWidth={1.85} />
+                <span className="panel-title">AI Cognition Log</span>
+              </div>
+              <span className="panel-subtitle">{mode === 'live' ? 'live feed' : 'preview feed'}</span>
+            </div>
+
+        <div className={`cognition-status role-${primaryRole}`}>
+          <span className={`cursor-pulse role-${primaryRole}`} />
+          <span>
+            {loadedFile
+              ? `${getAgentRoleLabel(primaryRole).toLowerCase()} reading ${loadedFile.name ?? loadedFile.path ?? 'node'}`
+              : activeStructure
+                ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
+                : 'awaiting structure lock'}
+          </span>
+        </div>
+
+        {worldState.agent_activities && worldState.agent_activities.length > 0 ? (
+          <div className="activity-panel">
+            <div className="activity-panel-title">Workforce Activity</div>
+            <div className="activity-list">
+              {worldState.agent_activities.map((activity) => (
+                <div className={`activity-row status-${activity.status}`} key={activity.agent_id}>
+                  <span className={`activity-swatch ${getActivitySwatchClass(activity.status)}`} />
+                  <span className="activity-id">{activity.agent_id.replace('agent-', '')}</span>
+                  <span className="activity-status">{formatActivityStatus(activity.status)}</span>
+                  {activity.target_path ? (
+                    <span className="activity-target">{activity.target_path}</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="directive-strip">
+          <span className="directive-label">Operator Prompt</span>
+          <span className="directive-value">{activeDirective}</span>
+        </div>
+
+        <div className="laws-strip">
+          {HIVEMIND_LAWS.slice(0, 3).map((law, index) => (
+            <div className="law-chip" key={`law-${index}`}>
+              L{index + 1}: {law}
+            </div>
+          ))}
+        </div>
+
+        <div className="cognition-log">
+          {logEntries.length > 0 ? (
+            logEntries.map((entry) => (
+              <div className={`log-entry log-${entry.kind}`} key={entry.id}>
+                <div className="log-meta">
+                  <span>{entry.timestamp}</span>
+                  <span>T+{entry.tick}</span>
+                </div>
+                <div className="log-message">{entry.message}</div>
+              </div>
+            ))
+          ) : (
+            <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
+          )}
+        </div>
+
+        <div className="cognition-footer">
+          <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
+          <div>Verified: {verifiedNodes.length}</div>
+          <div>Critical Mass: {criticalMassNodes.length}</div>
+          <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
+          <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
+          <div>Queue: {worldState.queue_depth ?? 0}</div>
+        </div>
+
+        <div className="panel-card legend-panel">
+          <div className="panel-card-title">Hivemind Taxonomy</div>
           <div className="legend-section">
             <div className="legend-heading">Agents</div>
             <div className="legend-list">
@@ -1849,122 +2662,8 @@ function App() {
             </div>
           </div>
         </div>
-
-        {loadedFile ? (
-          <div className="context-window">
-            <div className="context-header">
-              <div>
-                <div className="context-title">Spatial Context Loaded</div>
-                <div className="context-path">{loadedFile.path}</div>
-              </div>
-              <div className="context-badge">{getNodeStateLabel(loadedFileState ?? 'stable')}</div>
-            </div>
-            <div className="context-meta">
-              <span>{loadedFile.descriptor ?? 'Source artifact'}</span>
-              <span>Mass {loadedFile.mass}</span>
-              <span>Chiral {computeChiralMass(loadedFile)}</span>
-              <span>{loadedFile.git_status ?? 'clean'}</span>
-            </div>
-            <CodeSyntaxPreview code={codePreview} />
-          </div>
+          </>
         ) : null}
-
-        {selectedEntity ? (
-          <div className="context-window inspect-panel">
-            <div className="context-header">
-              <div>
-                <div className="context-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
-                <div className="context-path">{selectedEntity.path ?? selectedEntity.id}</div>
-              </div>
-              <button
-                className="inspect-close"
-                onClick={() => setSelectedEntity(null)}
-                type="button"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="context-meta">
-              <span>{selectedEntity.type}</span>
-              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
-              <span>Mass {selectedEntity.mass}</span>
-              <span>Chiral {computeChiralMass(selectedEntity)}</span>
-              <span>{selectedEntity.git_status ?? 'clean'}</span>
-              <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
-            </div>
-            {selectedEntity.content_preview || selectedEntity.content ? (
-              <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
-            ) : (
-              <div className="code-frame">
-                <div className="code-line">
-                  <span className="code-gutter">—</span>
-                  <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {errorMessage ? <div className="hud-alert">{errorMessage}</div> : null}
-      </section>
-
-      <aside className="lux-panel lux-panel-right">
-        <div className="panel-header">
-          <div className="panel-title-wrap">
-            <GitBranch size={14} strokeWidth={1.85} />
-            <span className="panel-title">AI Cognition Log</span>
-          </div>
-          <span className="panel-subtitle">{mode === 'live' ? 'live feed' : 'preview feed'}</span>
-        </div>
-
-        <div className={`cognition-status role-${primaryRole}`}>
-          <span className={`cursor-pulse role-${primaryRole}`} />
-          <span>
-            {loadedFile
-              ? `${getAgentRoleLabel(primaryRole).toLowerCase()} reading ${loadedFile.name ?? loadedFile.path ?? 'node'}`
-              : activeStructure
-                ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
-                : 'awaiting structure lock'}
-          </span>
-        </div>
-
-        <div className="directive-strip">
-          <span className="directive-label">Operator Prompt</span>
-          <span className="directive-value">{activeDirective}</span>
-        </div>
-
-        <div className="laws-strip">
-          {HIVEMIND_LAWS.slice(0, 3).map((law, index) => (
-            <div className="law-chip" key={`law-${index}`}>
-              L{index + 1}: {law}
-            </div>
-          ))}
-        </div>
-
-        <div className="cognition-log">
-          {logEntries.length > 0 ? (
-            logEntries.map((entry) => (
-              <div className={`log-entry log-${entry.kind}`} key={entry.id}>
-                <div className="log-meta">
-                  <span>{entry.timestamp}</span>
-                  <span>T+{entry.tick}</span>
-                </div>
-                <div className="log-message">{entry.message}</div>
-              </div>
-            ))
-          ) : (
-            <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
-          )}
-        </div>
-
-        <div className="cognition-footer">
-          <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
-          <div>Verified: {verifiedNodes.length}</div>
-          <div>Critical Mass: {criticalMassNodes.length}</div>
-          <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
-          <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
-          <div>Queue: {worldState.queue_depth ?? 0}</div>
-        </div>
       </aside>
     </main>
   );

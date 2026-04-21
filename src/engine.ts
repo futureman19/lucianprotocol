@@ -1,9 +1,13 @@
 import 'dotenv/config';
 
+
+import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+
 import { simpleGit } from 'simple-git';
 
 import { GeminiNavigator } from './ai';
@@ -32,19 +36,24 @@ import {
   loadRepositoryOverlaySync,
   saveRepositoryOverlay,
 } from './git-parser';
+import { applyDelete, applyInsert, applyPatch } from './surgical-edit';
 import { isStructureEntity } from './mass-mapper';
 import { createServiceSupabaseClient } from './supabase';
 import {
   OperatorControlSchema,
+  type AgentActivity,
   type AgentDecision,
+  type AgentMemory,
   type AgentRole,
   type ControlStatus,
   type Direction,
   type Entity,
+  type ExplainStatus,
   type NeighborhoodScan,
   type NodeState,
   type OperatorAction,
   type OperatorControl,
+  type PheromoneSignal,
   type Position,
   type QueuedDecision,
   type TileObservation,
@@ -58,6 +67,25 @@ interface PendingAiRequest {
   runId: number;
   startedAtMs: number;
 }
+
+interface ExplanationState {
+  status: ExplainStatus;
+  targetPath: string | null;
+  agentId: string | null;
+  contentHash: string | null;
+  cacheKey: string | null;
+  prompt: string | null;
+  text: string | null;
+  fullText: string | null;
+  error: string | null;
+  updatedAtTick: number | null;
+}
+
+interface ExplanationCacheEntry {
+  text: string;
+  updatedAtTick: number;
+}
+
 
 const CLOCKWISE_SHIFT: Record<Direction, Direction> = {
   north: 'east',
@@ -76,8 +104,43 @@ const COUNTER_CLOCKWISE_SHIFT: Record<Direction, Direction> = {
 const VERIFICATION_TTL_TICKS = 12;
 const ARCHITECT_WORK_TICKS = 4;
 const CRITIC_REVIEW_TICKS = 3;
+const PHEROMONE_TTL_TICKS = 30;
 const CONTROL_ROW_ID = 'lux-control';
 const CONTROL_POLL_INTERVAL_TICKS = 10;
+const EXPLANATION_STREAM_CHARS_PER_TICK = 220;
+
+function createEmptyExplanationState(): ExplanationState {
+  return {
+    status: 'idle',
+    targetPath: null,
+    agentId: null,
+    contentHash: null,
+    cacheKey: null,
+    prompt: null,
+    text: null,
+    fullText: null,
+    error: null,
+    updatedAtTick: null,
+  };
+}
+
+function createDefaultAgentMemory(): AgentMemory {
+  return {
+    files_read: {},
+    lessons: [],
+    last_broadcast: null,
+  };
+}
+
+function getContentHashForMemory(entity: Entity): string {
+  if (entity.content_hash) {
+    return entity.content_hash;
+  }
+
+  return createHash('sha1')
+    .update(entity.content ?? entity.content_preview ?? entity.path ?? entity.name ?? entity.id)
+    .digest('hex');
+}
 
 export function findReadableTargetInEntities(
   entities: readonly Entity[],
@@ -115,6 +178,27 @@ export function findReadableTargetInEntities(
   return null;
 }
 
+export function resolvePathWithinRoot(rootPath: string, relativePath: string): string | null {
+  const trimmedPath = relativePath.trim();
+  if (trimmedPath.length === 0) {
+    return null;
+  }
+
+  const absoluteRoot = path.resolve(rootPath);
+  const absoluteCandidate = path.resolve(absoluteRoot, trimmedPath);
+  const candidateRelativePath = path.relative(absoluteRoot, absoluteCandidate);
+
+  if (
+    candidateRelativePath.length === 0 ||
+    candidateRelativePath.startsWith('..') ||
+    path.isAbsolute(candidateRelativePath)
+  ) {
+    return null;
+  }
+
+  return absoluteCandidate;
+}
+
 export class LuxEngine {
   private readonly entities = new Map<string, Entity>();
   private readonly solidGrid: Array<string | null> = Array.from(
@@ -125,6 +209,7 @@ export class LuxEngine {
   private readonly agentIds: string[] = [];
   private readonly decisionQueue = new Map<string, QueuedDecision>();
   private readonly pendingAiAgents = new Map<string, PendingAiRequest>();
+  private readonly pendingEditAgents = new Set<string>();
   private readonly aiNavigator = new GeminiNavigator();
   private readonly supabase = createServiceSupabaseClient();
   private readonly syncPipeline: Promise<void> = Promise.resolve();
@@ -173,6 +258,12 @@ export class LuxEngine {
   private visionaryPlanningPromise: Promise<void> | null = null;
   private criticReviewPromise: Promise<void> | null = null;
   private visionaryFinalReviewPromise: Promise<void> | null = null;
+  private autoCommitPromise: Promise<void> | null = null;
+  private explanationPromise: Promise<void> | null = null;
+  private explanationRequestId = 0;
+  private explanationState: ExplanationState = createEmptyExplanationState();
+  private readonly explanationCache = new Map<string, ExplanationCacheEntry>();
+  private hasAutoCommittedForCurrentTasks = false;
 
   public constructor(
     private readonly seed: string,
@@ -231,6 +322,7 @@ export class LuxEngine {
     this.agentIds.length = 0;
     this.decisionQueue.clear();
     this.pendingAiAgents.clear();
+    this.pendingEditAgents.clear();
     this.solidGrid.fill(null);
     this.positionIndex.clear();
     this.savedOverlayNames = listSavedRepositoryOverlays();
@@ -239,6 +331,10 @@ export class LuxEngine {
     this.visionaryPlanningPromise = null;
     this.criticReviewPromise = null;
     this.visionaryFinalReviewPromise = null;
+    this.explanationPromise = null;
+    this.explanationRequestId += 1;
+    this.explanationState = createEmptyExplanationState();
+    this.explanationCache.clear();
 
     for (const entity of createInitialEntities(this.seed)) {
       this.registerEntity(entity);
@@ -300,6 +396,7 @@ export class LuxEngine {
 
   private syncOperatorIntent(structureEntities = this.getStructureEntities()): void {
     const directive = resolveOperatorDirective(this.operatorPrompt, structureEntities);
+    const normalizedPrompt = directive.normalizedPrompt?.trim() ?? '';
 
     this.operatorAction = directive.normalizedPrompt ? directive.action : null;
     this.operatorTargetQuery = directive.targetQuery;
@@ -308,17 +405,28 @@ export class LuxEngine {
     if (directive.normalizedPrompt === null) {
       this.controlStatus = 'idle';
       this.controlError = null;
+      this.resetExplanationState();
       return;
     }
 
     if (directive.targetQuery && directive.target === null) {
       this.controlStatus = 'error';
       this.controlError = `Target "${directive.targetQuery}" was not found in the active repository.`;
+      this.resetExplanationState();
       return;
     }
 
     this.controlStatus = 'active';
     this.controlError = null;
+
+    if (
+      this.operatorAction !== 'explain' ||
+      this.operatorTargetPath === null ||
+      this.explanationState.targetPath !== this.operatorTargetPath ||
+      this.explanationState.prompt !== normalizedPrompt
+    ) {
+      this.resetExplanationState();
+    }
   }
 
   private applyPendingOverlayIfReady(): void {
@@ -378,19 +486,32 @@ export class LuxEngine {
     const nextRepoPath = control.repo_path.trim();
     const normalizedRepoPath = this.normalizeRepositoryPath(nextRepoPath);
     const nextPrompt = control.operator_prompt.trim();
-    const signature = `${normalizedRepoPath}\n${nextPrompt}`;
+    const nextVisionaryPrompt = control.visionary_prompt?.trim() ?? '';
+    const nextArchitectPrompt = control.architect_prompt?.trim() ?? '';
+    const nextCriticPrompt = control.critic_prompt?.trim() ?? '';
+    const nextPaused = control.paused ?? false;
+    const nextAutomate = control.automate ?? false;
+    const signature = JSON.stringify({
+      repoPath: normalizedRepoPath,
+      operatorPrompt: nextPrompt,
+      paused: nextPaused,
+      automate: nextAutomate,
+      visionaryPrompt: nextVisionaryPrompt,
+      architectPrompt: nextArchitectPrompt,
+      criticPrompt: nextCriticPrompt,
+    });
 
-    if (signature === this.lastControlSignature && this.paused === (control.paused ?? false) && this.automate === (control.automate ?? false)) {
+    if (signature === this.lastControlSignature) {
       await this.processPendingEdits(control);
       await this.processCommitAndPush(control);
       return;
     }
 
-    this.paused = control.paused ?? false;
-    this.automate = control.automate ?? false;
-    this.visionaryPrompt = control.visionary_prompt ?? '';
-    this.architectPrompt = control.architect_prompt ?? '';
-    this.criticPrompt = control.critic_prompt ?? '';
+    this.paused = nextPaused;
+    this.automate = nextAutomate;
+    this.visionaryPrompt = nextVisionaryPrompt;
+    this.architectPrompt = nextArchitectPrompt;
+    this.criticPrompt = nextCriticPrompt;
     this.operatorPrompt = nextPrompt;
 
     await this.processPendingEdits(control);
@@ -460,25 +581,71 @@ export class LuxEngine {
   }
 
   private registerEntity(entity: Entity): void {
-    this.entities.set(entity.id, entity);
+    const normalizedEntity =
+      entity.type === 'agent' && entity.memory == null
+        ? { ...entity, memory: createDefaultAgentMemory() }
+        : entity;
+
+    this.entities.set(normalizedEntity.id, normalizedEntity);
+    this.invalidateStructureCache();
+
+    if (normalizedEntity.type === 'agent') {
+      this.agentIds.push(normalizedEntity.id);
+    }
+
+    if (normalizedEntity.type === 'goal') {
+      this.goalId = normalizedEntity.id;
+    }
+
+    if (isSolidEntity(normalizedEntity)) {
+      this.solidGrid[toIndex(normalizedEntity.x, normalizedEntity.y)] = normalizedEntity.id;
+    }
+
+    const key = `${normalizedEntity.x},${normalizedEntity.y}`;
+    const list = this.positionIndex.get(key) ?? [];
+    list.push(normalizedEntity.id);
+    this.positionIndex.set(key, list);
+  }
+
+  private deleteEntity(entityId: string): void {
+    const entity = this.entities.get(entityId);
+    if (!entity) {
+      return;
+    }
+
+    this.entities.delete(entityId);
     this.invalidateStructureCache();
 
     if (entity.type === 'agent') {
-      this.agentIds.push(entity.id);
+      const nextAgentIds = this.agentIds.filter((id) => id !== entityId);
+      this.agentIds.length = 0;
+      this.agentIds.push(...nextAgentIds);
+      this.pendingAiAgents.delete(entityId);
+      this.decisionQueue.delete(entityId);
+      this.pendingEditAgents.delete(entityId);
     }
 
-    if (entity.type === 'goal') {
-      this.goalId = entity.id;
+    if (entity.type === 'goal' && this.goalId === entityId) {
+      this.goalId = '';
     }
 
     if (isSolidEntity(entity)) {
-      this.solidGrid[toIndex(entity.x, entity.y)] = entity.id;
+      this.solidGrid[toIndex(entity.x, entity.y)] = null;
     }
 
     const key = `${entity.x},${entity.y}`;
-    const list = this.positionIndex.get(key) ?? [];
-    list.push(entity.id);
-    this.positionIndex.set(key, list);
+    const list = this.positionIndex.get(key);
+    if (!list) {
+      return;
+    }
+
+    const filtered = list.filter((id) => id !== entityId);
+    if (filtered.length === 0) {
+      this.positionIndex.delete(key);
+      return;
+    }
+
+    this.positionIndex.set(key, filtered);
   }
 
   private patchEntity(entityId: string, patch: Partial<Entity>): Entity | null {
@@ -534,6 +701,21 @@ export class LuxEngine {
     return null;
   }
 
+  private getAgentsByRole(role: AgentRole): Entity[] {
+    const result: Entity[] = [];
+    for (const agentId of this.agentIds) {
+      const agent = this.entities.get(agentId);
+      if (!agent || agent.type !== 'agent') {
+        continue;
+      }
+
+      if (getAgentRole(agent) === role) {
+        result.push(agent);
+      }
+    }
+    return result;
+  }
+
   private getStructureEntities(): Entity[] {
     if (this.structureEntitiesCache !== null) {
       return this.structureEntitiesCache;
@@ -547,6 +729,73 @@ export class LuxEngine {
 
   private getEntityPath(entity: Entity): string {
     return entity.path ?? entity.name ?? entity.id;
+  }
+
+  private getAgentMemory(agentId: string): AgentMemory {
+    const agent = this.entities.get(agentId);
+    if (!agent || agent.type !== 'agent') {
+      return createDefaultAgentMemory();
+    }
+
+    return agent.memory ?? createDefaultAgentMemory();
+  }
+
+  private updateAgentMemory(
+    agentId: string,
+    update: (memory: AgentMemory) => AgentMemory,
+  ): void {
+    const agent = this.entities.get(agentId);
+    if (!agent || agent.type !== 'agent') {
+      return;
+    }
+
+    this.patchEntity(agentId, {
+      memory: update(agent.memory ?? createDefaultAgentMemory()),
+      tick_updated: this.absoluteTick,
+    });
+  }
+
+  private getNeighborhoodPositions(position: Position): Position[] {
+    return [
+      { x: position.x, y: position.y },
+      { x: position.x, y: position.y - 1 },
+      { x: position.x + 1, y: position.y },
+      { x: position.x, y: position.y + 1 },
+      { x: position.x - 1, y: position.y },
+    ].filter(isWithinBounds);
+  }
+
+  private getVisiblePheromones(agent: Entity): PheromoneSignal[] {
+    const visiblePheromones: PheromoneSignal[] = [];
+
+    for (const position of this.getNeighborhoodPositions(agent)) {
+      const ids = this.positionIndex.get(`${position.x},${position.y}`) ?? [];
+
+      for (const id of ids) {
+        const entity = this.entities.get(id);
+        if (
+          !entity ||
+          entity.type !== 'pheromone' ||
+          !entity.author_id ||
+          !entity.message ||
+          entity.ttl_ticks == null
+        ) {
+          continue;
+        }
+
+        visiblePheromones.push({
+          author_id: entity.author_id,
+          message: entity.message,
+          ttl_remaining: entity.ttl_ticks,
+        });
+      }
+    }
+
+    return visiblePheromones.sort((left, right) =>
+      left.author_id.localeCompare(right.author_id) ||
+      left.message.localeCompare(right.message) ||
+      left.ttl_remaining - right.ttl_remaining,
+    );
   }
 
   private getStructureAtPosition(position: Position): Entity | null {
@@ -627,6 +876,7 @@ export class LuxEngine {
     const tickStartedAtMs = performance.now();
 
     try {
+      this.advanceExplanationStream();
       this.pollOperatorControlsIfNeeded();
       this.queueSupabaseSync();
 
@@ -635,6 +885,7 @@ export class LuxEngine {
       }
 
       this.applyPendingOverlayIfReady();
+      this.expirePheromones();
       this.applyQueuedDecisions();
       this.updateHivemindState();
       this.processTaskPipeline();
@@ -682,8 +933,8 @@ export class LuxEngine {
       }
     }
 
-    const architect = this.getAgentByRole('architect');
-    if (architect) {
+    const architects = this.getAgentsByRole('architect');
+    for (const architect of architects) {
       const target = this.selectArchitectTarget(architect);
       this.patchEntity(architect.id, {
         objective_path: target?.path ?? null,
@@ -735,6 +986,7 @@ export class LuxEngine {
     this.assignPendingTasks();
     this.processCriticReviews();
     this.processVisionaryFinalReviews();
+    this.processAutoCommit();
   }
 
   private triggerVisionaryPlanningIfNeeded(): void {
@@ -786,6 +1038,7 @@ export class LuxEngine {
     }));
 
     this.lastOperatorPromptForPlanning = prompt;
+    this.hasAutoCommittedForCurrentTasks = false;
     console.log(`[visionary] planned ${tasks.length} tasks from operator prompt`);
   }
 
@@ -861,6 +1114,7 @@ export class LuxEngine {
       task.description,
       original,
       current,
+      '',
     );
 
     if (result.approved) {
@@ -869,6 +1123,13 @@ export class LuxEngine {
     } else {
       task.status = 'revision_needed';
       task.review_feedback = result.feedback;
+
+      if (task.assigned_agent_id) {
+        this.updateAgentMemory(task.assigned_agent_id, (memory) => ({
+          ...memory,
+          lessons: [...memory.lessons, result.feedback],
+        }));
+      }
     }
     task.updated_at_tick = this.absoluteTick;
 
@@ -906,6 +1167,84 @@ export class LuxEngine {
     console.log(`[visionary] task ${task.id} finalized`);
   }
 
+  private processAutoCommit(): void {
+    if (this.autoCommitPromise !== null) {
+      return;
+    }
+
+    if (this.activeTasks.length === 0) {
+      return;
+    }
+
+    const allDone = this.activeTasks.every((t) => t.status === 'done');
+    if (!allDone) {
+      return;
+    }
+
+    if (this.hasAutoCommittedForCurrentTasks) {
+      return;
+    }
+
+    this.hasAutoCommittedForCurrentTasks = true;
+    this.autoCommitPromise = this.runAutoCommit().finally(() => {
+      this.autoCommitPromise = null;
+    });
+  }
+
+  private async runAutoCommit(): Promise<void> {
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.error('[auto-commit] No active repository to commit.');
+      return;
+    }
+
+    let commitMessage = await this.generateCommitMessage();
+    if (!commitMessage) {
+      commitMessage = 'lux: auto-commit completed tasks';
+    }
+
+    try {
+      const git = simpleGit(repoRoot);
+      await git.commit(commitMessage);
+      console.log(`[auto-commit] committed: ${commitMessage}`);
+
+      if (this.automate) {
+        await git.push();
+        console.log('[auto-commit] pushed to remote');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown auto-commit failure';
+      console.error(`[auto-commit] ${message}`);
+    }
+  }
+
+  private async generateCommitMessage(): Promise<string | null> {
+    const descriptions = this.activeTasks
+      .map((t) => t.description)
+      .filter((d) => d.length > 0);
+
+    if (descriptions.length === 0) {
+      return null;
+    }
+
+    const aiMessage = await this.aiNavigator.requestCommitMessage(descriptions);
+    if (aiMessage) {
+      return aiMessage;
+    }
+
+    const summary = descriptions.length <= 2
+      ? descriptions.join('; ')
+      : `${descriptions[0]} and ${descriptions.length - 1} more tasks`;
+
+    const firstLine = `lux: ${summary}`.slice(0, 72);
+    const body = this.activeTasks
+      .filter((t) => t.description.length > 0)
+      .map((t) => `- ${t.id}: ${t.description}`)
+      .join('\n');
+
+    return `${firstLine}\n\n${body}`;
+  }
+
   private findStructureByPath(targetPath: string): Entity | null {
     for (const entity of this.getStructureEntities()) {
       if (entity.path === targetPath) {
@@ -928,6 +1267,18 @@ export class LuxEngine {
     }
     const feedback = task.review_feedback ? ` Feedback: ${task.review_feedback}` : '';
     return `Task: ${task.description}. Target: ${task.target_path}.${feedback}`;
+  }
+
+  private getFullContentForAgent(agent: Entity): string | null {
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    if (
+      currentNode &&
+      currentNode.type === 'file' &&
+      currentNode.lock_owner === agent.id
+    ) {
+      return currentNode.content ?? currentNode.content_preview ?? null;
+    }
+    return null;
   }
 
   private initializeStructureNodes(): void {
@@ -1142,6 +1493,23 @@ export class LuxEngine {
     }
   }
 
+  private expirePheromones(): void {
+    const pheromones = Array.from(this.entities.values()).filter((entity) => entity.type === 'pheromone');
+
+    for (const pheromone of pheromones) {
+      const nextTtl = (pheromone.ttl_ticks ?? 0) - 1;
+      if (nextTtl <= 0) {
+        this.deleteEntity(pheromone.id);
+        continue;
+      }
+
+      this.patchEntity(pheromone.id, {
+        ttl_ticks: nextTtl,
+        tick_updated: this.absoluteTick,
+      });
+    }
+  }
+
   private executeDecision(agent: Entity, decision: AgentDecision): void {
     const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
     if (
@@ -1159,6 +1527,26 @@ export class LuxEngine {
 
     if (decision.action === 'edit') {
       this.executeEdit(agent, decision);
+      return;
+    }
+
+    if (decision.action === 'patch') {
+      this.executePatch(agent, decision);
+      return;
+    }
+
+    if (decision.action === 'insert') {
+      this.executeInsert(agent, decision);
+      return;
+    }
+
+    if (decision.action === 'delete') {
+      this.executeDelete(agent, decision);
+      return;
+    }
+
+    if (decision.action === 'broadcast') {
+      this.executeBroadcast(agent, decision);
       return;
     }
 
@@ -1193,6 +1581,355 @@ export class LuxEngine {
     console.log(
       `[read] ${agent.id} read ${target.type} "${target.name ?? target.path}" at tick ${this.absoluteTick} (mass=${target.mass})`,
     );
+
+    if (target.type === 'file' && target.path) {
+      const contentHash = getContentHashForMemory(target);
+      this.updateAgentMemory(agent.id, (memory) => ({
+        ...memory,
+        files_read: {
+          ...memory.files_read,
+          [target.path!]: {
+            content_hash: contentHash,
+            tick_read: this.absoluteTick,
+            summary: '',
+          },
+        },
+      }));
+    }
+
+    this.maybeExplainTarget(agent, target, decision);
+  }
+
+  private resetExplanationState(): void {
+    this.explanationRequestId += 1;
+    this.explanationPromise = null;
+    this.explanationState = createEmptyExplanationState();
+  }
+
+  private buildExplanationCacheKey(prompt: string, targetPath: string, contentHash: string): string {
+    return createHash('sha1')
+      .update(`${prompt}\n${targetPath}\n${contentHash}`)
+      .digest('hex');
+  }
+
+  private getExplainableFileContent(
+    target: Entity,
+  ): { content: string; contentState: 'complete' | 'partial' } | null {
+    if (target.is_binary) {
+      return null;
+    }
+
+    if (target.content && target.content.length > 0) {
+      return {
+        content: target.content,
+        contentState: 'complete',
+      };
+    }
+
+    if (target.content_preview && target.content_preview.length > 0) {
+      return {
+        content: target.content_preview,
+        contentState: 'partial',
+      };
+    }
+
+    return null;
+  }
+
+  private updateAgentFileSummary(agentId: string | null, targetPath: string | null, summary: string): void {
+    if (!agentId || !targetPath) {
+      return;
+    }
+
+    this.updateAgentMemory(agentId, (memory) => {
+      const existing = memory.files_read[targetPath];
+      if (!existing) {
+        return memory;
+      }
+
+      return {
+        ...memory,
+        files_read: {
+          ...memory.files_read,
+          [targetPath]: {
+            ...existing,
+            summary,
+          },
+        },
+      };
+    });
+  }
+
+  private applyExplanationResult(
+    agentId: string,
+    targetPath: string,
+    contentHash: string,
+    cacheKey: string,
+    prompt: string,
+    text: string,
+    immediate: boolean,
+  ): void {
+    this.explanationCache.set(cacheKey, {
+      text,
+      updatedAtTick: this.absoluteTick,
+    });
+
+    this.explanationState = {
+      status: immediate ? 'complete' : 'streaming',
+      targetPath,
+      agentId,
+      contentHash,
+      cacheKey,
+      prompt,
+      text: immediate ? text : '',
+      fullText: text,
+      error: null,
+      updatedAtTick: this.absoluteTick,
+    };
+
+    if (immediate) {
+      this.updateAgentFileSummary(agentId, targetPath, text);
+    }
+  }
+
+  private applyExplanationError(
+    agentId: string,
+    targetPath: string,
+    contentHash: string,
+    cacheKey: string,
+    prompt: string,
+    error: string,
+  ): void {
+    this.explanationState = {
+      status: 'error',
+      targetPath,
+      agentId,
+      contentHash,
+      cacheKey,
+      prompt,
+      text: null,
+      fullText: null,
+      error,
+      updatedAtTick: this.absoluteTick,
+    };
+  }
+
+  private maybeExplainTarget(agent: Entity, target: Entity, decision: AgentDecision): void {
+    if (this.operatorAction !== 'explain' || target.path == null || target.path !== this.operatorTargetPath) {
+      return;
+    }
+
+    const prompt = this.operatorPrompt.trim();
+    if (prompt.length === 0) {
+      return;
+    }
+
+    if (target.type !== 'file') {
+      this.applyExplanationError(
+        agent.id,
+        target.path,
+        getContentHashForMemory(target),
+        this.buildExplanationCacheKey(prompt, target.path, getContentHashForMemory(target)),
+        prompt,
+        'Explanation currently requires a file target.',
+      );
+      return;
+    }
+
+    const contentHash = getContentHashForMemory(target);
+    const cacheKey = decision.explanation_cache_key ?? this.buildExplanationCacheKey(prompt, target.path, contentHash);
+    const cachedText = decision.explanation_text?.trim() || this.explanationCache.get(cacheKey)?.text || null;
+    if (cachedText) {
+      this.applyExplanationResult(agent.id, target.path, contentHash, cacheKey, prompt, cachedText, true);
+      return;
+    }
+
+    if (
+      this.explanationState.cacheKey === cacheKey &&
+      (
+        this.explanationState.status === 'pending' ||
+        this.explanationState.status === 'streaming' ||
+        this.explanationState.status === 'complete'
+      )
+    ) {
+      return;
+    }
+
+    if (
+      this.explanationState.cacheKey === cacheKey &&
+      this.explanationState.status === 'error' &&
+      this.absoluteTick - (this.explanationState.updatedAtTick ?? 0) < CLOCK_PERIOD
+    ) {
+      return;
+    }
+
+    const explainable = this.getExplainableFileContent(target);
+    if (!explainable) {
+      this.applyExplanationError(
+        agent.id,
+        target.path,
+        contentHash,
+        cacheKey,
+        prompt,
+        target.is_binary
+          ? 'Binary files cannot be explained from text content.'
+          : 'No readable file content is available for explanation.',
+      );
+      return;
+    }
+
+    const requestId = ++this.explanationRequestId;
+    this.explanationState = {
+      status: 'pending',
+      targetPath: target.path,
+      agentId: agent.id,
+      contentHash,
+      cacheKey,
+      prompt,
+      text: null,
+      fullText: null,
+      error: null,
+      updatedAtTick: this.absoluteTick,
+    };
+
+    this.explanationPromise = this.runExplanationRequest({
+      requestId,
+      agentId: agent.id,
+      targetPath: target.path,
+      contentHash,
+      cacheKey,
+      prompt,
+      content: explainable.content,
+      contentState: explainable.contentState,
+    }).finally(() => {
+      if (this.explanationRequestId === requestId) {
+        this.explanationPromise = null;
+      }
+    });
+  }
+
+  private async runExplanationRequest(params: {
+    requestId: number;
+    agentId: string;
+    targetPath: string;
+    contentHash: string;
+    cacheKey: string;
+    prompt: string;
+    content: string;
+    contentState: 'complete' | 'partial';
+  }): Promise<void> {
+    const explanation = await this.aiNavigator.requestExplanation(
+      params.prompt,
+      params.targetPath,
+      params.content,
+      params.contentState,
+    );
+
+    if (
+      this.explanationRequestId !== params.requestId ||
+      this.operatorAction !== 'explain' ||
+      this.operatorTargetPath !== params.targetPath
+    ) {
+      return;
+    }
+
+    if (!explanation) {
+      this.applyExplanationError(
+        params.agentId,
+        params.targetPath,
+        params.contentHash,
+        params.cacheKey,
+        params.prompt,
+        'Explanation request failed; agent will retry.',
+      );
+      return;
+    }
+
+    this.applyExplanationResult(
+      params.agentId,
+      params.targetPath,
+      params.contentHash,
+      params.cacheKey,
+      params.prompt,
+      explanation,
+      false,
+    );
+    console.log(`[explain] ${params.agentId} generated explanation for ${params.targetPath}`);
+  }
+
+  private advanceExplanationStream(): void {
+    const fullText = this.explanationState.fullText;
+    if (this.explanationState.status !== 'streaming' || !fullText) {
+      return;
+    }
+
+    const currentLength = this.explanationState.text?.length ?? 0;
+    const nextLength = Math.min(
+      fullText.length,
+      currentLength + EXPLANATION_STREAM_CHARS_PER_TICK,
+    );
+
+    if (nextLength <= currentLength) {
+      return;
+    }
+
+    this.explanationState = {
+      ...this.explanationState,
+      text: fullText.slice(0, nextLength),
+      updatedAtTick: this.absoluteTick,
+    };
+
+    if (nextLength >= fullText.length) {
+      this.explanationState = {
+        ...this.explanationState,
+        status: 'complete',
+        text: fullText,
+        updatedAtTick: this.absoluteTick,
+      };
+      this.updateAgentFileSummary(
+        this.explanationState.agentId,
+        this.explanationState.targetPath,
+        fullText,
+      );
+      console.log(`[explain] explanation stream completed for ${this.explanationState.targetPath ?? 'unknown target'}`);
+    }
+  }
+
+  private executeBroadcast(agent: Entity, decision: AgentDecision): void {
+    const message = decision.message?.trim();
+    if (!message) {
+      console.log(`[broadcast] ${agent.id} attempted an empty broadcast at tick ${this.absoluteTick}`);
+      return;
+    }
+
+    let sequence = 0;
+    let pheromoneId = `pheromone:${agent.id}:${this.absoluteTick}:${sequence}`;
+    while (this.entities.has(pheromoneId)) {
+      sequence += 1;
+      pheromoneId = `pheromone:${agent.id}:${this.absoluteTick}:${sequence}`;
+    }
+
+    this.registerEntity({
+      id: pheromoneId,
+      type: 'pheromone',
+      x: agent.x,
+      y: agent.y,
+      mass: 1,
+      tick_updated: this.absoluteTick,
+      author_id: agent.id,
+      message,
+      ttl_ticks: PHEROMONE_TTL_TICKS,
+    });
+
+    this.updateAgentMemory(agent.id, (memory) => ({
+      ...memory,
+      last_broadcast: {
+        message,
+        tick: this.absoluteTick,
+      },
+    }));
+
+    console.log(`[broadcast] ${agent.id} emitted pheromone "${message}" at tick ${this.absoluteTick}`);
   }
 
   private async processPendingEdits(control: OperatorControl): Promise<void> {
@@ -1209,15 +1946,15 @@ export class LuxEngine {
       return;
     }
 
-    const absolutePath = path.join(repoRoot, editPath);
-
     try {
+      const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, editPath);
+
       await writeFile(absolutePath, editContent, 'utf8');
 
       const git = simpleGit(repoRoot);
-      await git.add(['--', editPath]);
+      await git.add(['--', repoRelativePath]);
 
-      const entityId = `file:${editPath}`;
+      const entityId = `file:${repoRelativePath}`;
       const entity = this.entities.get(entityId);
       if (entity) {
         const preview = editContent.slice(0, 200);
@@ -1234,7 +1971,7 @@ export class LuxEngine {
         .update({ pending_edit_path: null, pending_edit_content: null })
         .eq('id', CONTROL_ROW_ID);
 
-      console.log(`[edit] wrote ${editPath} and staged changes`);
+      console.log(`[edit] wrote ${repoRelativePath} and staged changes`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown edit failure';
       console.error(`[edit] ${message}`);
@@ -1276,6 +2013,11 @@ export class LuxEngine {
   }
 
   private executeEdit(agent: Entity, decision: AgentDecision): void {
+    if (this.pendingEditAgents.has(agent.id)) {
+      console.log(`[edit] ${agent.id} already has a pending edit at tick ${this.absoluteTick}`);
+      return;
+    }
+
     const target = this.findReadableTarget(agent, decision.target);
     if (!target || target.type !== 'file') {
       console.log(
@@ -1298,14 +2040,27 @@ export class LuxEngine {
     }
 
     const filePath = target.path ?? '';
-    const absolutePath = path.join(repoRoot, filePath);
-
     const newContent = decision.content;
+    const task = this.activeTasks.find(
+      (candidate) =>
+        candidate.assigned_agent_id === agent.id &&
+        candidate.target_path === filePath &&
+        (candidate.status === 'assigned' || candidate.status === 'revision_needed' || candidate.status === 'in_progress'),
+    );
+    const previousTaskStatus = task?.status;
+    if (task) {
+      task.status = 'in_progress';
+      task.validation = null;
+      task.updated_at_tick = this.absoluteTick;
+    }
+
+    this.pendingEditAgents.add(agent.id);
     void (async () => {
       try {
+        const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
         await writeFile(absolutePath, newContent, 'utf8');
         const git = simpleGit(repoRoot);
-        await git.add(['--', filePath]);
+        await git.add(['--', repoRelativePath]);
 
         const preview = newContent.slice(0, 200);
         this.patchEntity(target.id, {
@@ -1315,27 +2070,261 @@ export class LuxEngine {
           tick_updated: this.absoluteTick,
         });
 
-        // Update in-progress task status
-        const task = this.activeTasks.find(
-          (t) =>
-            t.assigned_agent_id === agent.id &&
-            t.target_path === filePath &&
-            (t.status === 'assigned' || t.status === 'revision_needed'),
-        );
-        if (task) {
-          task.status = 'in_progress';
+        console.log(`[edit] ${agent.id} wrote ${filePath} at tick ${this.absoluteTick}`);
+      } catch (error) {
+        if (task && previousTaskStatus !== undefined) {
+          task.status = previousTaskStatus;
           task.updated_at_tick = this.absoluteTick;
         }
 
-        console.log(`[edit] ${agent.id} wrote ${filePath} at tick ${this.absoluteTick}`);
-      } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown edit failure';
         console.error(`[edit] ${message}`);
+      } finally {
+        this.pendingEditAgents.delete(agent.id);
+      }
+    })();
+  }
+
+  private executePatch(agent: Entity, decision: AgentDecision): void {
+    if (this.pendingEditAgents.has(agent.id)) {
+      console.log(`[patch] ${agent.id} already has a pending edit at tick ${this.absoluteTick}`);
+      return;
+    }
+
+    const target = this.findReadableTarget(agent, decision.target);
+    if (!target || target.type !== 'file') {
+      console.log(
+        `[patch] ${agent.id} failed to patch "${decision.target ?? ''}" at tick ${this.absoluteTick} (not a writable file)`,
+      );
+      return;
+    }
+
+    if (decision.old_text === undefined || decision.new_text === undefined) {
+      console.log(
+        `[patch] ${agent.id} attempted to patch "${decision.target ?? ''}" at tick ${this.absoluteTick} (missing old_text or new_text)`,
+      );
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.log(`[patch] ${agent.id} cannot patch — no active repo`);
+      return;
+    }
+
+    const filePath = target.path ?? '';
+    const currentContent = target.content ?? '';
+
+    let newContent: string;
+    try {
+      newContent = applyPatch(currentContent, decision.old_text, decision.new_text);
+    } catch {
+      console.log(`[patch] ${agent.id} failed: old_text not found in ${filePath}`);
+      return;
+    }
+    const task = this.activeTasks.find(
+      (candidate) =>
+        candidate.assigned_agent_id === agent.id &&
+        candidate.target_path === filePath &&
+        (candidate.status === 'assigned' || candidate.status === 'revision_needed' || candidate.status === 'in_progress'),
+    );
+    const previousTaskStatus = task?.status;
+    if (task) {
+      task.status = 'in_progress';
+      task.validation = null;
+      task.updated_at_tick = this.absoluteTick;
+    }
+
+    this.pendingEditAgents.add(agent.id);
+    void (async () => {
+      try {
+        const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
+        await writeFile(absolutePath, newContent, 'utf8');
+        const git = simpleGit(repoRoot);
+        await git.add(['--', repoRelativePath]);
+
+        const preview = newContent.slice(0, 200);
+        this.patchEntity(target.id, {
+          content: newContent,
+          content_preview: preview,
+          git_status: 'modified',
+          tick_updated: this.absoluteTick,
+        });
+
+        console.log(`[patch] ${agent.id} patched ${filePath} at tick ${this.absoluteTick}`);
+      } catch (error) {
+        if (task && previousTaskStatus !== undefined) {
+          task.status = previousTaskStatus;
+          task.updated_at_tick = this.absoluteTick;
+        }
+        const message = error instanceof Error ? error.message : 'Unknown patch failure';
+        console.error(`[patch] ${message}`);
+      } finally {
+        this.pendingEditAgents.delete(agent.id);
+      }
+    })();
+  }
+
+  private executeInsert(agent: Entity, decision: AgentDecision): void {
+    if (this.pendingEditAgents.has(agent.id)) {
+      console.log(`[insert] ${agent.id} already has a pending edit at tick ${this.absoluteTick}`);
+      return;
+    }
+
+    const target = this.findReadableTarget(agent, decision.target);
+    if (!target || target.type !== 'file') {
+      console.log(
+        `[insert] ${agent.id} failed to insert into "${decision.target ?? ''}" at tick ${this.absoluteTick} (not a writable file)`,
+      );
+      return;
+    }
+
+    if (decision.after_line === undefined || decision.text === undefined) {
+      console.log(
+        `[insert] ${agent.id} attempted to insert into "${decision.target ?? ''}" at tick ${this.absoluteTick} (missing after_line or text)`,
+      );
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.log(`[insert] ${agent.id} cannot insert — no active repo`);
+      return;
+    }
+
+    const filePath = target.path ?? '';
+    const currentContent = target.content ?? '';
+    const newContent = applyInsert(currentContent, decision.after_line, decision.text);
+
+    const task = this.activeTasks.find(
+      (candidate) =>
+        candidate.assigned_agent_id === agent.id &&
+        candidate.target_path === filePath &&
+        (candidate.status === 'assigned' || candidate.status === 'revision_needed' || candidate.status === 'in_progress'),
+    );
+    const previousTaskStatus = task?.status;
+    if (task) {
+      task.status = 'in_progress';
+      task.validation = null;
+      task.updated_at_tick = this.absoluteTick;
+    }
+
+    this.pendingEditAgents.add(agent.id);
+    void (async () => {
+      try {
+        const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
+        await writeFile(absolutePath, newContent, 'utf8');
+        const git = simpleGit(repoRoot);
+        await git.add(['--', repoRelativePath]);
+
+        const preview = newContent.slice(0, 200);
+        this.patchEntity(target.id, {
+          content: newContent,
+          content_preview: preview,
+          git_status: 'modified',
+          tick_updated: this.absoluteTick,
+        });
+
+        console.log(`[insert] ${agent.id} inserted into ${filePath} at tick ${this.absoluteTick}`);
+      } catch (error) {
+        if (task && previousTaskStatus !== undefined) {
+          task.status = previousTaskStatus;
+          task.updated_at_tick = this.absoluteTick;
+        }
+        const message = error instanceof Error ? error.message : 'Unknown insert failure';
+        console.error(`[insert] ${message}`);
+      } finally {
+        this.pendingEditAgents.delete(agent.id);
+      }
+    })();
+  }
+
+  private executeDelete(agent: Entity, decision: AgentDecision): void {
+    if (this.pendingEditAgents.has(agent.id)) {
+      console.log(`[delete] ${agent.id} already has a pending edit at tick ${this.absoluteTick}`);
+      return;
+    }
+
+    const target = this.findReadableTarget(agent, decision.target);
+    if (!target || target.type !== 'file') {
+      console.log(
+        `[delete] ${agent.id} failed to delete from "${decision.target ?? ''}" at tick ${this.absoluteTick} (not a writable file)`,
+      );
+      return;
+    }
+
+    if (decision.start_line === undefined || decision.end_line === undefined) {
+      console.log(
+        `[delete] ${agent.id} attempted to delete from "${decision.target ?? ''}" at tick ${this.absoluteTick} (missing start_line or end_line)`,
+      );
+      return;
+    }
+
+    const repoRoot = this.activeRepoPath;
+    if (!repoRoot) {
+      console.log(`[delete] ${agent.id} cannot delete — no active repo`);
+      return;
+    }
+
+    const filePath = target.path ?? '';
+    const currentContent = target.content ?? '';
+    let newContent: string;
+    try {
+      newContent = applyDelete(currentContent, decision.start_line, decision.end_line);
+    } catch {
+      console.log(`[delete] ${agent.id} failed: invalid line range ${decision.start_line}-${decision.end_line} in ${filePath}`);
+      return;
+    }
+
+    const task = this.activeTasks.find(
+      (candidate) =>
+        candidate.assigned_agent_id === agent.id &&
+        candidate.target_path === filePath &&
+        (candidate.status === 'assigned' || candidate.status === 'revision_needed' || candidate.status === 'in_progress'),
+    );
+    const previousTaskStatus = task?.status;
+    if (task) {
+      task.status = 'in_progress';
+      task.validation = null;
+      task.updated_at_tick = this.absoluteTick;
+    }
+
+    this.pendingEditAgents.add(agent.id);
+    void (async () => {
+      try {
+        const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
+        await writeFile(absolutePath, newContent, 'utf8');
+        const git = simpleGit(repoRoot);
+        await git.add(['--', repoRelativePath]);
+
+        const preview = newContent.slice(0, 200);
+        this.patchEntity(target.id, {
+          content: newContent,
+          content_preview: preview,
+          git_status: 'modified',
+          tick_updated: this.absoluteTick,
+        });
+
+        console.log(`[delete] ${agent.id} deleted lines ${decision.start_line}-${decision.end_line} from ${filePath} at tick ${this.absoluteTick}`);
+      } catch (error) {
+        if (task && previousTaskStatus !== undefined) {
+          task.status = previousTaskStatus;
+          task.updated_at_tick = this.absoluteTick;
+        }
+        const message = error instanceof Error ? error.message : 'Unknown delete failure';
+        console.error(`[delete] ${message}`);
+      } finally {
+        this.pendingEditAgents.delete(agent.id);
       }
     })();
   }
 
   private executeSubmit(agent: Entity): void {
+    if (this.pendingEditAgents.has(agent.id)) {
+      console.log(`[submit] ${agent.id} cannot submit while an edit is still pending`);
+      return;
+    }
+
     const assignedTask = this.activeTasks.find(
       (t) =>
         t.assigned_agent_id === agent.id &&
@@ -1350,6 +2339,7 @@ export class LuxEngine {
     const targetEntity = this.findStructureByPath(assignedTask.target_path);
     assignedTask.completed_content = targetEntity?.content ?? targetEntity?.content_preview ?? '';
     assignedTask.status = 'awaiting_review';
+    assignedTask.validation = null;
     assignedTask.updated_at_tick = this.absoluteTick;
 
     console.log(
@@ -1438,6 +2428,10 @@ export class LuxEngine {
         continue;
       }
 
+      if (this.pendingEditAgents.has(agentId)) {
+        continue;
+      }
+
       const agent = this.entities.get(agentId);
       if (!agent || agent.type !== 'agent' || this.isGoalReached(agent)) {
         continue;
@@ -1484,10 +2478,37 @@ export class LuxEngine {
     }
   }
 
+  private createExplainReadDecision(target: Entity): AgentDecision {
+    const readableTarget = target.path ?? target.name ?? 'current-node';
+
+    if (this.operatorAction !== 'explain' || target.type !== 'file' || !target.path) {
+      return {
+        action: 'read',
+        target: readableTarget,
+      };
+    }
+
+    const prompt = this.operatorPrompt.trim();
+    const contentHash = getContentHashForMemory(target);
+    const cacheKey = this.buildExplanationCacheKey(prompt, target.path, contentHash);
+    const cached = this.explanationCache.get(cacheKey);
+
+    return {
+      action: 'read',
+      target: readableTarget,
+      explanation_cache_key: cacheKey,
+      explanation_text: cached?.text,
+    };
+  }
+
   private async requestDecisionForAgent(
     agent: Entity,
     scan: NeighborhoodScan,
   ): Promise<AgentDecision> {
+    if (this.pendingEditAgents.has(agent.id)) {
+      return { action: 'wait' };
+    }
+
     const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
     if (currentNode && currentNode.lock_owner === agent.id) {
       return { action: 'wait' };
@@ -1502,10 +2523,7 @@ export class LuxEngine {
       currentNode?.id === operatorTarget.id &&
       (this.operatorAction === 'read' || this.operatorAction === 'explain')
     ) {
-      return {
-        action: 'read',
-        target: operatorTarget.path ?? operatorTarget.name ?? 'current-node',
-      };
+      return this.createExplainReadDecision(operatorTarget);
     }
 
     if (role === 'architect') {
@@ -1580,6 +2598,21 @@ export class LuxEngine {
     return this.architectPrompt;
   }
 
+  private resolveWritableRepoFile(
+    repoRoot: string,
+    relativePath: string,
+  ): { absolutePath: string; repoRelativePath: string } {
+    const absolutePath = resolvePathWithinRoot(repoRoot, relativePath);
+    if (!absolutePath) {
+      throw new Error(`Path "${relativePath}" resolves outside the active repository.`);
+    }
+
+    return {
+      absolutePath,
+      repoRelativePath: path.relative(path.resolve(repoRoot), absolutePath).split(path.sep).join('/'),
+    };
+  }
+
   private getObjectiveForAgent(agent: Entity): { path: string | null; position: Position } {
     const role = getAgentRole(agent) ?? 'architect';
     const target =
@@ -1623,6 +2656,9 @@ export class LuxEngine {
       east: this.lookupTile({ x: agent.x + 1, y: agent.y }),
       south: this.lookupTile({ x: agent.x, y: agent.y + 1 }),
       west: this.lookupTile({ x: agent.x - 1, y: agent.y }),
+      pheromones: this.getVisiblePheromones(agent),
+      agent_memory: this.getAgentMemory(agent.id),
+      full_content: this.getFullContentForAgent(agent),
     };
   }
 
@@ -1661,6 +2697,9 @@ export class LuxEngine {
       if (!entity) {
         continue;
       }
+      if (entity.type === 'pheromone') {
+        continue;
+      }
       if (entity.type === 'agent' || entity.type === 'wall' || entity.type === 'file' || entity.type === 'directory' || entity.type === 'goal') {
         return entity;
       }
@@ -1671,8 +2710,10 @@ export class LuxEngine {
   }
 
   private toTileObservation(entity: Entity): TileObservation {
+    const occupant = entity.type === 'pheromone' ? 'empty' : entity.type;
+
     return {
-      occupant: entity.type,
+      occupant,
       name: entity.name ?? null,
       path: entity.path ?? null,
       mass: entity.mass,
@@ -1721,6 +2762,7 @@ export class LuxEngine {
     }
 
     const snapshot = this.createSnapshot();
+    const syncedEntities = snapshot.entities.filter((entity) => entity.type !== 'pheromone');
     const shouldPurgeStructures = this.pendingStructurePurge;
     this.pendingStructurePurge = false;
     this.syncQueue = this.syncQueue
@@ -1738,7 +2780,7 @@ export class LuxEngine {
 
         const { error: entitiesError } = await supabase
           .from('entities')
-          .upsert(snapshot.entities, { onConflict: 'id' });
+          .upsert(syncedEntities, { onConflict: 'id' });
 
         if (entitiesError) {
           throw entitiesError;
@@ -1770,7 +2812,76 @@ export class LuxEngine {
     };
   }
 
+  private computeAgentActivities(): AgentActivity[] {
+    const activities: AgentActivity[] = [];
+
+    for (const agentId of this.agentIds) {
+      const agent = this.entities.get(agentId);
+      if (!agent || agent.type !== 'agent') {
+        continue;
+      }
+
+      const role = getAgentRole(agent) ?? 'architect';
+
+      if (this.pendingAiAgents.has(agent.id)) {
+        activities.push({
+          agent_id: agent.id,
+          agent_role: role,
+          status: 'thinking',
+          target_path: agent.objective_path ?? null,
+          tick: this.absoluteTick,
+        });
+        continue;
+      }
+
+      if (this.pendingEditAgents.has(agent.id)) {
+        activities.push({
+          agent_id: agent.id,
+          agent_role: role,
+          status: 'editing',
+          target_path: agent.objective_path ?? null,
+          tick: this.absoluteTick,
+        });
+        continue;
+      }
+
+      const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+      if (currentNode && currentNode.lock_owner === agent.id) {
+        activities.push({
+          agent_id: agent.id,
+          agent_role: role,
+          status: 'reading',
+          target_path: currentNode.path ?? currentNode.name ?? null,
+          tick: this.absoluteTick,
+        });
+        continue;
+      }
+
+      if (agent.objective_path) {
+        activities.push({
+          agent_id: agent.id,
+          agent_role: role,
+          status: 'walking',
+          target_path: agent.objective_path,
+          tick: this.absoluteTick,
+        });
+        continue;
+      }
+
+      activities.push({
+        agent_id: agent.id,
+        agent_role: role,
+        status: 'idle',
+        target_path: null,
+        tick: this.absoluteTick,
+      });
+    }
+
+    return activities;
+  }
+
   private createWorldState(): WorldState {
+    const agentActivities = this.computeAgentActivities();
     return {
       id: WORLD_STATE_ID,
       seed: this.seed,
@@ -1802,7 +2913,15 @@ export class LuxEngine {
       pending_edit_content: null,
       commit_message: null,
       should_push: false,
+      explanation_status: this.explanationState.status,
+      explanation_target_path: this.explanationState.targetPath,
+      explanation_agent_id: this.explanationState.agentId,
+      explanation_content_hash: this.explanationState.contentHash,
+      explanation_text: this.explanationState.text,
+      explanation_error: this.explanationState.error,
+      explanation_updated_at_tick: this.explanationState.updatedAtTick,
       active_tasks: this.activeTasks.length > 0 ? this.activeTasks : null,
+      agent_activities: agentActivities.length > 0 ? agentActivities : null,
     };
   }
 
@@ -1848,10 +2967,11 @@ export class LuxEngine {
       return;
     }
 
-    const architect = this.getAgentByRole('architect') ?? this.getPrimaryAgent();
+    const architects = this.getAgentsByRole('architect');
+    const primaryArchitect = architects[0] ?? this.getPrimaryAgent();
     const visionary = this.getAgentByRole('visionary');
     const critic = this.getAgentByRole('critic');
-    const distance = manhattanDistance(architect, GOAL_POSITION);
+    const distance = manhattanDistance(primaryArchitect, GOAL_POSITION);
     const structureNodes = this.getStructureEntities();
     const taskCount = structureNodes.filter((entity) => entity.node_state === 'task').length;
     const asymmetryCount = structureNodes.filter((entity) => entity.node_state === 'asymmetry').length;
@@ -1861,7 +2981,7 @@ export class LuxEngine {
     const doneTasks = this.activeTasks.filter((t) => t.status === 'done').length;
 
     console.log(
-      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architect=(${architect.x},${architect.y}) visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} goal_distance=${distance} nodes_task=${taskCount} nodes_asymmetry=${asymmetryCount} tasks_pending=${pendingTasks} tasks_active=${inProgressTasks} tasks_review=${reviewTasks} tasks_done=${doneTasks} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} queue_depth=${this.getQueueDepth()} tick_ms=${this.lastTickDurationMs ?? 0} ai_latency_ms=${this.lastAiLatencyMs ?? 0} control=${this.controlStatus} supabase=${this.supabase ? 'on' : 'off'}`,
+      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architects=[${architects.map((a) => `(${a.x},${a.y})`).join(', ')}] visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} goal_distance=${distance} nodes_task=${taskCount} nodes_asymmetry=${asymmetryCount} tasks_pending=${pendingTasks} tasks_active=${inProgressTasks} tasks_review=${reviewTasks} tasks_done=${doneTasks} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} queue_depth=${this.getQueueDepth()} tick_ms=${this.lastTickDurationMs ?? 0} ai_latency_ms=${this.lastAiLatencyMs ?? 0} control=${this.controlStatus} supabase=${this.supabase ? 'on' : 'off'}`,
     );
   }
 
