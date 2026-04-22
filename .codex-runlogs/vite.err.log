@@ -126,3 +126,4 @@
       at TypeScriptParserMixin.jsxParseElement (C:\Users\Futureman\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4749:17)
       at TypeScriptParserMixin.parseExprAtom (C:\Users\Futureman\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4759:19)
       at TypeScriptParserMixin.parseExprSubscripts (C:\Users\Futureman\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+^C^C

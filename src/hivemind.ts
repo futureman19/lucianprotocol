@@ -110,6 +110,7 @@ export function getNodeState(
 
   if (
     isCriticalMass(entity) ||
+    entity.tether_broken === true ||
     (
       entity.git_status !== null &&
       entity.git_status !== undefined &&

@@ -89,6 +89,39 @@ a {
   color: var(--text-primary);
 }
 
+.queen-hud {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 50;
+  background: rgba(2, 4, 9, 0.9);
+  border: 1px solid rgba(46, 201, 255, 0.25);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #a0ecff;
+}
+
+.queen-hud-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #fff;
+}
+
+.queen-hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.queen-bar {
+  height: 6px;
+  border-radius: 3px;
+  min-width: 4px;
+  transition: width 0.3s ease;
+}
+
 .lux-panel {
   position: relative;
   display: flex;

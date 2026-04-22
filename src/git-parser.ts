@@ -12,6 +12,7 @@ import { DEFAULT_SEED, GRID_HEIGHT, GRID_WIDTH, createInitialEntities } from './
 import { createServiceSupabaseClient } from './supabase';
 import { describeStructureNode, getExtension, isBinaryExtension, mapMassToPath } from './mass-mapper';
 import { EntitySchema, type Entity, type GitStatus, type Position } from './types';
+import { buildTetherMap } from './import-graph';
 
 const OVERLAY_DIRECTORY = path.join(process.cwd(), '.lux-state');
 const OVERLAY_FILE = path.join(OVERLAY_DIRECTORY, 'repository-overlay.json');
@@ -49,6 +50,7 @@ interface RepositoryNode {
   content: string | null;
   contentHash: string | null;
   contentPreview: string | null;
+  fullText: string | null;
   depth: number;
   descriptor: string;
   extension: string | null;
@@ -62,6 +64,9 @@ interface RepositoryNode {
   lastCommitAuthor: string | null;
   lastCommitDate: string | null;
   gitDiff: string | null;
+  tetherTo: string[] | null;
+  tetherFrom: string[] | null;
+  tetherBroken: boolean | null;
 }
 
 function toKey(position: Position): string {
@@ -250,6 +255,7 @@ async function readFilePayload(
   contentPreview: string | null;
   extension: string | null;
   isBinary: boolean;
+  fullText: string | null;
 }> {
   const extension = getExtension(relativePath);
   let buffer: Buffer;
@@ -263,6 +269,7 @@ async function readFilePayload(
         content: null,
         contentHash: createHash('sha1').update(`missing:${relativePath}`).digest('hex'),
         contentPreview: null,
+        fullText: null,
         extension,
         isBinary: isBinaryExtension(extension),
       };
@@ -279,6 +286,7 @@ async function readFilePayload(
       content: null,
       contentHash,
       contentPreview: null,
+      fullText: null,
       extension,
       isBinary: true,
     };
@@ -291,6 +299,7 @@ async function readFilePayload(
     content: sanitizedText.length <= maxContentLength ? sanitizedText : null,
     contentHash,
     contentPreview: sanitizedText.slice(0, previewLength),
+    fullText: sanitizedText,
     extension,
     isBinary: false,
   };
@@ -382,6 +391,7 @@ async function buildRepositoryNodes(
     content: null,
     contentHash: null,
     contentPreview: null,
+    fullText: null,
     depth: directoryPath === ROOT_NODE_PATH ? 0 : directoryPath.split('/').length,
     descriptor: directoryPath === ROOT_NODE_PATH ? 'Repository root cluster' : describeStructureNode(directoryPath, 'directory'),
     extension: null,
@@ -395,6 +405,9 @@ async function buildRepositoryNodes(
     lastCommitAuthor: null,
     lastCommitDate: null,
     gitDiff: null,
+    tetherTo: null,
+    tetherFrom: null,
+    tetherBroken: null,
   }));
 
   const fileNodes = await Promise.all(
@@ -442,6 +455,7 @@ async function buildRepositoryNodes(
         content: payload.content,
         contentHash: payload.contentHash,
         contentPreview: payload.contentPreview,
+        fullText: payload.fullText,
         depth: filePath.split('/').length,
         descriptor: describeStructureNode(filePath, 'file'),
         extension: payload.extension,
@@ -455,11 +469,41 @@ async function buildRepositoryNodes(
         lastCommitAuthor,
         lastCommitDate,
         gitDiff: gitDiff ? sanitizeForJson(gitDiff) : null,
+        tetherTo: null,
+        tetherFrom: null,
+        tetherBroken: null,
       };
     }),
   );
 
-  return [...directoryNodes, ...fileNodes].sort((left, right) => {
+  // Resolve import tethers across file nodes
+  const allNodes = [...directoryNodes, ...fileNodes];
+  const fileNodeMap = new Map(fileNodes.map((n) => [n.path, n]));
+  const tetherMap = buildTetherMap(fileNodes.map((n) => ({ path: n.path, content: n.fullText })));
+
+  for (const [path, edges] of tetherMap.entries()) {
+    const node = fileNodeMap.get(path);
+    if (!node) continue;
+    node.tetherTo = edges.map((e) => e.resolvedPath).filter((p): p is string => p !== null);
+  }
+
+  for (const node of fileNodes) {
+    const edges = tetherMap.get(node.path) ?? [];
+    const hasUnresolved = edges.some((e) => e.resolvedPath === null);
+    const hasMissing = (node.tetherTo ?? []).some((target) => !fileNodeMap.has(target));
+    node.tetherBroken = hasUnresolved || hasMissing;
+  }
+
+  for (const node of fileNodes) {
+    const incoming = fileNodes
+      .filter((other) => (other.tetherTo ?? []).includes(node.path))
+      .map((other) => other.path);
+    if (incoming.length > 0) {
+      node.tetherFrom = incoming;
+    }
+  }
+
+  return allNodes.sort((left, right) => {
     const typeOrder = left.type.localeCompare(right.type);
     if (typeOrder !== 0) {
       return typeOrder;
@@ -480,6 +524,7 @@ function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repo
     type: node.type,
     x: position.x,
     y: position.y,
+    z: position.z ?? 0,
     mass: mapMassToPath(node.path, node.type),
     tick_updated: 0,
     name: sanitizeForJson(node.name),
@@ -497,6 +542,9 @@ function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repo
     last_commit_author: node.lastCommitAuthor,
     last_commit_date: node.lastCommitDate,
     git_diff: node.gitDiff,
+    tether_to: node.tetherTo,
+    tether_from: node.tetherFrom,
+    tether_broken: node.tetherBroken,
   });
 }
 

@@ -5,9 +5,10 @@ export const GRID_LIMIT = 49;
 export const PositionSchema = z.object({
   x: z.number().int().min(0).max(GRID_LIMIT),
   y: z.number().int().min(0).max(GRID_LIMIT),
+  z: z.number().int().min(0).max(GRID_LIMIT).default(0),
 });
 
-export type Position = z.infer<typeof PositionSchema>;
+export type Position = z.input<typeof PositionSchema>;
 
 export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory', 'pheromone']);
 export type EntityType = z.infer<typeof EntityTypeSchema>;
@@ -79,6 +80,7 @@ export const EntitySchema = z.object({
   type: EntityTypeSchema,
   x: z.number().int().min(0).max(GRID_LIMIT),
   y: z.number().int().min(0).max(GRID_LIMIT),
+  z: z.number().int().min(0).max(GRID_LIMIT).default(0),
   mass: z.number().int().positive(),
   tick_updated: z.number().int().nonnegative(),
   agent_role: AgentRoleSchema.nullable().optional(),
@@ -106,9 +108,12 @@ export const EntitySchema = z.object({
   last_commit_author: z.string().nullable().optional(),
   last_commit_date: z.string().nullable().optional(),
   git_diff: z.string().nullable().optional(),
+  tether_to: z.array(z.string()).nullable().optional(),
+  tether_from: z.array(z.string()).nullable().optional(),
+  tether_broken: z.boolean().nullable().optional(),
 });
 
-export type Entity = z.infer<typeof EntitySchema>;
+export type Entity = z.input<typeof EntitySchema>;
 
 export const WorldStatusSchema = z.enum(['booting', 'running', 'goal-reached', 'stalled']);
 export type WorldStatus = z.infer<typeof WorldStatusSchema>;
@@ -207,6 +212,9 @@ export const WorldStateSchema = z.object({
   explanation_text: z.string().nullable().optional(),
   explanation_error: z.string().nullable().optional(),
   explanation_updated_at_tick: z.number().int().nonnegative().nullable().optional(),
+  queen_cycle: z.number().int().nonnegative().nullable().optional(),
+  queen_alarm: z.number().int().min(0).max(255).nullable().optional(),
+  queen_urgency: z.number().int().min(0).max(255).nullable().optional(),
   active_tasks: z.array(TaskSchema).nullable().optional(),
   agent_activities: z.array(AgentActivitySchema).nullable().optional(),
 });
@@ -277,7 +285,7 @@ export const NeighborhoodScanSchema = z.object({
   full_content: z.string().nullable().optional(),
 });
 
-export type NeighborhoodScan = z.infer<typeof NeighborhoodScanSchema>;
+export type NeighborhoodScan = z.input<typeof NeighborhoodScanSchema>;
 
 export const AgentDecisionSchema = z
   .object({

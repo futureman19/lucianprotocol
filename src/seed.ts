@@ -4,6 +4,7 @@ import type { AgentRole, Direction, Entity, Position } from './types';
 
 export const GRID_WIDTH = 50;
 export const GRID_HEIGHT = 50;
+export const GRID_DEPTH = 8;
 export const CLOCK_PERIOD = 60;
 export const TICK_INTERVAL_MS = 100;
 export const MAX_TICKS = 300;
@@ -11,9 +12,9 @@ export const WALL_COUNT = 20;
 export const DEFAULT_SEED = 'lux-alpha-001';
 export const WORLD_STATE_ID = 'lux-world';
 
-export const START_POSITION: Position = { x: 0, y: 0 };
-export const GOAL_POSITION: Position = { x: 25, y: 25 };
-export const REQUIRED_COLLISION_WALL: Position = { x: 10, y: 10 };
+export const START_POSITION: Position = { x: 0, y: 0, z: 0 };
+export const GOAL_POSITION: Position = { x: 25, y: 25, z: 0 };
+export const REQUIRED_COLLISION_WALL: Position = { x: 10, y: 10, z: 0 };
 
 export const ARCHITECT_COUNT = 3;
 
@@ -26,16 +27,16 @@ interface AgentSeedSpec {
 }
 
 const ARCHITECT_POSITIONS: readonly Position[] = [
-  { x: 0, y: 0 },
-  { x: 2, y: 0 },
-  { x: 0, y: 2 },
+  { x: 0, y: 0, z: 0 },
+  { x: 2, y: 0, z: 0 },
+  { x: 0, y: 2, z: 0 },
 ];
 
 const VISIONARY_SEED: AgentSeedSpec = {
   descriptor: 'Visionary workforce node',
   id: 'agent-visionary-01',
   name: 'Visionary',
-  position: { x: 1, y: 0 },
+  position: { x: 1, y: 0, z: 0 },
   role: 'visionary',
 };
 
@@ -43,7 +44,7 @@ const CRITIC_SEED: AgentSeedSpec = {
   descriptor: 'Critic workforce node',
   id: 'agent-critic-01',
   name: 'Critic',
-  position: { x: 0, y: 1 },
+  position: { x: 0, y: 1, z: 0 },
   role: 'critic',
 };
 
@@ -68,16 +69,20 @@ const DIRECTION_VECTORS: Record<Direction, { dx: number; dy: number }> = {
   west: { dx: -1, dy: 0 },
 };
 
-export function toIndex(x: number, y: number): number {
-  return (y * GRID_WIDTH) + x;
+export function toIndex(x: number, y: number, z = 0): number {
+  return x + (y * GRID_WIDTH) + (z * GRID_WIDTH * GRID_HEIGHT);
 }
 
 export function isWithinBounds(position: Position): boolean {
+  const z = position.z ?? 0;
+
   return (
     position.x >= 0 &&
     position.x < GRID_WIDTH &&
     position.y >= 0 &&
-    position.y < GRID_HEIGHT
+    position.y < GRID_HEIGHT &&
+    z >= 0 &&
+    z < GRID_DEPTH
   );
 }
 
@@ -87,6 +92,7 @@ export function step(position: Position, direction: Direction): Position {
   return {
     x: position.x + vector.dx,
     y: position.y + vector.dy,
+    z: position.z ?? 0,
   };
 }
 
@@ -112,12 +118,14 @@ export function createInitialEntities(seed: string): Entity[] {
       type: 'agent' as const,
       x: agent.position.x,
       y: agent.position.y,
+      z: 0,
     })),
     {
       id: 'goal-primary',
       type: 'goal',
       x: GOAL_POSITION.x,
       y: GOAL_POSITION.y,
+      z: 0,
       mass: 1,
       tick_updated: 0,
     },
@@ -126,6 +134,7 @@ export function createInitialEntities(seed: string): Entity[] {
       type: 'wall',
       x: REQUIRED_COLLISION_WALL.x,
       y: REQUIRED_COLLISION_WALL.y,
+      z: 0,
       mass: 1,
       tick_updated: 0,
     },
@@ -143,6 +152,7 @@ export function createInitialEntities(seed: string): Entity[] {
     const candidate: Position = {
       x: Math.floor(rng() * GRID_WIDTH),
       y: Math.floor(rng() * GRID_HEIGHT),
+      z: 0,
     };
 
     const key = `${candidate.x},${candidate.y}`;
@@ -172,6 +182,7 @@ export function createInitialEntities(seed: string): Entity[] {
       type: 'wall',
       x: candidate.x,
       y: candidate.y,
+      z: 0,
       mass: 1,
       tick_updated: 0,
     });

@@ -29,6 +29,8 @@ import {
 import { computeLineDiff, type DiffLine } from './diff';
 import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
+import { QueenHUD } from './QueenHUD';
+import { drawTethers } from './tether-render';
 import {
   createIsoLayout,
   createPrismProjection,
@@ -1747,6 +1749,7 @@ function App() {
       const layout = createIsoLayout(viewport.width, viewport.height, camera);
       drawBackdrop(context, viewport);
       drawGrid(context, layout);
+      drawTethers(context, entityListRef.current, layout, phaseRef.current);
       drawTetherRoute(context, routeNodesRef.current, layout);
       drawAgentTethers(
         context,
@@ -1961,6 +1964,11 @@ function App() {
 
   return (
     <main className="lux-shell">
+      <QueenHUD
+        cycle={worldState.queen_cycle ?? 0}
+        alarm={worldState.queen_alarm ?? 0}
+        urgency={worldState.queen_urgency ?? 0}
+      />
       <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
         <button
           className="panel-toggle"

@@ -17,6 +17,7 @@ import {
   CLOCK_PERIOD,
   DEFAULT_SEED,
   GOAL_POSITION,
+  GRID_DEPTH,
   GRID_HEIGHT,
   GRID_WIDTH,
   MAX_TICKS,
@@ -38,6 +39,14 @@ import {
 } from './git-parser';
 import { applyDelete, applyInsert, applyPatch } from './surgical-edit';
 import { isStructureEntity } from './mass-mapper';
+import {
+  computeAlarm,
+  computeUrgency,
+  getDefaultQueenState,
+  loadQueenState,
+  saveQueenState,
+  type QueenState,
+} from './queen';
 import { createServiceSupabaseClient } from './supabase';
 import {
   OperatorControlSchema,
@@ -132,6 +141,14 @@ function createDefaultAgentMemory(): AgentMemory {
   };
 }
 
+function getPositionKey(position: { x: number; y: number; z?: number | undefined }): string {
+  return `${position.x},${position.y},${position.z ?? 0}`;
+}
+
+function getPositionZ(position: { z?: number | undefined }): number {
+  return position.z ?? 0;
+}
+
 function getContentHashForMemory(entity: Entity): string {
   if (entity.content_hash) {
     return entity.content_hash;
@@ -151,17 +168,22 @@ export function findReadableTargetInEntities(
     return null;
   }
 
+  const agentZ = getPositionZ(agent);
   const positions: Position[] = [
-    { x: agent.x, y: agent.y },
-    { x: agent.x, y: agent.y - 1 },
-    { x: agent.x + 1, y: agent.y },
-    { x: agent.x, y: agent.y + 1 },
-    { x: agent.x - 1, y: agent.y },
+    { x: agent.x, y: agent.y, z: agentZ },
+    { x: agent.x, y: agent.y - 1, z: agentZ },
+    { x: agent.x + 1, y: agent.y, z: agentZ },
+    { x: agent.x, y: agent.y + 1, z: agentZ },
+    { x: agent.x - 1, y: agent.y, z: agentZ },
   ];
 
   for (const position of positions) {
     for (const entity of entities) {
-      if (entity.x !== position.x || entity.y !== position.y) {
+      if (
+        entity.x !== position.x ||
+        entity.y !== position.y ||
+        getPositionZ(entity) !== getPositionZ(position)
+      ) {
         continue;
       }
 
@@ -202,7 +224,7 @@ export function resolvePathWithinRoot(rootPath: string, relativePath: string): s
 export class LuxEngine {
   private readonly entities = new Map<string, Entity>();
   private readonly solidGrid: Array<string | null> = Array.from(
-    { length: GRID_WIDTH * GRID_HEIGHT },
+    { length: GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH },
     () => null,
   );
   private readonly positionIndex = new Map<string, string[]>();
@@ -254,6 +276,7 @@ export class LuxEngine {
   private currentRunId = 0;
   private savedOverlayNames: string[] = [];
   private activeTasks: Task[] = [];
+  private queenState: QueenState = getDefaultQueenState();
   private lastOperatorPromptForPlanning = '';
   private visionaryPlanningPromise: Promise<void> | null = null;
   private criticReviewPromise: Promise<void> | null = null;
@@ -273,6 +296,7 @@ export class LuxEngine {
     private readonly restartDelayMs = 1500,
   ) {
     this.resetWorld();
+    this.queenState = loadQueenState(seed);
     void this.syncPipeline;
   }
 
@@ -581,10 +605,14 @@ export class LuxEngine {
   }
 
   private registerEntity(entity: Entity): void {
-    const normalizedEntity =
-      entity.type === 'agent' && entity.memory == null
-        ? { ...entity, memory: createDefaultAgentMemory() }
+    let normalizedEntity: Entity =
+      entity.z == null
+        ? { ...entity, z: 0 }
         : entity;
+
+    if (normalizedEntity.type === 'agent' && normalizedEntity.memory == null) {
+      normalizedEntity = { ...normalizedEntity, memory: createDefaultAgentMemory() };
+    }
 
     this.entities.set(normalizedEntity.id, normalizedEntity);
     this.invalidateStructureCache();
@@ -598,10 +626,10 @@ export class LuxEngine {
     }
 
     if (isSolidEntity(normalizedEntity)) {
-      this.solidGrid[toIndex(normalizedEntity.x, normalizedEntity.y)] = normalizedEntity.id;
+      this.solidGrid[toIndex(normalizedEntity.x, normalizedEntity.y, getPositionZ(normalizedEntity))] = normalizedEntity.id;
     }
 
-    const key = `${normalizedEntity.x},${normalizedEntity.y}`;
+    const key = getPositionKey(normalizedEntity);
     const list = this.positionIndex.get(key) ?? [];
     list.push(normalizedEntity.id);
     this.positionIndex.set(key, list);
@@ -630,10 +658,10 @@ export class LuxEngine {
     }
 
     if (isSolidEntity(entity)) {
-      this.solidGrid[toIndex(entity.x, entity.y)] = null;
+      this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
     }
 
-    const key = `${entity.x},${entity.y}`;
+    const key = getPositionKey(entity);
     const list = this.positionIndex.get(key);
     if (!list) {
       return;
@@ -657,14 +685,23 @@ export class LuxEngine {
     const updatedEntity: Entity = {
       ...entity,
       ...patch,
+      z: patch.z ?? entity.z ?? 0,
     };
 
     this.entities.set(entityId, updatedEntity);
     this.invalidateStructureCache();
 
-    if ((patch.x !== undefined && patch.x !== entity.x) || (patch.y !== undefined && patch.y !== entity.y)) {
-      const oldKey = `${entity.x},${entity.y}`;
-      const newKey = `${updatedEntity.x},${updatedEntity.y}`;
+    if (
+      (patch.x !== undefined && patch.x !== entity.x) ||
+      (patch.y !== undefined && patch.y !== entity.y) ||
+      (patch.z !== undefined && patch.z !== getPositionZ(entity))
+    ) {
+      if (isSolidEntity(entity)) {
+        this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
+      }
+
+      const oldKey = getPositionKey(entity);
+      const newKey = getPositionKey(updatedEntity);
       const oldList = this.positionIndex.get(oldKey);
       if (oldList) {
         const filtered = oldList.filter((id) => id !== entityId);
@@ -677,6 +714,10 @@ export class LuxEngine {
       const newList = this.positionIndex.get(newKey) ?? [];
       newList.push(entityId);
       this.positionIndex.set(newKey, newList);
+
+      if (isSolidEntity(updatedEntity)) {
+        this.solidGrid[toIndex(updatedEntity.x, updatedEntity.y, getPositionZ(updatedEntity))] = updatedEntity.id;
+      }
     }
 
     return updatedEntity;
@@ -756,12 +797,14 @@ export class LuxEngine {
   }
 
   private getNeighborhoodPositions(position: Position): Position[] {
+    const z = getPositionZ(position);
+
     return [
-      { x: position.x, y: position.y },
-      { x: position.x, y: position.y - 1 },
-      { x: position.x + 1, y: position.y },
-      { x: position.x, y: position.y + 1 },
-      { x: position.x - 1, y: position.y },
+      { x: position.x, y: position.y, z },
+      { x: position.x, y: position.y - 1, z },
+      { x: position.x + 1, y: position.y, z },
+      { x: position.x, y: position.y + 1, z },
+      { x: position.x - 1, y: position.y, z },
     ].filter(isWithinBounds);
   }
 
@@ -769,7 +812,7 @@ export class LuxEngine {
     const visiblePheromones: PheromoneSignal[] = [];
 
     for (const position of this.getNeighborhoodPositions(agent)) {
-      const ids = this.positionIndex.get(`${position.x},${position.y}`) ?? [];
+      const ids = this.positionIndex.get(getPositionKey(position)) ?? [];
 
       for (const id of ids) {
         const entity = this.entities.get(id);
@@ -800,7 +843,11 @@ export class LuxEngine {
 
   private getStructureAtPosition(position: Position): Entity | null {
     for (const entity of this.getStructureEntities()) {
-      if (entity.x === position.x && entity.y === position.y) {
+      if (
+        entity.x === position.x &&
+        entity.y === position.y &&
+        getPositionZ(entity) === getPositionZ(position)
+      ) {
         return entity;
       }
     }
@@ -837,7 +884,8 @@ export class LuxEngine {
     return (
       computeChiralMass(entity) >= 8 ||
       entity.git_status === 'conflicted' ||
-      entity.git_status === 'deleted'
+      entity.git_status === 'deleted' ||
+      entity.tether_broken === true
     );
   }
 
@@ -885,6 +933,9 @@ export class LuxEngine {
       }
 
       this.applyPendingOverlayIfReady();
+      if (this.absoluteTick > 0 && this.absoluteTick % CLOCK_PERIOD === 0) {
+        this.runQueenCycle();
+      }
       this.expirePheromones();
       this.applyQueuedDecisions();
       this.updateHivemindState();
@@ -907,6 +958,18 @@ export class LuxEngine {
     } finally {
       this.lastTickDurationMs = Math.max(0, Math.round(performance.now() - tickStartedAtMs));
     }
+  }
+
+  private runQueenCycle(): void {
+    this.queenState.cycle += 1;
+    this.queenState.pheromoneAlarm = computeAlarm(this.getStructureEntities());
+    this.queenState.pheromoneUrgency = computeUrgency(this.activeTasks);
+    this.queenState.lastTick = this.absoluteTick;
+    this.queenState.updatedAt = new Date().toISOString();
+    void saveQueenState(this.queenState);
+    console.log(
+      `[queen] cycle=${this.queenState.cycle} alarm=${this.queenState.pheromoneAlarm} urgency=${this.queenState.pheromoneUrgency}`,
+    );
   }
 
   private updateHivemindState(): void {
@@ -1270,7 +1333,7 @@ export class LuxEngine {
   }
 
   private getFullContentForAgent(agent: Entity): string | null {
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (
       currentNode &&
       currentNode.type === 'file' &&
@@ -1291,6 +1354,17 @@ export class LuxEngine {
         node_state: this.getDefaultNodeState(entity),
         state_tick: entity.state_tick ?? 0,
       });
+    }
+
+    // Re-evaluate tether breakage in case files were deleted/renamed since import
+    for (const entity of this.getStructureEntities()) {
+      if (entity.type !== 'file' || !entity.tether_to) {
+        continue;
+      }
+      const hasBroken = entity.tether_to.some((targetPath) => !this.findStructureByPath(targetPath));
+      if (hasBroken !== (entity.tether_broken ?? false)) {
+        this.patchEntity(entity.id, { tether_broken: hasBroken });
+      }
     }
   }
 
@@ -1394,7 +1468,7 @@ export class LuxEngine {
   }
 
   private selectArchitectTarget(agent: Entity): Entity | null {
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (currentNode && currentNode.lock_owner === agent.id) {
       return currentNode;
     }
@@ -1430,7 +1504,7 @@ export class LuxEngine {
   }
 
   private selectCriticTarget(agent: Entity): Entity | null {
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (currentNode && currentNode.lock_owner === agent.id) {
       return currentNode;
     }
@@ -1445,6 +1519,17 @@ export class LuxEngine {
     }
 
     const structureNodes = this.getStructureEntities();
+
+    // Tether patrol: broken imports are highest-priority asymmetry
+    const brokenTethers = structureNodes.filter((entity) =>
+      entity.tether_broken === true &&
+      entity.lock_owner == null &&
+      entity.node_state !== 'in-progress',
+    );
+    if (brokenTethers.length > 0) {
+      return this.selectClosestStructure(agent, brokenTethers);
+    }
+
     const architectLocks = structureNodes.filter((entity) => {
       if (!entity.lock_owner) {
         return false;
@@ -1511,7 +1596,7 @@ export class LuxEngine {
   }
 
   private executeDecision(agent: Entity, decision: AgentDecision): void {
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (
       currentNode &&
       currentNode.lock_owner === agent.id &&
@@ -1914,6 +1999,7 @@ export class LuxEngine {
       type: 'pheromone',
       x: agent.x,
       y: agent.y,
+      z: getPositionZ(agent),
       mass: 1,
       tick_updated: this.absoluteTick,
       author_id: agent.id,
@@ -2373,7 +2459,7 @@ export class LuxEngine {
       }
     }
 
-    return { x: agent.x, y: agent.y };
+    return { x: agent.x, y: agent.y, z: getPositionZ(agent) };
   }
 
   private canOccupy(position: Position, actorId: string): boolean {
@@ -2381,16 +2467,16 @@ export class LuxEngine {
       return false;
     }
 
-    const occupantId = this.solidGrid[toIndex(position.x, position.y)];
+    const occupantId = this.solidGrid[toIndex(position.x, position.y, getPositionZ(position))];
     return occupantId === null || occupantId === actorId;
   }
 
   private moveEntity(entity: Entity, nextPosition: Position): void {
     if (isSolidEntity(entity)) {
-      this.solidGrid[toIndex(entity.x, entity.y)] = null;
+      this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
     }
 
-    const oldKey = `${entity.x},${entity.y}`;
+    const oldKey = getPositionKey(entity);
     const oldList = this.positionIndex.get(oldKey);
     if (oldList) {
       const filtered = oldList.filter((id) => id !== entity.id);
@@ -2405,19 +2491,20 @@ export class LuxEngine {
       ...entity,
       x: nextPosition.x,
       y: nextPosition.y,
+      z: nextPosition.z ?? entity.z ?? 0,
       tick_updated: this.absoluteTick,
     };
 
     this.entities.set(entity.id, updatedEntity);
     this.invalidateStructureCache();
 
-    const newKey = `${nextPosition.x},${nextPosition.y}`;
+    const newKey = getPositionKey(updatedEntity);
     const newList = this.positionIndex.get(newKey) ?? [];
     newList.push(entity.id);
     this.positionIndex.set(newKey, newList);
 
     if (isSolidEntity(updatedEntity)) {
-      this.solidGrid[toIndex(nextPosition.x, nextPosition.y)] = updatedEntity.id;
+      this.solidGrid[toIndex(updatedEntity.x, updatedEntity.y, getPositionZ(updatedEntity))] = updatedEntity.id;
     }
   }
 
@@ -2509,7 +2596,7 @@ export class LuxEngine {
       return { action: 'wait' };
     }
 
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (currentNode && currentNode.lock_owner === agent.id) {
       return { action: 'wait' };
     }
@@ -2540,7 +2627,7 @@ export class LuxEngine {
     agent: Entity,
     scan: NeighborhoodScan,
   ): AgentDecision {
-    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+    const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (currentNode && currentNode.lock_owner === agent.id) {
       return { action: 'wait' };
     }
@@ -2625,13 +2712,13 @@ export class LuxEngine {
     if (target) {
       return {
         path: target.path ?? null,
-        position: { x: target.x, y: target.y },
+        position: { x: target.x, y: target.y, z: getPositionZ(target) },
       };
     }
 
     return {
       path: null,
-      position: { x: agent.x, y: agent.y },
+      position: { x: agent.x, y: agent.y, z: getPositionZ(agent) },
     };
   }
 
@@ -2642,8 +2729,8 @@ export class LuxEngine {
       current_tick: this.getCurrentPhase(),
       absolute_tick: this.absoluteTick,
       agent_role: getAgentRole(agent) ?? 'architect',
-      agent: { x: agent.x, y: agent.y },
-      goal: { x: GOAL_POSITION.x, y: GOAL_POSITION.y },
+      agent: { x: agent.x, y: agent.y, z: getPositionZ(agent) },
+      goal: { x: GOAL_POSITION.x, y: GOAL_POSITION.y, z: getPositionZ(GOAL_POSITION) },
       objective: objective.position,
       operator_action: this.operatorAction,
       operator_target_query: this.operatorTargetQuery,
@@ -2651,11 +2738,11 @@ export class LuxEngine {
       operator_prompt: this.operatorPrompt.length > 0 ? this.operatorPrompt : null,
       agent_prompt: this.getAgentPrompt(agent).length > 0 ? this.getAgentPrompt(agent) : null,
       task_context: this.getTaskContextForAgent(agent),
-      current: this.lookupTile({ x: agent.x, y: agent.y }, agent.id),
-      north: this.lookupTile({ x: agent.x, y: agent.y - 1 }),
-      east: this.lookupTile({ x: agent.x + 1, y: agent.y }),
-      south: this.lookupTile({ x: agent.x, y: agent.y + 1 }),
-      west: this.lookupTile({ x: agent.x - 1, y: agent.y }),
+      current: this.lookupTile({ x: agent.x, y: agent.y, z: getPositionZ(agent) }, agent.id),
+      north: this.lookupTile({ x: agent.x, y: agent.y - 1, z: getPositionZ(agent) }),
+      east: this.lookupTile({ x: agent.x + 1, y: agent.y, z: getPositionZ(agent) }),
+      south: this.lookupTile({ x: agent.x, y: agent.y + 1, z: getPositionZ(agent) }),
+      west: this.lookupTile({ x: agent.x - 1, y: agent.y, z: getPositionZ(agent) }),
       pheromones: this.getVisiblePheromones(agent),
       agent_memory: this.getAgentMemory(agent.id),
       full_content: this.getFullContentForAgent(agent),
@@ -2663,7 +2750,7 @@ export class LuxEngine {
   }
 
   private findEntityAtPosition(position: Position, excludeId?: string): Entity | null {
-    const ids = this.positionIndex.get(`${position.x},${position.y}`);
+    const ids = this.positionIndex.get(getPositionKey(position));
     if (!ids) {
       return null;
     }
@@ -2671,7 +2758,13 @@ export class LuxEngine {
     // Goal fast path
     if (this.goalId.length > 0) {
       const goal = this.entities.get(this.goalId);
-      if (goal && goal.id !== excludeId && goal.x === position.x && goal.y === position.y) {
+      if (
+        goal &&
+        goal.id !== excludeId &&
+        goal.x === position.x &&
+        goal.y === position.y &&
+        getPositionZ(goal) === getPositionZ(position)
+      ) {
         return goal;
       }
     }
@@ -2731,7 +2824,7 @@ export class LuxEngine {
       return { occupant: 'boundary' };
     }
 
-    const solidId = this.solidGrid[toIndex(position.x, position.y)];
+    const solidId = this.solidGrid[toIndex(position.x, position.y, getPositionZ(position))];
     if (solidId != null && solidId !== excludeId) {
       const solidEntity = this.entities.get(solidId);
       if (solidEntity) {
@@ -2845,7 +2938,7 @@ export class LuxEngine {
         continue;
       }
 
-      const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y });
+      const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
       if (currentNode && currentNode.lock_owner === agent.id) {
         activities.push({
           agent_id: agent.id,
@@ -2920,6 +3013,9 @@ export class LuxEngine {
       explanation_text: this.explanationState.text,
       explanation_error: this.explanationState.error,
       explanation_updated_at_tick: this.explanationState.updatedAtTick,
+      queen_cycle: this.queenState.cycle,
+      queen_alarm: this.queenState.pheromoneAlarm,
+      queen_urgency: this.queenState.pheromoneUrgency,
       active_tasks: this.activeTasks.length > 0 ? this.activeTasks : null,
       agent_activities: agentActivities.length > 0 ? agentActivities : null,
     };
