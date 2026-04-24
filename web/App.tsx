@@ -41,6 +41,17 @@ import {
   type Camera,
   type IsoLayout,
 } from './iso';
+import { ParticleSystem } from './particles';
+import {
+  drawBuilding,
+  drawDrone,
+  drawGoal,
+  drawPheromone,
+  drawCommandCenter,
+  drawHoverHighlight,
+  drawSelectionRing,
+} from './city-renderer';
+import { getBuildingHeight } from './building-styles';
 
 interface Viewport {
   height: number;
@@ -50,6 +61,52 @@ interface Viewport {
 interface DisplayPoint {
   x: number;
   y: number;
+}
+
+function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): void {
+  const background = context.createLinearGradient(0, 0, 0, viewport.height);
+  background.addColorStop(0, '#020409');
+  background.addColorStop(0.55, '#05070d');
+  background.addColorStop(1, '#010204');
+  context.fillStyle = background;
+  context.fillRect(0, 0, viewport.width, viewport.height);
+
+  const glow = context.createRadialGradient(
+    viewport.width * 0.55,
+    viewport.height * 0.08,
+    12,
+    viewport.width * 0.55,
+    viewport.height * 0.08,
+    viewport.width * 0.75,
+  );
+  glow.addColorStop(0, 'rgba(44, 207, 255, 0.12)');
+  glow.addColorStop(1, 'rgba(44, 207, 255, 0)');
+  context.fillStyle = glow;
+  context.fillRect(0, 0, viewport.width, viewport.height);
+}
+
+function drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout): void {
+  context.lineWidth = 1;
+
+  for (let x = 0; x <= 50; x += 1) {
+    const start = toScreen(x, 0, 0, layout);
+    const end = toScreen(x, 50, 0, layout);
+    context.beginPath();
+    context.moveTo(start.sx, start.sy);
+    context.lineTo(end.sx, end.sy);
+    context.strokeStyle = x % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
+    context.stroke();
+  }
+
+  for (let y = 0; y <= 50; y += 1) {
+    const start = toScreen(0, y, 0, layout);
+    const end = toScreen(50, y, 0, layout);
+    context.beginPath();
+    context.moveTo(start.sx, start.sy);
+    context.lineTo(end.sx, end.sy);
+    context.strokeStyle = y % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
+    context.stroke();
+  }
 }
 
 type LogKind = 'scan' | 'move' | 'read' | 'state' | 'alert' | 'verify' | 'decision';
@@ -116,172 +173,6 @@ function createEntityList(map: Map<string, Entity>): Entity[] {
   return Array.from(map.values()).sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function getPrismHeight(entity: Entity): number {
-  if (entity.type === 'directory') {
-    return 1;
-  }
-
-  if (entity.type === 'wall') {
-    return 1.2;
-  }
-
-  if (entity.type === 'goal') {
-    return 0.2;
-  }
-
-  if (entity.type === 'file') {
-    const lineLift = Math.min(4, Math.floor(countEntityLines(entity) / 24));
-    return Math.min(6, Math.max(1, entity.mass + lineLift));
-  }
-
-  return 0.7;
-}
-
-function getNodePalette(nodeState: HivemindNodeState): StatusPalette {
-  if (nodeState === 'task') {
-    return {
-      accent: '#ec4899',
-      glow: 'rgba(236, 72, 153, 0.45)',
-      left: '#5d1a4a',
-      right: '#7a225f',
-      top: '#a93782',
-    };
-  }
-
-  if (nodeState === 'in-progress') {
-    return {
-      accent: '#fb923c',
-      glow: 'rgba(251, 146, 60, 0.5)',
-      left: '#6d3207',
-      right: '#92400e',
-      top: '#c76716',
-    };
-  }
-
-  if (nodeState === 'asymmetry') {
-    return {
-      accent: '#fde047',
-      glow: 'rgba(239, 68, 68, 0.58)',
-      left: '#6b1b1b',
-      right: '#9a3412',
-      top: '#d9b423',
-    };
-  }
-
-  if (nodeState === 'verified') {
-    return {
-      accent: '#22c55e',
-      glow: 'rgba(34, 197, 94, 0.52)',
-      left: '#0c4d2d',
-      right: '#166534',
-      top: '#22a653',
-    };
-  }
-
-  return {
-    accent: '#56d9ff',
-    glow: 'rgba(86, 217, 255, 0.46)',
-    left: '#103d62',
-    right: '#18608b',
-    top: '#2489b8',
-  };
-}
-
-function getAgentPalette(role: HivemindAgentRole): AgentPalette {
-  if (role === 'visionary') {
-    return { fill: '#ec4899', glow: 'rgba(236, 72, 153, 0.78)', stroke: '#ffb0dc' };
-  }
-
-  if (role === 'critic') {
-    return { fill: '#ef4444', glow: 'rgba(239, 68, 68, 0.8)', stroke: '#ffc0c0' };
-  }
-
-  return { fill: '#10b981', glow: 'rgba(16, 185, 129, 0.78)', stroke: '#8cffd3' };
-}
-
-function withAlpha(hexColor: string, alpha: number): string {
-  const normalized = hexColor.replace('#', '');
-  const red = Number.parseInt(normalized.slice(0, 2), 16);
-  const green = Number.parseInt(normalized.slice(2, 4), 16);
-  const blue = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
-function getFileFootprint(entity: Entity): { depth: number; width: number } {
-  if (entity.type === 'directory') {
-    return { depth: 1.28, width: 1.28 };
-  }
-
-  if (entity.type === 'file') {
-    return { depth: 0.58, width: 0.58 };
-  }
-
-  if (entity.type === 'wall') {
-    return { depth: 1, width: 1 };
-  }
-
-  return { depth: 0.7, width: 0.7 };
-}
-
-function fillFace(
-  context: CanvasRenderingContext2D,
-  points: ReturnType<typeof createPrismProjection>['top'],
-  color: string,
-  stroke: string,
-): void {
-  traceFace(context, points);
-  context.fillStyle = color;
-  context.fill();
-  context.strokeStyle = stroke;
-  context.stroke();
-}
-
-function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): void {
-  const background = context.createLinearGradient(0, 0, 0, viewport.height);
-  background.addColorStop(0, '#020409');
-  background.addColorStop(0.55, '#05070d');
-  background.addColorStop(1, '#010204');
-  context.fillStyle = background;
-  context.fillRect(0, 0, viewport.width, viewport.height);
-
-  const glow = context.createRadialGradient(
-    viewport.width * 0.55,
-    viewport.height * 0.08,
-    12,
-    viewport.width * 0.55,
-    viewport.height * 0.08,
-    viewport.width * 0.75,
-  );
-  glow.addColorStop(0, 'rgba(44, 207, 255, 0.12)');
-  glow.addColorStop(1, 'rgba(44, 207, 255, 0)');
-  context.fillStyle = glow;
-  context.fillRect(0, 0, viewport.width, viewport.height);
-}
-
-function drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout): void {
-  context.lineWidth = 1;
-
-  for (let x = 0; x <= 50; x += 1) {
-    const start = toScreen(x, 0, 0, layout);
-    const end = toScreen(x, 50, 0, layout);
-    context.beginPath();
-    context.moveTo(start.sx, start.sy);
-    context.lineTo(end.sx, end.sy);
-    context.strokeStyle = x % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
-    context.stroke();
-  }
-
-  for (let y = 0; y <= 50; y += 1) {
-    const start = toScreen(0, y, 0, layout);
-    const end = toScreen(50, y, 0, layout);
-    context.beginPath();
-    context.moveTo(start.sx, start.sy);
-    context.lineTo(end.sx, end.sy);
-    context.strokeStyle = y % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
-    context.stroke();
-  }
-}
-
 function getInterpolatedPoint(
   entity: Entity,
   displayPoints: Record<string, DisplayPoint>,
@@ -300,345 +191,6 @@ function getInterpolatedPoint(
 
   displayPoints[entity.id] = display;
   return display;
-}
-
-function drawTetherRoute(context: CanvasRenderingContext2D, routeNodes: Entity[], layout: IsoLayout): void {
-  if (routeNodes.length < 2) {
-    return;
-  }
-
-  context.save();
-  context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
-  context.lineWidth = 2;
-  context.shadowBlur = 12;
-  context.shadowColor = 'rgba(16, 185, 129, 0.55)';
-  context.beginPath();
-
-  routeNodes.forEach((node, index) => {
-    const height = getPrismHeight(node);
-    const footprint = getFileFootprint(node);
-    const screen = toScreen(
-      node.x + (footprint.width / 2),
-      node.y + (footprint.depth / 2),
-      height + 0.08,
-      layout,
-    );
-
-    if (index === 0) {
-      context.moveTo(screen.sx, screen.sy);
-    } else {
-      context.lineTo(screen.sx, screen.sy);
-    }
-  });
-
-  context.stroke();
-  context.restore();
-}
-
-function drawCriticalMassHalo(
-  context: CanvasRenderingContext2D,
-  projection: ReturnType<typeof createPrismProjection>,
-  layout: IsoLayout,
-  phase: number,
-): void {
-  const pulse = 0.7 + ((phase % 10) * 0.05);
-  context.save();
-  context.beginPath();
-  context.ellipse(
-    projection.center.sx,
-    projection.center.sy,
-    layout.tileWidth * 0.28,
-    layout.tileHeight * 0.22,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  context.strokeStyle = `rgba(236, 72, 153, ${pulse})`;
-  context.lineWidth = 1.6;
-  context.shadowBlur = 16;
-  context.shadowColor = 'rgba(236, 72, 153, 0.62)';
-  context.stroke();
-  context.restore();
-}
-
-function drawStructureEntity(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number,
-  nodeState: HivemindNodeState,
-): void {
-  const palette = getNodePalette(nodeState);
-  const height = getPrismHeight(entity);
-  const footprint = getFileFootprint(entity);
-  const projection = createPrismProjection(
-    display.x + ((1 - footprint.width) / 2),
-    display.y + ((1 - footprint.depth) / 2),
-    0,
-    footprint.width,
-    footprint.depth,
-    height,
-    layout,
-  );
-  const pulsing = nodeState === 'in-progress' || nodeState === 'asymmetry';
-  const highlighted = pulsing || nodeState === 'task' || nodeState === 'verified' || isCriticalMass(entity);
-
-  context.save();
-  context.lineWidth = entity.type === 'directory' ? 1.4 : 1.1;
-
-  if (highlighted) {
-    context.shadowBlur = pulsing ? 16 + ((phase % 12) * 0.8) : 14;
-    context.shadowColor = palette.glow;
-  }
-
-  fillFace(context, projection.left, palette.left, 'rgba(160, 236, 255, 0.18)');
-  fillFace(context, projection.right, palette.right, 'rgba(160, 236, 255, 0.22)');
-  fillFace(context, projection.top, palette.top, palette.accent);
-
-  if (isCriticalMass(entity)) {
-    drawCriticalMassHalo(context, projection, layout, phase);
-  }
-
-  context.restore();
-}
-
-function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: IsoLayout): void {
-  const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.65, layout);
-  context.save();
-  context.strokeStyle = 'rgba(255, 166, 0, 0.95)';
-  context.lineWidth = 2;
-  context.shadowBlur = 20;
-  context.shadowColor = 'rgba(255, 166, 0, 0.55)';
-  context.beginPath();
-  context.arc(center.sx, center.sy, layout.tileHeight * 0.55, 0, Math.PI * 2);
-  context.stroke();
-  context.restore();
-}
-
-function drawHoverHighlight(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-): void {
-  const display = getInterpolatedPoint(entity, displayPoints);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.5, layout);
-  const radius = layout.tileHeight * 1.1;
-
-  context.save();
-  context.strokeStyle = 'rgba(86, 217, 255, 0.55)';
-  context.lineWidth = 1.5;
-  context.shadowBlur = 16;
-  context.shadowColor = 'rgba(86, 217, 255, 0.35)';
-  context.setLineDash([4, 4]);
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
-  context.stroke();
-  context.restore();
-}
-
-function drawSelectionRing(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-  phase: number,
-): void {
-  const display = getInterpolatedPoint(entity, displayPoints);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.5, layout);
-  const radius = layout.tileHeight * 1.25;
-  const pulse = 0.7 + ((phase % 12) * 0.04);
-
-  context.save();
-  context.strokeStyle = `rgba(86, 217, 255, ${pulse})`;
-  context.lineWidth = 2.2;
-  context.shadowBlur = 22;
-  context.shadowColor = 'rgba(86, 217, 255, 0.55)';
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
-  context.stroke();
-
-  context.fillStyle = `rgba(86, 217, 255, ${pulse * 0.15})`;
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius * 0.85, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
-}
-
-function drawAgentTethers(
-  context: CanvasRenderingContext2D,
-  agents: Entity[],
-  entities: Entity[],
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-): void {
-  for (const agent of agents) {
-    if (!agent.objective_path) {
-      continue;
-    }
-
-    const target = entities.find((e) => e.path === agent.objective_path);
-    if (!target) {
-      continue;
-    }
-
-    const agentDisplay = getInterpolatedPoint(agent, displayPoints);
-    const agentCenter = toScreen(agentDisplay.x + 0.5, agentDisplay.y + 0.5, 0.85, layout);
-    const targetCenter = toScreen(target.x + 0.5, target.y + 0.5, 0.5, layout);
-
-    context.save();
-    context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
-    context.lineWidth = 1.2;
-    context.setLineDash([6, 4]);
-    context.beginPath();
-    context.moveTo(agentCenter.sx, agentCenter.sy);
-    context.lineTo(targetCenter.sx, targetCenter.sy);
-    context.stroke();
-
-    context.fillStyle = 'rgba(16, 185, 129, 0.5)';
-    context.beginPath();
-    context.arc(targetCenter.sx, targetCenter.sy, 3, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
-  }
-}
-
-function drawPheromone(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number,
-): void {
-  const ttl = entity.ttl_ticks ?? 0;
-  const maxTtl = 30;
-  const life = ttl / maxTtl;
-  if (life <= 0) {
-    return;
-  }
-
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.1, layout);
-  const baseRadius = layout.tileHeight * 0.75;
-  const pulse = 1 + ((phase % 8) * 0.03);
-  const radius = baseRadius * pulse;
-  const alpha = life * 0.35;
-
-  context.save();
-  context.strokeStyle = `rgba(167, 139, 250, ${alpha})`;
-  context.lineWidth = 1.5;
-  context.shadowBlur = 10 * life;
-  context.shadowColor = `rgba(167, 139, 250, ${alpha * 0.6})`;
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
-  context.stroke();
-
-  context.strokeStyle = `rgba(167, 139, 250, ${alpha * 0.4})`;
-  context.lineWidth = 1;
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius * 0.6, 0, Math.PI * 2);
-  context.stroke();
-
-  context.restore();
-}
-
-function drawAgent(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number,
-  tick: number,
-): void {
-  const role = getAgentRole(entity) ?? 'architect';
-  const palette = getAgentPalette(role);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
-  const radius = layout.tileHeight * 0.6;
-  const pulse = 0.72 + ((phase % 10) * 0.04);
-
-  const idleTicks = tick - entity.tick_updated;
-  const hasObjective = entity.objective_path != null;
-  let opacity = pulse;
-  if (!hasObjective && idleTicks > 30) {
-    opacity = pulse * Math.max(0, 1 - (idleTicks - 30) / 90);
-  }
-
-  if (opacity <= 0.01) {
-    return;
-  }
-
-  context.save();
-  context.beginPath();
-  context.moveTo(center.sx, center.sy - radius);
-  context.lineTo(center.sx + (radius * 0.9), center.sy);
-  context.lineTo(center.sx, center.sy + radius);
-  context.lineTo(center.sx - (radius * 0.9), center.sy);
-  context.closePath();
-  context.fillStyle = withAlpha(palette.fill, opacity);
-  context.shadowBlur = 24;
-  context.shadowColor = palette.glow;
-  context.fill();
-  context.lineWidth = 1.5;
-  context.strokeStyle = withAlpha(palette.stroke, opacity);
-  context.stroke();
-  context.restore();
-}
-
-function drawEntities(
-  context: CanvasRenderingContext2D,
-  entities: Entity[],
-  layout: IsoLayout,
-  phase: number,
-  tick: number,
-  displayPoints: Record<string, DisplayPoint>,
-): void {
-  const activeIds = new Set(entities.map((entity) => entity.id));
-  for (const id of Object.keys(displayPoints)) {
-    if (!activeIds.has(id)) {
-      delete displayPoints[id];
-    }
-  }
-
-  const renderables = entities.map((entity) => ({
-    depth: entity.x + entity.y + (getPrismHeight(entity) * 0.1),
-    entity,
-  }));
-
-  renderables.sort((left, right) => left.depth - right.depth);
-
-  for (const item of renderables) {
-    const { entity } = item;
-    const display = getInterpolatedPoint(entity, displayPoints);
-
-    if (entity.type === 'pheromone') {
-      drawPheromone(context, entity, display, layout, phase);
-      continue;
-    }
-
-    if (entity.type === 'agent') {
-      drawAgent(context, entity, display, layout, phase, tick);
-      continue;
-    }
-
-    if (entity.type === 'goal') {
-      drawGoal(context, entity, layout);
-      continue;
-    }
-
-    if (isStructureEntity(entity)) {
-      drawStructureEntity(
-        context,
-        entity,
-        display,
-        layout,
-        phase,
-        entity.node_state ?? 'stable',
-      );
-      continue;
-    }
-
-    drawStructureEntity(context, entity, display, layout, phase, 'stable');
-  }
 }
 
 function formatTimestamp(): string {
@@ -921,9 +473,9 @@ function App() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [contextTab, setContextTab] = useState<'code' | 'explanation'>('code');
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [camera, setCamera] = useState<Camera>({ panX: 0, panY: 0, zoom: 0.85 });
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
 
   const frameRef = useRef<number | null>(null);
@@ -937,6 +489,7 @@ function App() {
   const controlDirtyRef = useRef(false);
   const phaseRef = useRef<number>(worldState.phase);
   const tickRef = useRef<number>(worldState.tick);
+  const particlesRef = useRef<ParticleSystem>(new ParticleSystem());
   const routeNodesRef = useRef<Entity[]>([]);
   const previousTickRef = useRef<number>(-1);
   const previousStatusRef = useRef<string | null>(null);
@@ -1027,10 +580,11 @@ function App() {
   const inspectPopupPosition = ((): { left: number; top: number } | null => {
     if (!selectedEntity) return null;
     const layout = createIsoLayout(viewport.width, viewport.height, camera);
+    const height = getBuildingHeight(selectedEntity);
     const center = toScreen(
       selectedEntity.x + 0.5,
       selectedEntity.y + 0.5,
-      getPrismHeight(selectedEntity) + 0.8,
+      height + 0.8,
       layout,
     );
     const popupWidth = 320;
@@ -1750,33 +1304,161 @@ function App() {
       drawBackdrop(context, viewport);
       drawGrid(context, layout);
       drawTethers(context, entityListRef.current, layout, phaseRef.current);
-      drawTetherRoute(context, routeNodesRef.current, layout);
-      drawAgentTethers(
-        context,
-        agents,
-        entityListRef.current,
-        layout,
-        displayPointsRef.current,
+
+      // Update particles
+      particlesRef.current.update();
+
+      const activeIds = new Set(entityListRef.current.map((e) => e.id));
+      for (const id of Object.keys(displayPointsRef.current)) {
+        if (!activeIds.has(id)) {
+          delete displayPointsRef.current[id];
+        }
+      }
+
+      // Sort renderables by depth for proper isometric ordering
+      const renderables = entityListRef.current.map((entity) => {
+        const display = getInterpolatedPoint(entity, displayPointsRef.current);
+        const height = entity.type === 'directory' ? 1.2 : entity.type === 'file' ? Math.min(8, Math.max(0.8, (entity.mass ?? 1) * 0.5)) : entity.type === 'wall' ? 1.5 : 0.7;
+        return {
+          depth: display.x + display.y + (height * 0.1),
+          entity,
+          display,
+        };
+      });
+
+      renderables.sort((left, right) => left.depth - right.depth);
+
+      // Draw each entity with new city renderer
+      for (const item of renderables) {
+        const { entity, display } = item;
+
+        if (entity.type === 'command_center') {
+          drawCommandCenter(context, entity, display.x, display.y, layout, phaseRef.current);
+          continue;
+        }
+
+        if (entity.type === 'pheromone') {
+          drawPheromone(context, entity, display.x, display.y, layout, phaseRef.current);
+          continue;
+        }
+
+        if (entity.type === 'agent') {
+          drawDrone(context, entity, display.x, display.y, layout, phaseRef.current, tickRef.current);
+          continue;
+        }
+
+        if (entity.type === 'goal') {
+          drawGoal(context, entity, layout, phaseRef.current);
+          continue;
+        }
+
+        if (isStructureEntity(entity) || entity.type === 'wall') {
+          drawBuilding(context, entity, display.x, display.y, layout, phaseRef.current, entity.node_state ?? 'stable');
+          continue;
+        }
+      }
+
+      // Draw particles on top
+      particlesRef.current.draw(context);
+
+      // Minimap - StarCraft style
+      const mapSize = 140;
+      const mapPadding = 16;
+      const mapX = mapPadding;
+      const mapY = viewport.height - mapSize - mapPadding;
+      const mapScale = mapSize / 50;
+
+      context.save();
+      // Minimap background
+      context.fillStyle = 'rgba(2, 6, 12, 0.92)';
+      context.strokeStyle = 'rgba(86, 217, 255, 0.45)';
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.roundRect(mapX, mapY, mapSize, mapSize, 8);
+      context.fill();
+      context.stroke();
+
+      // Minimap grid
+      context.strokeStyle = 'rgba(46, 201, 255, 0.12)';
+      context.lineWidth = 0.5;
+      for (let mx = 0; mx <= 50; mx += 5) {
+        context.beginPath();
+        context.moveTo(mapX + mx * mapScale, mapY);
+        context.lineTo(mapX + mx * mapScale, mapY + mapSize);
+        context.stroke();
+      }
+      for (let my = 0; my <= 50; my += 5) {
+        context.beginPath();
+        context.moveTo(mapX, mapY + my * mapScale);
+        context.lineTo(mapX + mapSize, mapY + my * mapScale);
+        context.stroke();
+      }
+
+      // Draw entities on minimap
+      for (const entity of entityListRef.current) {
+        const mx = mapX + entity.x * mapScale;
+        const my = mapY + entity.y * mapScale;
+        if (entity.type === 'agent') {
+          context.fillStyle = entity.agent_role === 'visionary' ? '#ec4899' : entity.agent_role === 'critic' ? '#ef4444' : '#10b981';
+          context.shadowBlur = 4;
+          context.shadowColor = context.fillStyle;
+          context.beginPath();
+          context.arc(mx, my, 2.5, 0, Math.PI * 2);
+          context.fill();
+          context.shadowBlur = 0;
+        } else if (entity.type === 'wall') {
+          context.fillStyle = 'rgba(255, 255, 255, 0.35)';
+          context.fillRect(mx - 1, my - 1, 2, 2);
+        } else if (entity.type === 'file' || entity.type === 'directory') {
+          const ns = entity.node_state ?? 'stable';
+          const colors: Record<string, string> = {
+            task: '#ec4899',
+            'in-progress': '#fb923c',
+            asymmetry: '#fde047',
+            verified: '#22c55e',
+            stable: '#56d9ff',
+          };
+          context.fillStyle = colors[ns] ?? '#56d9ff';
+          context.fillRect(mx - 1.5, my - 1.5, 3, 3);
+        } else if (entity.type === 'command_center') {
+          context.fillStyle = '#ec4899';
+          context.shadowBlur = 6;
+          context.shadowColor = '#ec4899';
+          context.beginPath();
+          context.arc(mx, my, 3, 0, Math.PI * 2);
+          context.fill();
+          context.shadowBlur = 0;
+        }
+      }
+
+      // Viewport rectangle on minimap
+      const visibleW = Math.min(mapSize * 0.4, viewport.width / (layout.tileWidth * camera.zoom) * mapScale * 0.5);
+      const visibleH = Math.min(mapSize * 0.4, viewport.height / (layout.tileHeight * camera.zoom) * mapScale * 0.5);
+      const viewCenterX = mapX + 25 * mapScale - (camera.panX / layout.tileWidth / camera.zoom) * mapScale;
+      const viewCenterY = mapY + 25 * mapScale - (camera.panY / layout.tileHeight / camera.zoom) * mapScale;
+      context.strokeStyle = 'rgba(86, 217, 255, 0.8)';
+      context.lineWidth = 1.5;
+      context.strokeRect(
+        Math.max(mapX, viewCenterX - visibleW),
+        Math.max(mapY, viewCenterY - visibleH),
+        Math.min(mapSize - 2, visibleW * 2),
+        Math.min(mapSize - 2, visibleH * 2),
       );
-      drawEntities(
-        context,
-        entityListRef.current,
-        layout,
-        phaseRef.current,
-        tickRef.current,
-        displayPointsRef.current,
-      );
+
+      context.restore();
 
       if (hoveredEntityId) {
         const hovered = entityListRef.current.find((e) => e.id === hoveredEntityId);
-        if (hovered && isStructureEntity(hovered)) {
-          drawHoverHighlight(context, hovered, layout, displayPointsRef.current);
+        if (hovered) {
+          const display = getInterpolatedPoint(hovered, displayPointsRef.current);
+          drawHoverHighlight(context, hovered, layout, display.x, display.y);
         }
       }
 
       const selected = selectedEntityRef.current;
-      if (selected && isStructureEntity(selected)) {
-        drawSelectionRing(context, selected, layout, displayPointsRef.current, phaseRef.current);
+      if (selected) {
+        const display = getInterpolatedPoint(selected, displayPointsRef.current);
+        drawSelectionRing(context, selected, layout, display.x, display.y, phaseRef.current);
       }
 
       frameRef.current = window.requestAnimationFrame(render);

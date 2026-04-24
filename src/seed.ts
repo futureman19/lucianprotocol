@@ -33,17 +33,17 @@ const ARCHITECT_POSITIONS: readonly Position[] = [
 ];
 
 const VISIONARY_SEED: AgentSeedSpec = {
-  descriptor: 'Visionary workforce node',
+  descriptor: 'Visionary scout drone',
   id: 'agent-visionary-01',
-  name: 'Visionary',
+  name: 'Scout-Visionary',
   position: { x: 1, y: 0, z: 0 },
   role: 'visionary',
 };
 
 const CRITIC_SEED: AgentSeedSpec = {
-  descriptor: 'Critic workforce node',
+  descriptor: 'Critic repair drone',
   id: 'agent-critic-01',
-  name: 'Critic',
+  name: 'Repair-Critic',
   position: { x: 0, y: 1, z: 0 },
   role: 'critic',
 };
@@ -51,9 +51,9 @@ const CRITIC_SEED: AgentSeedSpec = {
 function buildAgentSeeds(): readonly AgentSeedSpec[] {
   const architects: AgentSeedSpec[] = ARCHITECT_POSITIONS.slice(0, ARCHITECT_COUNT).map(
     (position, index) => ({
-      descriptor: 'Architect workforce node',
+      descriptor: index === 0 ? 'Builder drone alpha' : index === 1 ? 'Miner drone beta' : 'Hauler drone gamma',
       id: `agent-architect-${String(index + 1).padStart(2, '0')}`,
-      name: 'Architect',
+      name: index === 0 ? 'Builder-SCV' : index === 1 ? 'Miner-Probe' : 'Hauler-Drone',
       position,
       role: 'architect',
     }),

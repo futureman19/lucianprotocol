@@ -10,7 +10,7 @@ export const PositionSchema = z.object({
 
 export type Position = z.input<typeof PositionSchema>;
 
-export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory', 'pheromone']);
+export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory', 'pheromone', 'command_center']);
 export type EntityType = z.infer<typeof EntityTypeSchema>;
 
 export const DirectionSchema = z.enum(['north', 'east', 'south', 'west']);
