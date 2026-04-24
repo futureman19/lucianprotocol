@@ -49,6 +49,7 @@ export const TileOccupantSchema = z.enum([
   'goal',
   'file',
   'directory',
+  'command_center',
 ]);
 export type TileOccupant = z.infer<typeof TileOccupantSchema>;
 

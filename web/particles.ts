@@ -165,6 +165,7 @@ export class ParticleSystem {
   update(): void {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
+      if (!p) continue;
       p.x += p.vx;
       p.y += p.vy;
       p.life--;

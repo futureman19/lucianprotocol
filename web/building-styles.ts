@@ -1,4 +1,4 @@
-import type { Entity } from './types';
+import type { Entity } from '../src/types';
 
 export interface BuildingStyle {
   accent: string;

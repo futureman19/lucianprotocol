@@ -28,9 +28,9 @@ export interface ScreenPoint {
 
 export interface CubeProjection {
   center: ScreenPoint;
-  left: ScreenPoint[];
-  right: ScreenPoint[];
-  top: ScreenPoint[];
+  left: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
+  right: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
+  top: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
 }
 
 export function createIsoLayout(

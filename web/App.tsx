@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from 'react';
 import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, PanelRight, X } from 'lucide-react';
 
 import {
@@ -144,7 +144,139 @@ interface WorkforceStatus {
   role: HivemindAgentRole;
 }
 
-const PREVIEW_ENTITIES = createInitialEntities(DEFAULT_SEED).sort((left, right) =>
+// Demo entities for vibe coder onboarding — shows all building styles
+const DEMO_ENTITIES: Entity[] = [
+  {
+    id: 'demo-cmd',
+    type: 'command_center',
+    x: 25,
+    y: 25,
+    z: 0,
+    mass: 5,
+    tick_updated: 0,
+    name: 'Command Center Alpha',
+  },
+  {
+    id: 'demo-api',
+    type: 'file',
+    x: 22,
+    y: 22,
+    z: 0,
+    mass: 5,
+    tick_updated: 0,
+    name: 'api.ts',
+    path: 'src/api.ts',
+    extension: '.ts',
+    node_state: 'stable',
+    git_status: 'clean',
+    content_preview: '// API routes and handlers\nexport async function handleRequest(req: Request) { ... }',
+  },
+  {
+    id: 'demo-components',
+    type: 'directory',
+    x: 28,
+    y: 22,
+    z: 0,
+    mass: 5,
+    tick_updated: 0,
+    name: 'components',
+    path: 'src/components',
+    node_state: 'stable',
+    git_status: 'clean',
+  },
+  {
+    id: 'demo-button',
+    type: 'file',
+    x: 27,
+    y: 23,
+    z: 0,
+    mass: 3,
+    tick_updated: 0,
+    name: 'Button.tsx',
+    path: 'src/components/Button.tsx',
+    extension: '.tsx',
+    node_state: 'stable',
+    git_status: 'clean',
+    content_preview: 'export function Button({ children, onClick }) { ... }',
+  },
+  {
+    id: 'demo-styles',
+    type: 'file',
+    x: 29,
+    y: 23,
+    z: 0,
+    mass: 2,
+    tick_updated: 0,
+    name: 'styles.css',
+    path: 'src/styles.css',
+    extension: '.css',
+    node_state: 'stable',
+    git_status: 'clean',
+    content_preview: '.button { background: #56d9ff; }',
+  },
+  {
+    id: 'demo-readme',
+    type: 'file',
+    x: 25,
+    y: 28,
+    z: 0,
+    mass: 1,
+    tick_updated: 0,
+    name: 'README.md',
+    path: 'README.md',
+    extension: '.md',
+    node_state: 'stable',
+    git_status: 'clean',
+    content_preview: '# My Project\n\nA spatial codebase visualization.',
+  },
+  {
+    id: 'demo-config',
+    type: 'file',
+    x: 23,
+    y: 28,
+    z: 0,
+    mass: 2,
+    tick_updated: 0,
+    name: 'package.json',
+    path: 'package.json',
+    extension: '.json',
+    node_state: 'stable',
+    git_status: 'clean',
+    content_preview: '{ "name": "my-project", "version": "1.0.0" }',
+  },
+  {
+    id: 'demo-test',
+    type: 'file',
+    x: 27,
+    y: 28,
+    z: 0,
+    mass: 3,
+    tick_updated: 0,
+    name: 'api.test.ts',
+    path: 'src/api.test.ts',
+    extension: '.test.ts',
+    node_state: 'verified',
+    git_status: 'clean',
+    content_preview: 'test("API handles requests", () => { ... })',
+  },
+  {
+    id: 'demo-bigfile',
+    type: 'file',
+    x: 20,
+    y: 25,
+    z: 0,
+    mass: 8,
+    tick_updated: 0,
+    name: 'legacy.ts',
+    path: 'src/legacy.ts',
+    extension: '.ts',
+    node_state: 'asymmetry',
+    git_status: 'modified',
+    content_preview: '// 5000 lines of messy code\nfunction doEverything() { ... }',
+  },
+];
+
+const PREVIEW_ENTITIES = [...createInitialEntities(DEFAULT_SEED), ...DEMO_ENTITIES].sort((left, right) =>
   left.id.localeCompare(right.id),
 );
 
@@ -191,6 +323,68 @@ function getInterpolatedPoint(
 
   displayPoints[entity.id] = display;
   return display;
+}
+
+interface StructureFocus {
+  distance: number;
+  entity: Entity | null;
+}
+
+function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
+  if (!agent) {
+    return { distance: Infinity, entity: null };
+  }
+
+  const structures = entities.filter((entity) => isStructureEntity(entity));
+  let nearest: StructureFocus = { distance: Infinity, entity: null };
+
+  for (const structure of structures) {
+    const distance = manhattanDistance(agent, structure);
+    if (distance < nearest.distance) {
+      nearest = { distance, entity: structure };
+    }
+  }
+
+  return nearest;
+}
+
+function getLoadedFile(agent: Entity | null, entities: Entity[]): Entity | null {
+  if (!agent) {
+    return null;
+  }
+
+  const files = entities.filter((entity) => entity.type === 'file');
+  const match = files.find((file) => file.x === agent.x && file.y === agent.y);
+  return match ?? null;
+}
+
+function buildRouteNodes(focus: Entity | null, entityByPath: Map<string, Entity>): Entity[] {
+  if (!focus || !focus.path) {
+    return [];
+  }
+
+  const segments = focus.path.split('/');
+  const nodes: Entity[] = [];
+
+  for (let index = 1; index <= segments.length; index += 1) {
+    const partial = segments.slice(0, index).join('/');
+    const match = entityByPath.get(partial);
+    if (match) {
+      nodes.push(match);
+    }
+  }
+
+  return nodes;
+}
+
+function createLogEntry(kind: LogKind, tick: number, message: string): LogEntry {
+  return {
+    id: `${tick}-${kind}-${Date.now()}`,
+    kind,
+    message,
+    tick,
+    timestamp: formatTimestamp(),
+  };
 }
 
 function formatTimestamp(): string {
@@ -314,84 +508,6 @@ function TaskDiff({ lines }: { lines: DiffLine[] }) {
   );
 }
 
-function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
-  if (!agent) {
-    return { distance: Number.POSITIVE_INFINITY, entity: null };
-  }
-
-  let nearest: Entity | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const entity of entities) {
-    const distance = manhattanDistance(agent, entity);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      nearest = entity;
-    }
-  }
-
-  return { distance: bestDistance, entity: nearest };
-}
-
-function getLoadedFile(agent: Entity | null, entities: Entity[]): Entity | null {
-  if (!agent) {
-    return null;
-  }
-
-  const fileCandidates = entities.filter((entity) => entity.type === 'file');
-  const nearest = getNearestStructure(agent, fileCandidates);
-  return !nearest.entity || nearest.distance > 1 ? null : nearest.entity;
-}
-
-function buildRouteNodes(focus: Entity | null, entityByPath: Map<string, Entity>): Entity[] {
-  if (!focus) {
-    return [];
-  }
-
-  const route: Entity[] = [];
-  const root = entityByPath.get('.');
-  if (root) {
-    route.push(root);
-  }
-
-  if (!focus.path || focus.path === '.') {
-    return route;
-  }
-
-  const segments = focus.path.split('/');
-  const prefixes: string[] = [];
-
-  if (focus.type === 'directory') {
-    for (let index = 0; index < segments.length; index += 1) {
-      prefixes.push(segments.slice(0, index + 1).join('/'));
-    }
-  } else {
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      prefixes.push(segments.slice(0, index + 1).join('/'));
-    }
-    prefixes.push(focus.path);
-  }
-
-  for (const prefix of prefixes) {
-    const entity = entityByPath.get(prefix);
-    if (entity) {
-      route.push(entity);
-    }
-  }
-
-  return route;
-}
-
-function createLogEntry(kind: LogKind, tick: number, message: string): LogEntry {
-  return {
-    id: `${kind}-${tick}-${crypto.randomUUID()}`,
-    kind,
-    message,
-    tick,
-    timestamp: formatTimestamp(),
-  };
-}
-
 function getCodePreview(entity: Entity | null): string {
   if (!entity) {
     return '';
@@ -465,7 +581,7 @@ function App() {
   const [editContentInput, setEditContentInput] = useState<string>('');
   const [commitMessageInput, setCommitMessageInput] = useState<string>('');
   const [shouldPushInput, setShouldPushInput] = useState<boolean>(false);
-  const [controlMessage, setControlMessage] = useState<string>('Enter a repository path and directive, then commit it into the lattice.');
+  const [controlMessage, setControlMessage] = useState<string>('Drag anywhere on the canvas to drop a prompt. Or import a repository below.');
   const [isSavingControl, setIsSavingControl] = useState(false);
   const [mode, setMode] = useState<'preview' | 'live'>('preview');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -477,6 +593,17 @@ function App() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [camera, setCamera] = useState<Camera>({ panX: 0, panY: 0, zoom: 0.85 });
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
+
+  // Drag-to-prompt state
+  const [isPromptDragging, setIsPromptDragging] = useState(false);
+  const [promptDragStart, setPromptDragStart] = useState<{ sx: number; sy: number } | null>(null);
+  const [promptDragCurrent, setPromptDragCurrent] = useState<{ sx: number; sy: number } | null>(null);
+  const [promptInput, setPromptInput] = useState<string>('');
+  const [showPromptInput, setShowPromptInput] = useState(false);
+  const [promptWorldPos, setPromptWorldPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Welcome overlay for first-time vibe coders
+  const [showWelcome, setShowWelcome] = useState(true);
 
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
@@ -595,6 +722,77 @@ function App() {
     top = Math.max(12, Math.min(viewport.height - popupHeight - 12, top));
     return { left, top };
   })();
+
+  // Spawn command center from drag-prompt
+  const handlePromptDrop = async (): Promise<void> => {
+    if (!promptWorldPos || !promptInput.trim()) return;
+    
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      // Preview mode: just add the command center locally
+      const newCmd: Entity = {
+        id: `cmd-${Date.now()}`,
+        type: 'command_center',
+        x: Math.floor(promptWorldPos.x),
+        y: Math.floor(promptWorldPos.y),
+        z: 0,
+        mass: 5,
+        tick_updated: tickRef.current,
+        name: promptInput.slice(0, 40),
+        message: promptInput,
+      };
+      entityMapRef.current.set(newCmd.id, newCmd);
+      entityListRef.current = createEntityList(entityMapRef.current);
+      setEntities(entityListRef.current);
+      setControlMessage(`Command Center spawned at (${newCmd.x}, ${newCmd.y}): "${promptInput.slice(0, 50)}"`);
+      particlesRef.current.spawnCommandCenterDrop(newCmd.x + 0.5, newCmd.y + 0.5);
+      return;
+    }
+
+    // Live mode: create command center + set operator prompt
+    try {
+      setIsSavingControl(true);
+      
+      // Insert command center entity
+      const { error: entityError } = await supabase.from('entities').insert({
+        id: `cmd-${Date.now()}`,
+        type: 'command_center',
+        x: Math.floor(promptWorldPos.x),
+        y: Math.floor(promptWorldPos.y),
+        z: 0,
+        mass: 5,
+        tick_updated: tickRef.current,
+        name: promptInput.slice(0, 40),
+        message: promptInput,
+      });
+      
+      if (entityError) throw entityError;
+
+      // Set the operator prompt to activate agents
+      const { error: controlError } = await supabase
+        .from('operator_controls')
+        .upsert(
+          {
+            id: DEFAULT_OPERATOR_CONTROL.id,
+            repo_path: repoInput.trim(),
+            operator_prompt: promptInput.trim(),
+            paused: false,
+            automate: true,
+          },
+          { onConflict: 'id' },
+        );
+
+      if (controlError) throw controlError;
+
+      setControlMessage(`Agents dispatched! Command Center at (${Math.floor(promptWorldPos.x)}, ${Math.floor(promptWorldPos.y)}) processing: "${promptInput.slice(0, 50)}..."`);
+      particlesRef.current.spawnCommandCenterDrop(Math.floor(promptWorldPos.x) + 0.5, Math.floor(promptWorldPos.y) + 0.5);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setControlMessage(`Failed to spawn Command Center: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
 
   const handleToggleAutomate = async (): Promise<void> => {
     const supabase = supabaseRef.current;
@@ -885,7 +1083,7 @@ function App() {
       return;
     }
 
-    setControlMessage('Enter a repository path and directive, then commit it into the lattice.');
+    setControlMessage('Drag anywhere on the canvas to drop a prompt. Or import a repository below.');
   }, [
     activeRepositoryPath,
     isSavingControl,
@@ -1155,12 +1353,16 @@ function App() {
     }
 
     const DRAG_THRESHOLD = 4;
+    const PROMPT_DRAG_THRESHOLD = 12;
+    const LONG_PRESS_DELAY = 400;
     let isMouseDown = false;
     let dragStartX = 0;
     let dragStartY = 0;
     let isPanning = false;
     let lastPanX = 0;
     let lastPanY = 0;
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let didLongPress = false;
 
     const handleWheel = (event: WheelEvent): void => {
       event.preventDefault();
@@ -1189,6 +1391,38 @@ function App() {
         dragStartX = event.clientX;
         dragStartY = event.clientY;
         isPanning = false;
+        didLongPress = false;
+
+        // Check if clicking on empty space (not on an entity)
+        const rect = canvas.getBoundingClientRect();
+        const sx = event.clientX - rect.left;
+        const sy = event.clientY - rect.top;
+        const layout = createIsoLayout(viewport.width, viewport.height, camera);
+        
+        const nearest = entityListRef.current
+          .filter((e) => isStructureEntity(e) || e.type === 'command_center')
+          .map((entity) => {
+            const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
+            const dist = Math.hypot(center.sx - sx, center.sy - sy);
+            return { entity, dist };
+          })
+          .filter((item) => item.dist < layout.tileHeight * 1.4)
+          .sort((a, b) => a.dist - b.dist)[0];
+
+        if (!nearest) {
+          // Clicked on empty space — start long-press timer for prompt drag
+          longPressTimer = setTimeout(() => {
+            didLongPress = true;
+            setIsPromptDragging(true);
+            setPromptDragStart({ sx, sy });
+            setPromptDragCurrent({ sx, sy });
+            setPromptInput('');
+            setShowPromptInput(true);
+            const worldPos = fromScreen(sx, sy, layout);
+            setPromptWorldPos({ x: worldPos.x, y: worldPos.y });
+            canvas.style.cursor = 'crosshair';
+          }, LONG_PRESS_DELAY);
+        }
       } else if (event.button === 1) {
         isPanning = true;
         lastPanX = event.clientX;
@@ -1198,10 +1432,24 @@ function App() {
     };
 
     const handleMouseMove = (event: MouseEvent): void => {
-      if (isMouseDown && !isPanning) {
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+
+      if (isPromptDragging) {
+        setPromptDragCurrent({ sx, sy });
+        return;
+      }
+
+      if (isMouseDown && !isPanning && !didLongPress) {
         const dx = event.clientX - dragStartX;
         const dy = event.clientY - dragStartY;
         if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+          // Cancel long press if dragged too far
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
           isPanning = true;
           lastPanX = event.clientX;
           lastPanY = event.clientY;
@@ -1218,9 +1466,6 @@ function App() {
         return;
       }
 
-      const rect = canvas.getBoundingClientRect();
-      const sx = event.clientX - rect.left;
-      const sy = event.clientY - rect.top;
       const layout = createIsoLayout(viewport.width, viewport.height, camera);
 
       const nearest = entityListRef.current
@@ -1238,6 +1483,19 @@ function App() {
     };
 
     const handleMouseUp = (event: MouseEvent): void => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+
+      if (isPromptDragging) {
+        // Prompt drag released — keep the input visible for typing
+        setIsPromptDragging(false);
+        canvas.style.cursor = 'default';
+        // Don't clear promptDragCurrent so we know where to position the input
+        return;
+      }
+
       if (isPanning) {
         isPanning = false;
         isMouseDown = false;
@@ -1276,6 +1534,7 @@ function App() {
       canvas.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      if (longPressTimer) clearTimeout(longPressTimer);
     };
   }, [viewport, camera]);
 
@@ -1360,6 +1619,27 @@ function App() {
 
       // Draw particles on top
       particlesRef.current.draw(context);
+
+      // Draw prompt drag line
+      if (isPromptDragging && promptDragStart && promptDragCurrent) {
+        context.beginPath();
+        context.moveTo(promptDragStart.sx, promptDragStart.sy);
+        context.lineTo(promptDragCurrent.sx, promptDragCurrent.sy);
+        context.strokeStyle = 'rgba(236, 72, 153, 0.8)';
+        context.lineWidth = 2;
+        context.setLineDash([5, 5]);
+        context.stroke();
+        context.setLineDash([]);
+        
+        // Draw target circle
+        context.beginPath();
+        context.arc(promptDragCurrent.sx, promptDragCurrent.sy, 8, 0, Math.PI * 2);
+        context.fillStyle = 'rgba(236, 72, 153, 0.3)';
+        context.fill();
+        context.strokeStyle = 'rgba(236, 72, 153, 0.8)';
+        context.lineWidth = 2;
+        context.stroke();
+      }
 
       // Minimap - StarCraft style
       const mapSize = 140;
@@ -1472,7 +1752,7 @@ function App() {
         frameRef.current = null;
       }
     };
-  }, [viewport, camera, hoveredEntityId, agents]);
+  }, [viewport, camera, hoveredEntityId, agents, isPromptDragging, promptDragStart, promptDragCurrent]);
 
   useEffect(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
@@ -1651,6 +1931,68 @@ function App() {
         alarm={worldState.queen_alarm ?? 0}
         urgency={worldState.queen_urgency ?? 0}
       />
+      
+      {/* Welcome overlay for vibe coders */}
+      {showWelcome && mode === 'preview' && (
+        <div className="welcome-overlay" onClick={() => setShowWelcome(false)}>
+          <div className="welcome-content" onClick={(e) => e.stopPropagation()}>
+            <div className="welcome-title">🌆 Repocity</div>
+            <div className="welcome-subtitle">Your code is a city. You are the mayor.</div>
+            <div className="welcome-instructions">
+              <div className="welcome-step">
+                <span className="welcome-step-number">1</span>
+                <span>Hold click on empty space, drag to draw a line</span>
+              </div>
+              <div className="welcome-step">
+                <span className="welcome-step-number">2</span>
+                <span>Type what you want to build</span>
+              </div>
+              <div className="welcome-step">
+                <span className="welcome-step-number">3</span>
+                <span>Watch agents construct it in real-time</span>
+              </div>
+            </div>
+            <button className="welcome-button" onClick={() => setShowWelcome(false)}>
+              Enter the City
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating prompt input during drag */}
+      {showPromptInput && promptDragCurrent && (
+        <div
+          className="floating-prompt"
+          style={{
+            left: Math.min(promptDragCurrent.sx + 20, viewport.width - 300),
+            top: Math.max(20, promptDragCurrent.sy - 60),
+          }}
+        >
+          <input
+            type="text"
+            className="floating-prompt-input"
+            placeholder="What should the agents build?"
+            value={promptInput}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setPromptInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && promptInput.trim()) {
+                void handlePromptDrop();
+                setShowPromptInput(false);
+                setPromptInput('');
+              }
+              if (e.key === 'Escape') {
+                setShowPromptInput(false);
+                setPromptInput('');
+              }
+            }}
+            autoFocus
+          />
+          <div className="floating-prompt-hint">
+            Press Enter to dispatch agents · Escape to cancel
+          </div>
+        </div>
+      )}
+      
       <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
         <button
           className="panel-toggle"
@@ -1692,7 +2034,7 @@ function App() {
                 controlDirtyRef.current = true;
                 setRepoInput(event.target.value);
               }}
-              placeholder="C:\\Users\\Futureman\\Desktop\\lucianprotocol"
+              placeholder="C:\Users\Futureman\Desktop\lucianprotocol"
               spellCheck={false}
               type="text"
               value={repoInput}
