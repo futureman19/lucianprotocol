@@ -1,17 +1,13 @@
 import { isStructureEntity } from '../src/mass-mapper';
 import type { Entity } from '../src/types';
 import { toScreen, type IsoLayout } from './iso';
-
-function getNodeHeight(entity: Entity): number {
-  if (entity.type === 'directory') {
-    return 1;
-  }
-  if (entity.type === 'file') {
-    const lineLift = Math.min(4, Math.floor(((entity.content ?? entity.content_preview ?? '').split('\n').length) / 24));
-    return Math.min(6, Math.max(1, entity.mass + lineLift));
-  }
-  return 0.7;
-}
+import {
+  getFibonacciBuildingHeight,
+  getTetherColor,
+  getVesicaPiscisStrength,
+  getVesicaColor,
+  getEntityLines,
+} from './fibonacci-physics';
 
 export function drawTethers(
   context: CanvasRenderingContext2D,
@@ -33,8 +29,9 @@ export function drawTethers(
       continue;
     }
 
-    const sourceHeight = getNodeHeight(source);
+    const sourceHeight = getFibonacciBuildingHeight(source);
     const sourceCenter = toScreen(source.x + 0.5, source.y + 0.5, sourceHeight + 0.1, layout);
+    const sourceLines = getEntityLines(source);
 
     for (const targetPath of source.tether_to) {
       const target = entityByPath.get(targetPath);
@@ -42,10 +39,20 @@ export function drawTethers(
         continue;
       }
 
-      const targetHeight = getNodeHeight(target);
+      const targetHeight = getFibonacciBuildingHeight(target);
       const targetCenter = toScreen(target.x + 0.5, target.y + 0.5, targetHeight + 0.1, layout);
+      const targetLines = getEntityLines(target);
 
       const isBroken = source.tether_broken === true || target.tether_broken === true;
+
+      // Fibonacci chirality-based tether color
+      const tetherColor = getTetherColor(sourceLines, targetLines);
+      
+      // Vesica Piscis strength: how much shared "space" between files
+      const importCount = source.tether_to?.length ?? 0;
+      const exportCount = target.tether_to?.length ?? 0;
+      const vesicaStrength = getVesicaPiscisStrength(importCount, exportCount);
+      const vesicaColor = getVesicaColor(vesicaStrength);
 
       context.save();
 
@@ -56,10 +63,22 @@ export function drawTethers(
         context.shadowBlur = 10;
         context.shadowColor = `rgba(239, 68, 68, ${pulse * 0.6})`;
       } else {
-        context.strokeStyle = 'rgba(86, 217, 255, 0.22)';
-        context.lineWidth = 1;
+        // Blend chirality color with Vesica Piscis intensity
+        const rgbMatch = tetherColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (rgbMatch) {
+          const r = parseInt(rgbMatch[1]!);
+          const g = parseInt(rgbMatch[2]!);
+          const b = parseInt(rgbMatch[3]!);
+          context.strokeStyle = `rgba(${r}, ${g}, ${b}, ${0.15 + vesicaStrength * 0.25})`;
+        } else {
+          context.strokeStyle = tetherColor;
+        }
+        
+        // Line thickness = Vesica Piscis strength (coupling depth)
+        context.lineWidth = 0.8 + vesicaStrength * 1.5;
         context.setLineDash([]);
-        context.shadowBlur = 0;
+        context.shadowBlur = vesicaStrength > 0.5 ? 8 : 0;
+        context.shadowColor = vesicaColor;
       }
 
       context.beginPath();

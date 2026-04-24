@@ -3,6 +3,25 @@ import type { IsoLayout, ScreenPoint } from './iso';
 import { toScreen, createPrismProjection, traceFace } from './iso';
 import { getBuildingStyle, getDroneStyle, getNodeStatePalette, getFileFootprint, getBuildingHeight } from './building-styles';
 import { ParticleSystem } from './particles';
+import {
+  getPisanoWave,
+  getPisanoOscillation,
+  getSyncState,
+  getFibonacciMass,
+  getFibonacciTier,
+  getChirality,
+  getChiralityTilt,
+  getImbalanceRatio,
+  get3_4_5Foundation,
+  getFoundationColor,
+  getConstructionPhase,
+  getFileHeat,
+  getEntityFibonacciMass,
+  getEntityLines,
+  getFibonacciBuildingHeight,
+  getFibonacciFootprint,
+  isCriticalFibonacciMass,
+} from './fibonacci-physics';
 
 // Drawing helpers
 function withAlpha(hexColor: string, alpha: number): string {
@@ -192,7 +211,19 @@ function drawRoof(
   context.restore();
 }
 
-// Draw a building (file or directory)
+// ═════════════════════════════════════════════════════════════════════════════
+// FIBONACCI PHYSICS DRAWING — Building with universe dynamics
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Draw a building with full Fibonacci Universe physics:
+ * - Fibonacci mass tiers (height)
+ * - 24-unit chirality (left/right tilt)
+ * - 3-4-5 triangular foundation
+ * - 9-level construction phasing (opacity)
+ * - 60-digit Pisano window lighting
+ * - File heat flickering
+ */
 export function drawBuilding(
   context: CanvasRenderingContext2D,
   entity: Entity,
@@ -204,10 +235,36 @@ export function drawBuilding(
 ): void {
   const style = getBuildingStyle(entity);
   const statePalette = getNodeStatePalette(nodeState);
-  const footprint = getFileFootprint(entity);
-  const height = getBuildingHeight(entity);
+  
+  // ── Fibonacci physics calculations ──
+  const lines = getEntityLines(entity);
+  const fibMass = getEntityFibonacciMass(entity);
+  const fibTier = getFibonacciTier(lines);
+  const chirality = getChirality(lines);
+  const chiralityTilt = getChiralityTilt(lines);
+  const imbalance = getImbalanceRatio(lines);
+  const isCritical = isCriticalFibonacciMass(lines);
+  
+  // Construction phasing: files don't pop — they phase in
+  const constructionOpacity = getConstructionPhase(entity, phase);
+  const fileHeat = getFileHeat(entity, phase);
+  
+  // 10-sum brightness: files with complementary mass pulse
+  const tenSumBrightness = 0.5 + (getPisanoWave(phase + fibMass) * 0.5);
+  
+  // Pisano wave for window lighting (60-step rhythm, not binary)
+  const pisanoLight = getPisanoWave(phase + fibTier);
+  const syncState = getSyncState(phase + fibTier);
+  
+  // Fibonacci-based footprint and height
+  const footprint = getFibonacciFootprint(entity);
+  const height = getFibonacciBuildingHeight(entity);
 
-  // Use state palette if it's a warning state, otherwise use building style
+  // Apply chirality tilt to footprint
+  const tiltedWidth = footprint.width * (1 + chiralityTilt * 0.1);
+  const tiltedDepth = footprint.depth * (1 - chiralityTilt * 0.05);
+
+  // Use state palette if it's a warning state
   const isWarning = statePalette.warning || nodeState === 'in-progress' || nodeState === 'task';
   const palette = isWarning
     ? { ...style, accent: statePalette.accent, glow: statePalette.glow, left: statePalette.left, right: statePalette.right, top: statePalette.top }
@@ -216,31 +273,57 @@ export function drawBuilding(
   const pulsing = nodeState === 'in-progress' || nodeState === 'asymmetry';
   const highlighted = pulsing || nodeState === 'task' || nodeState === 'verified';
 
+  // ── 3-4-5 Triangular Foundation ──
+  // Every file sits on a quantum pixel base
+  const foundation = get3_4_5Foundation(tiltedWidth, tiltedDepth);
+  const f0 = foundation[0]!;
+  const f1 = foundation[1]!;
+  const f2 = foundation[2]!;
+  const groundCenter = toScreen(displayX + 0.5, displayY + 0.5, 0, layout);
+  
+  context.save();
+  context.globalAlpha = constructionOpacity;
+  
+  // Draw triangular foundation
+  context.beginPath();
+  context.moveTo(groundCenter.sx + f0.x * layout.tileWidth, groundCenter.sy + f0.y * layout.tileHeight);
+  context.lineTo(groundCenter.sx + f1.x * layout.tileWidth, groundCenter.sy + f1.y * layout.tileHeight);
+  context.lineTo(groundCenter.sx + f2.x * layout.tileWidth, groundCenter.sy + f2.y * layout.tileHeight);
+  context.closePath();
+  context.fillStyle = getFoundationColor(nodeState);
+  context.fill();
+  context.strokeStyle = withAlpha(palette.accent, 0.3 + imbalance * 0.3);
+  context.lineWidth = 0.8;
+  context.stroke();
+
+  // ── Main Building Prism ──
   const projection = createPrismProjection(
-    displayX + ((1 - footprint.width) / 2),
-    displayY + ((1 - footprint.depth) / 2),
+    displayX + ((1 - tiltedWidth) / 2),
+    displayY + ((1 - tiltedDepth) / 2),
     0,
-    footprint.width,
-    footprint.depth,
+    tiltedWidth,
+    tiltedDepth,
     height,
     layout,
   );
 
-  context.save();
   context.lineWidth = entity.type === 'directory' ? 1.6 : 1.2;
 
-  if (highlighted) {
-    context.shadowBlur = pulsing ? 16 + ((phase % 12) * 0.8) : 14;
+  // Chirality affects glow: imbalanced files flicker more
+  const imbalanceGlow = imbalance * 8;
+  if (highlighted || imbalance > 0.5) {
+    context.shadowBlur = pulsing ? 16 + ((phase % 12) * 0.8) : 14 + imbalanceGlow;
     context.shadowColor = palette.glow;
   }
 
-  // Draw faces with slight gradient effect
-  fillFace(context, projection.left, palette.left, withAlpha(palette.trim, 0.18));
-  fillFace(context, projection.right, palette.right, withAlpha(palette.trim, 0.22));
-  fillFace(context, projection.top, palette.top, palette.accent);
+  // Draw faces with 10-sum brightness modulation
+  const brightness = tenSumBrightness * (0.7 + fileHeat * 0.3);
+  fillFace(context, projection.left, withAlpha(palette.left, brightness), withAlpha(palette.trim, 0.18));
+  fillFace(context, projection.right, withAlpha(palette.right, brightness), withAlpha(palette.trim, 0.22));
+  fillFace(context, projection.top, withAlpha(palette.top, brightness), palette.accent);
 
   // Draw trim line on top edges
-  context.strokeStyle = withAlpha(palette.trim, 0.4);
+  context.strokeStyle = withAlpha(palette.trim, 0.4 + (imbalance * 0.3));
   context.lineWidth = 0.8;
   context.beginPath();
   context.moveTo(projection.top[0].sx, projection.top[0].sy);
@@ -250,15 +333,80 @@ export function drawBuilding(
   context.closePath();
   context.stroke();
 
-  // Draw windows
-  drawBuildingWindows(context, projection, style, height, phase, entity);
+  // ── Windows with Pisano 60-digit wave lighting ──
+  if (height >= 1.2) {
+    const windowRows = Math.max(1, Math.floor(height * 1.5));
+    const windowCols = Math.max(1, Math.min(3, fibTier));
+    
+    // Left face windows — Pisano-driven, not linear
+    for (let row = 0; row < windowRows; row++) {
+      for (let col = 0; col < windowCols; col++) {
+        const windowIndex = row * windowCols + col;
+        const pisanoOffset = (windowIndex * 7) % 60; // Prime step for variety
+        const lightValue = getPisanoWave(phase + pisanoOffset);
+        
+        // Sync state affects window behavior:
+        // stable = smooth pulse, unstable = flickering
+        const flicker = syncState === 'unstable' ? (Math.random() - 0.5) * 0.3 : 0;
+        const lit = lightValue > 0.5 + flicker || entity.node_state === 'in-progress';
+        
+        // Window dims when file is cold
+        const windowOpacity = 0.3 + (fileHeat * 0.7) + (lightValue * 0.3);
+
+        // Interpolate position on left face
+        const topY = projection.left[1].sy + (projection.left[0].sy - projection.left[1].sy) * ((row + 0.3) / (windowRows + 0.5));
+        const bottomY = projection.left[1].sy + (projection.left[0].sy - projection.left[1].sy) * ((row + 0.7) / (windowRows + 0.5));
+        const leftX = projection.left[1].sx + (projection.left[0].sx - projection.left[1].sx) * ((col + 0.25) / windowCols);
+        const rightX = projection.left[1].sx + (projection.left[0].sx - projection.left[1].sx) * ((col + 0.75) / windowCols);
+
+        const ww = Math.max(2, (rightX - leftX) * 0.6);
+        const wh = Math.max(2, (bottomY - topY) * 0.5);
+        const wx = leftX + (rightX - leftX) * 0.2;
+        const wy = topY + (bottomY - topY) * 0.25;
+
+        drawWindow(context, wx, wy, ww, wh, 
+          withAlpha(style.windowColor, windowOpacity), 
+          style.windowGlow, 
+          lit
+        );
+      }
+    }
+
+    // Right face windows — offset phase for asymmetry
+    for (let row = 0; row < windowRows; row++) {
+      for (let col = 0; col < windowCols; col++) {
+        const windowIndex = row * windowCols + col + 50; // Offset for right face
+        const pisanoOffset = (windowIndex * 7) % 60;
+        const lightValue = getPisanoWave(phase + pisanoOffset + 30); // 30-step offset
+        
+        const flicker = syncState === 'unstable' ? (Math.random() - 0.5) * 0.3 : 0;
+        const lit = lightValue > 0.5 + flicker || entity.node_state === 'in-progress';
+        const windowOpacity = 0.3 + (fileHeat * 0.7) + (lightValue * 0.3);
+
+        const topY = projection.right[1].sy + (projection.right[0].sy - projection.right[1].sy) * ((row + 0.3) / (windowRows + 0.5));
+        const bottomY = projection.right[1].sy + (projection.right[0].sy - projection.right[1].sy) * ((row + 0.7) / (windowRows + 0.5));
+        const leftX = projection.right[1].sx + (projection.right[0].sx - projection.right[1].sx) * ((col + 0.25) / windowCols);
+        const rightX = projection.right[1].sx + (projection.right[0].sx - projection.right[1].sx) * ((col + 0.75) / windowCols);
+
+        const ww = Math.max(2, (rightX - leftX) * 0.6);
+        const wh = Math.max(2, (bottomY - topY) * 0.5);
+        const wx = leftX + (rightX - leftX) * 0.2;
+        const wy = topY + (bottomY - topY) * 0.25;
+
+        drawWindow(context, wx, wy, ww, wh,
+          withAlpha(style.windowColor, windowOpacity),
+          style.windowGlow,
+          lit
+        );
+      }
+    }
+  }
 
   // Draw roof
   drawRoof(context, projection, style, layout);
 
-  // Draw directory label on ground
+  // ── Directory label on ground ──
   if (entity.type === 'directory' && entity.name) {
-    const groundCenter = toScreen(displayX + 0.5, displayY + 0.5, 0, layout);
     context.save();
     context.fillStyle = withAlpha(palette.accent, 0.8);
     context.font = `600 ${Math.max(8, layout.tileWidth * 0.12)}px "IBM Plex Mono", monospace`;
@@ -270,38 +418,70 @@ export function drawBuilding(
     context.restore();
   }
 
-  // Critical mass warning
-  const mass = entity.mass ?? 1;
-  const lineCount = (entity.content ?? entity.content_preview ?? '').split('\n').length;
-  const chiralMass = mass + Math.floor(Math.max(0, lineCount - 1) / 120);
-  if (chiralMass >= 8) {
-    const pulse = 0.7 + ((phase % 10) * 0.05);
+  // ── Fibonacci Critical Mass Gravity Well ──
+  if (isCritical) {
+    const pulse = 0.5 + (getPisanoWave(phase * 2) * 0.5); // Double-speed pulse
     context.save();
     context.beginPath();
     context.ellipse(
       projection.center.sx,
       projection.center.sy,
-      layout.tileWidth * 0.32,
-      layout.tileHeight * 0.26,
+      layout.tileWidth * (0.35 + fibTier * 0.02),
+      layout.tileHeight * (0.3 + fibTier * 0.015),
       0,
       0,
       Math.PI * 2,
     );
     context.strokeStyle = `rgba(236, 72, 153, ${pulse})`;
-    context.lineWidth = 1.6;
-    context.shadowBlur = 16;
+    context.lineWidth = 1.6 + (fibTier * 0.15);
+    context.shadowBlur = 16 + fibTier * 2;
     context.shadowColor = 'rgba(236, 72, 153, 0.62)';
     context.stroke();
+    
+    // Gravity well indicator: concentric rings for massive files
+    if (fibTier >= 7) {
+      context.beginPath();
+      context.ellipse(
+        projection.center.sx,
+        projection.center.sy,
+        layout.tileWidth * (0.45 + fibTier * 0.03),
+        layout.tileHeight * (0.38 + fibTier * 0.02),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.strokeStyle = `rgba(236, 72, 153, ${pulse * 0.5})`;
+      context.lineWidth = 0.8;
+      context.stroke();
+    }
     context.restore();
   }
 
-  // Scaffolding for in-progress
+  // ── Chirality indicator ──
+  if (chirality !== 'neutral') {
+    context.save();
+    const tiltIndicator = chirality === 'left' ? '◀' : '▶';
+    context.fillStyle = withAlpha(palette.accent, 0.5 + imbalance * 0.5);
+    context.font = `${Math.max(8, layout.tileWidth * 0.1)}px "IBM Plex Mono", monospace`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(
+      tiltIndicator,
+      projection.center.sx + (chirality === 'left' ? -layout.tileWidth * 0.25 : layout.tileWidth * 0.25),
+      projection.center.sy - layout.tileHeight * 0.3,
+    );
+    context.restore();
+  }
+
+  // ── Scaffolding for in-progress (with Fibonacci phase) ──
   if (nodeState === 'in-progress') {
     context.save();
     context.strokeStyle = 'rgba(251, 146, 60, 0.4)';
     context.lineWidth = 1;
     context.setLineDash([3, 3]);
     const padding = layout.tileWidth * 0.1;
+    const scaffoldPhase = getPisanoWave(phase * 3); // Rapid pulse for construction
+    context.globalAlpha = 0.3 + scaffoldPhase * 0.7;
     context.strokeRect(
       projection.center.sx - layout.tileWidth * 0.35 - padding,
       projection.center.sy - layout.tileHeight * height * 0.3 - padding,
@@ -311,7 +491,21 @@ export function drawBuilding(
     context.restore();
   }
 
-  context.restore();
+  // ── File heat flicker ──
+  if (fileHeat > 0.3) {
+    context.save();
+    context.globalAlpha = fileHeat * 0.15;
+    context.fillStyle = palette.accent;
+    context.fillRect(
+      projection.center.sx - layout.tileWidth * 0.4,
+      projection.center.sy - layout.tileHeight * height * 0.4,
+      layout.tileWidth * 0.8,
+      layout.tileHeight * height * 0.8,
+    );
+    context.restore();
+  }
+
+  context.restore(); // Restore globalAlpha from construction phasing
 }
 
 // Draw a drone/agent with distinct shapes
