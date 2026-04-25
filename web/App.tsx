@@ -43,6 +43,8 @@ import {
   type Camera,
   type IsoLayout,
 } from './iso';
+import { createTrafficSystem, drawRoadsAndTraffic, drawDistricts, drawGroundPlane, spawnCars, updateCars } from './traffic';
+import { computeCityLayout } from './city-layout';
 
 interface Viewport {
   height: number;
@@ -144,7 +146,7 @@ function getAgentPalette(role: HivemindAgentRole): AgentPalette {
   return { fill: '#10b981', glow: 'rgba(16, 185, 129, 0.78)', stroke: '#8cffd3' };
 }
 
-function withAlpha(hexColor: string, alpha: number): string {
+function _withAlpha(hexColor: string, alpha: number): string {
   const normalized = hexColor.replace('#', '');
   const red = Number.parseInt(normalized.slice(0, 2), 16);
   const green = Number.parseInt(normalized.slice(2, 4), 16);
@@ -176,7 +178,7 @@ function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): vo
   context.fillRect(0, 0, viewport.width, viewport.height);
 }
 
-function drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout, z: number, color: string): void {
+function _drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout, z: number, color: string): void {
   context.lineWidth = 1;
 
   for (let x = 0; x <= 50; x += 1) {
@@ -489,106 +491,99 @@ function drawAgent(
 ): void {
   const role = getAgentRole(entity) ?? 'architect';
   const palette = getAgentPalette(role);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
-  const scale = layout.tileHeight * 0.55;
-  const pulse = 0.72 + ((phase % 10) * 0.04);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.4, layout);
+  const scale = layout.tileHeight * 0.35;
+  const pulse = 0.85 + ((phase % 10) * 0.02);
 
   const idleTicks = tick - entity.tick_updated;
   const hasObjective = entity.objective_path != null;
   let opacity = pulse;
   if (!hasObjective && idleTicks > 30) {
-    opacity = pulse * Math.max(0, 1 - (idleTicks - 30) / 90);
+    opacity = pulse * Math.max(0.3, 1 - (idleTicks - 30) / 90);
   }
 
   if (opacity <= 0.01) {
     return;
   }
 
-  const fill = withAlpha(palette.fill, opacity);
-  const stroke = withAlpha(palette.stroke, opacity);
-  const walkCycle = Math.sin(tick * 0.8) * 2.5;
+  const walkCycle = hasObjective ? Math.sin(tick * 0.8) * scale * 0.08 : 0;
 
   context.save();
-  context.translate(center.sx, center.sy);
+  context.globalAlpha = opacity;
 
-  // Glow behind body
-  context.shadowBlur = 24;
-  context.shadowColor = palette.glow;
-
-  // Abdomen (rear segment)
+  // Shadow
+  context.fillStyle = 'rgba(0, 0, 0, 0.25)';
   context.beginPath();
-  context.ellipse(0, scale * 0.4, scale * 0.42, scale * 0.38, 0, 0, Math.PI * 2);
-  context.fillStyle = fill;
+  context.ellipse(center.sx, center.sy + scale * 0.6, scale * 0.5, scale * 0.15, 0, 0, Math.PI * 2);
   context.fill();
-  context.strokeStyle = stroke;
-  context.lineWidth = 1.5;
+
+  // Hard hat color based on role
+  const hatColor = palette.fill;
+  const shirtColor = palette.stroke;
+  const pantsColor = '#455a64';
+  const skinColor = '#ffe0b2';
+
+  // Legs
+  context.strokeStyle = pantsColor;
+  context.lineWidth = scale * 0.18;
+  context.lineCap = 'round';
+  context.beginPath();
+  context.moveTo(center.sx - scale * 0.12, center.sy + scale * 0.1 + walkCycle);
+  context.lineTo(center.sx - scale * 0.15, center.sy + scale * 0.55);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(center.sx + scale * 0.12, center.sy + scale * 0.1 - walkCycle);
+  context.lineTo(center.sx + scale * 0.15, center.sy + scale * 0.55);
   context.stroke();
 
-  // Thorax (middle segment)
+  // Body
+  context.fillStyle = shirtColor;
   context.beginPath();
-  context.ellipse(0, -scale * 0.08, scale * 0.28, scale * 0.22, 0, 0, Math.PI * 2);
-  context.fillStyle = fill;
+  context.roundRect(center.sx - scale * 0.22, center.sy - scale * 0.25, scale * 0.44, scale * 0.4, scale * 0.06);
   context.fill();
-  context.stroke();
+
+  // Hard hat
+  context.fillStyle = hatColor;
+  context.beginPath();
+  context.ellipse(center.sx, center.sy - scale * 0.38, scale * 0.2, scale * 0.12, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillRect(center.sx - scale * 0.22, center.sy - scale * 0.4, scale * 0.44, scale * 0.08);
 
   // Head
+  context.fillStyle = skinColor;
   context.beginPath();
-  context.ellipse(0, -scale * 0.5, scale * 0.2, scale * 0.18, 0, 0, Math.PI * 2);
-  context.fillStyle = fill;
+  context.arc(center.sx, center.sy - scale * 0.32, scale * 0.14, 0, Math.PI * 2);
   context.fill();
+
+  // Arms
+  context.strokeStyle = skinColor;
+  context.lineWidth = scale * 0.12;
+  context.beginPath();
+  context.moveTo(center.sx - scale * 0.2, center.sy - scale * 0.15);
+  context.lineTo(center.sx - scale * 0.32, center.sy + scale * 0.1 + walkCycle * 0.5);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(center.sx + scale * 0.2, center.sy - scale * 0.15);
+  context.lineTo(center.sx + scale * 0.32, center.sy + scale * 0.1 - walkCycle * 0.5);
   context.stroke();
 
-  // Eye / core glow
-  context.beginPath();
-  context.arc(0, -scale * 0.5, scale * 0.07, 0, Math.PI * 2);
-  context.fillStyle = stroke;
-  context.fill();
-
-  // Disable shadow for legs and antennae
-  context.shadowBlur = 0;
-
-  // Legs (3 pairs)
-  for (let i = 0; i < 3; i++) {
-    const legY = -scale * 0.2 + i * scale * 0.28;
-    const legSwing = (i % 2 === 0 ? 1 : -1) * walkCycle;
-
-    // Left leg
+  // Role glow when active
+  if (hasObjective) {
+    context.shadowBlur = 12;
+    context.shadowColor = palette.glow;
+    context.strokeStyle = palette.fill;
+    context.lineWidth = 1;
     context.beginPath();
-    context.moveTo(-scale * 0.22, legY);
-    context.lineTo(-scale * 0.5, legY - legSwing);
-    context.lineTo(-scale * 0.7, legY + scale * 0.12);
-    context.strokeStyle = withAlpha(palette.stroke, opacity * 0.65);
-    context.lineWidth = 1.2;
+    context.arc(center.sx, center.sy, scale * 0.7, 0, Math.PI * 2);
     context.stroke();
-
-    // Right leg
-    context.beginPath();
-    context.moveTo(scale * 0.22, legY);
-    context.lineTo(scale * 0.5, legY + legSwing);
-    context.lineTo(scale * 0.7, legY + scale * 0.12);
-    context.strokeStyle = withAlpha(palette.stroke, opacity * 0.65);
-    context.stroke();
+    context.shadowBlur = 0;
   }
 
-  // Antennae
-  context.beginPath();
-  context.moveTo(-scale * 0.06, -scale * 0.65);
-  context.quadraticCurveTo(-scale * 0.3, -scale * 0.9, -scale * 0.18, -scale * 1.1);
-  context.moveTo(scale * 0.06, -scale * 0.65);
-  context.quadraticCurveTo(scale * 0.3, -scale * 0.9, scale * 0.18, -scale * 1.1);
-  context.strokeStyle = withAlpha(palette.stroke, opacity * 0.55);
-  context.lineWidth = 1;
-  context.stroke();
-
-  // Mandibles
-  context.beginPath();
-  context.moveTo(-scale * 0.08, -scale * 0.65);
-  context.lineTo(-scale * 0.16, -scale * 0.82);
-  context.moveTo(scale * 0.08, -scale * 0.65);
-  context.lineTo(scale * 0.16, -scale * 0.82);
-  context.strokeStyle = withAlpha(palette.stroke, opacity * 0.75);
-  context.lineWidth = 1.2;
-  context.stroke();
+  // Role label
+  context.fillStyle = `rgba(200, 210, 230, ${opacity * 0.6})`;
+  context.font = `${Math.max(7, Math.round(scale * 0.3))}px monospace`;
+  context.textAlign = 'center';
+  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', center.sx, center.sy - scale * 0.7);
 
   context.restore();
 }
@@ -1075,6 +1070,8 @@ function App() {
   const visibleEntityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
   const visibleStructureListRef = useRef<Entity[]>(PREVIEW_ENTITIES.filter((entity) => isStructureEntity(entity)));
   const displayPointsRef = useRef<Record<string, DisplayPoint>>({});
+  const trafficRef = useRef(createTrafficSystem());
+  const cityLayoutRef = useRef(computeCityLayout(PREVIEW_ENTITIES));
   const controlDirtyRef = useRef(false);
   const phaseRef = useRef<number>(worldState.phase);
   const tickRef = useRef<number>(worldState.tick);
@@ -2087,32 +2084,51 @@ function App() {
       context.clearRect(0, 0, viewport.width, viewport.height);
 
       const layout = createIsoLayout(viewport.width, viewport.height, camera);
+      const currentEntities = visibleEntityListRef.current;
+      const phase = phaseRef.current;
+      const tick = tickRef.current;
+
       drawBackdrop(context, viewport);
-      // Single grid at z=0
-      drawGrid(context, layout, 0, 'rgba(46, 201, 255, 0.08)');
-      // Organic roads + districts
-      drawAdaptiveRoads(context, layout, visibleEntityListRef.current);
-      drawDistrictLabels(context, layout, visibleEntityListRef.current);
-      drawTethers(context, visibleEntityListRef.current, layout, phaseRef.current);
+
+      // Ground plane + districts
+      drawGroundPlane(context, viewport, layout);
+      
+      // Update city layout when entities change
+      const layoutData = computeCityLayout(currentEntities);
+      cityLayoutRef.current = layoutData;
+      drawDistricts(context, layoutData.districts, layout);
+
+      // Roads with traffic
+      drawAdaptiveRoads(context, layout, currentEntities);
+      drawDistrictLabels(context, layout, currentEntities);
+      
+      // Traffic cars on roads
+      const roadCount = layoutData.roads.length;
+      const totalTraffic = layoutData.roads.reduce((s, r) => s + r.trafficDensity, 0);
+      spawnCars(trafficRef.current, roadCount, totalTraffic, tick);
+      updateCars(trafficRef.current, 1);
+      drawRoadsAndTraffic(context, layoutData.roads, trafficRef.current, layout, phase);
+
+      drawTethers(context, currentEntities, layout, phase);
       drawTetherRoute(context, routeNodesRef.current, layout);
       drawAgentTethers(
         context,
         agents,
-        visibleEntityListRef.current,
+        currentEntities,
         layout,
         displayPointsRef.current,
       );
       drawEntities(
         context,
-        visibleEntityListRef.current,
+        currentEntities,
         layout,
-        phaseRef.current,
-        tickRef.current,
+        phase,
+        tick,
         displayPointsRef.current,
       );
 
       if (hoveredEntityId) {
-        const hovered = visibleEntityListRef.current.find((e) => e.id === hoveredEntityId);
+        const hovered = currentEntities.find((e) => e.id === hoveredEntityId);
         if (hovered && isStructureEntity(hovered)) {
           drawHoverHighlight(context, hovered, layout, displayPointsRef.current);
         }
@@ -2120,7 +2136,7 @@ function App() {
 
       const selected = selectedEntityRef.current;
       if (selected && isStructureEntity(selected)) {
-        drawSelectionRing(context, selected, layout, displayPointsRef.current, phaseRef.current);
+        drawSelectionRing(context, selected, layout, displayPointsRef.current, phase);
       }
 
       frameRef.current = window.requestAnimationFrame(render);
