@@ -26,6 +26,10 @@ export function getAgentRole(entity: Entity): HivemindAgentRole | null {
     return null;
   }
 
+  if (entity.lmm_rule != null) {
+    return null;
+  }
+
   if (entity.agent_role !== null && entity.agent_role !== undefined) {
     return entity.agent_role;
   }

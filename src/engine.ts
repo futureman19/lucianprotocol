@@ -14,6 +14,21 @@ import { GeminiNavigator } from './ai';
 import { computeChiralMass, getAgentRole } from './hivemind';
 import { resolveOperatorDirective } from './operator-control';
 import {
+  buildLMMScan,
+  computeLMMDecisions,
+  isLMMEntity,
+  type LMMEntity,
+} from './lmm/core.js';
+
+import {
+  scoutRule,
+  workerRule,
+  builderRule,
+  patrolRule,
+  recyclerRule,
+} from './lmm/rules/index.js';
+import { DIRS, type PheromoneMap, type LMMDecision } from './lmm/types.js';
+import {
   CLOCK_PERIOD,
   DEFAULT_SEED,
   GOAL_POSITION,
@@ -47,7 +62,11 @@ import {
   saveQueenState,
   type QueenState,
 } from './queen';
-import { createServiceSupabaseClient } from './supabase';
+import {
+  createServiceSupabaseClient,
+  type LuxSupabaseClient,
+  upsertEntitiesWithSchemaFallback,
+} from './supabase';
 import {
   OperatorControlSchema,
   type AgentActivity,
@@ -114,6 +133,7 @@ const VERIFICATION_TTL_TICKS = 12;
 const ARCHITECT_WORK_TICKS = 4;
 const CRITIC_REVIEW_TICKS = 3;
 const PHEROMONE_TTL_TICKS = 30;
+const AI_DECISION_INTERVAL_TICKS = 30;
 const CONTROL_ROW_ID = 'lux-control';
 const CONTROL_POLL_INTERVAL_TICKS = 10;
 const EXPLANATION_STREAM_CHARS_PER_TICK = 220;
@@ -231,6 +251,7 @@ export class LuxEngine {
   private readonly agentIds: string[] = [];
   private readonly decisionQueue = new Map<string, QueuedDecision>();
   private readonly pendingAiAgents = new Map<string, PendingAiRequest>();
+  private readonly lastAiDecisionTick = new Map<string, number>();
   private readonly pendingEditAgents = new Set<string>();
   private readonly aiNavigator = new GeminiNavigator();
   private readonly supabase = createServiceSupabaseClient();
@@ -272,6 +293,8 @@ export class LuxEngine {
   private restartHandle: ReturnType<typeof setTimeout> | null = null;
   private goalId = '';
   private hasLoggedSupabaseDisabled = false;
+  private hasWarnedEntitySchemaMismatch = false;
+  private hasWarnedWorldStateSchemaMismatch = false;
   private syncQueue = Promise.resolve();
   private currentRunId = 0;
   private savedOverlayNames: string[] = [];
@@ -287,6 +310,18 @@ export class LuxEngine {
   private explanationState: ExplanationState = createEmptyExplanationState();
   private readonly explanationCache = new Map<string, ExplanationCacheEntry>();
   private hasAutoCommittedForCurrentTasks = false;
+
+  private readonly trailGrid = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH);
+  private readonly trailTypeGrid = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH);
+  private readonly shatteredMassGrid = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH);
+
+  private readonly lmmRuleRegistry = {
+    scout: scoutRule,
+    worker: workerRule,
+    builder: builderRule,
+    patrol: patrolRule,
+    recycler: recyclerRule,
+  };
 
   public constructor(
     private readonly seed: string,
@@ -346,8 +381,12 @@ export class LuxEngine {
     this.agentIds.length = 0;
     this.decisionQueue.clear();
     this.pendingAiAgents.clear();
+    this.lastAiDecisionTick.clear();
     this.pendingEditAgents.clear();
     this.solidGrid.fill(null);
+    this.trailGrid.fill(0);
+    this.trailTypeGrid.fill(0);
+    this.shatteredMassGrid.fill(0);
     this.positionIndex.clear();
     this.savedOverlayNames = listSavedRepositoryOverlays();
     this.activeTasks = [];
@@ -359,6 +398,8 @@ export class LuxEngine {
     this.explanationRequestId += 1;
     this.explanationState = createEmptyExplanationState();
     this.explanationCache.clear();
+    this.hasWarnedEntitySchemaMismatch = false;
+    this.hasWarnedWorldStateSchemaMismatch = false;
 
     for (const entity of createInitialEntities(this.seed)) {
       this.registerEntity(entity);
@@ -508,6 +549,22 @@ export class LuxEngine {
 
   private async handleOperatorControl(control: OperatorControl): Promise<void> {
     const nextRepoPath = control.repo_path.trim();
+
+    if (/^https?:/i.test(nextRepoPath)) {
+      this.controlStatus = 'error';
+      this.controlError = 'Remote URLs are not supported. Provide a local repository path (e.g. C:\\Users\\name\\project).';
+      this.lastControlSignature = JSON.stringify({
+        repoPath: nextRepoPath,
+        operatorPrompt: control.operator_prompt.trim(),
+        paused: control.paused ?? false,
+        automate: control.automate ?? false,
+        visionaryPrompt: control.visionary_prompt?.trim() ?? '',
+        architectPrompt: control.architect_prompt?.trim() ?? '',
+        criticPrompt: control.critic_prompt?.trim() ?? '',
+      });
+      return;
+    }
+
     const normalizedRepoPath = this.normalizeRepositoryPath(nextRepoPath);
     const nextPrompt = control.operator_prompt.trim();
     const nextVisionaryPrompt = control.visionary_prompt?.trim() ?? '';
@@ -937,6 +994,9 @@ export class LuxEngine {
         this.runQueenCycle();
       }
       this.expirePheromones();
+      this.decayTrails();
+      this.applyLMMDecisions();
+      this.applyTrophallaxis();
       this.applyQueuedDecisions();
       this.updateHivemindState();
       this.processTaskPipeline();
@@ -2524,6 +2584,10 @@ export class LuxEngine {
         continue;
       }
 
+      if (isLMMEntity(agent)) {
+        continue;
+      }
+
       const issuedAtTick = this.absoluteTick;
       const scan = this.scanNeighborhood(agent);
       const runId = this.currentRunId;
@@ -2614,13 +2678,28 @@ export class LuxEngine {
     }
 
     if (role === 'architect') {
-      if (this.operatorPrompt.length > 0 || scan.objective_path != null || scan.task_context != null) {
+      const hasAiRelevantContext =
+        scan.task_context != null ||
+        currentNode != null ||
+        (this.operatorPrompt.length > 0 && operatorTarget != null);
+
+      if (hasAiRelevantContext && this.shouldRequestAiDecision(agent.id)) {
+        this.lastAiDecisionTick.set(agent.id, this.absoluteTick);
         return this.aiNavigator.requestDecision(scan);
       }
       return this.requestDeterministicDecision(agent, scan);
     }
 
     return this.requestDeterministicDecision(agent, scan);
+  }
+
+  private shouldRequestAiDecision(agentId: string): boolean {
+    const lastTick = this.lastAiDecisionTick.get(agentId);
+    if (lastTick === undefined) {
+      return true;
+    }
+
+    return (this.absoluteTick - lastTick) >= AI_DECISION_INTERVAL_TICKS;
   }
 
   private requestDeterministicDecision(
@@ -2718,7 +2797,7 @@ export class LuxEngine {
 
     return {
       path: null,
-      position: { x: agent.x, y: agent.y, z: getPositionZ(agent) },
+      position: { x: GOAL_POSITION.x, y: GOAL_POSITION.y, z: getPositionZ(GOAL_POSITION) },
     };
   }
 
@@ -2858,6 +2937,7 @@ export class LuxEngine {
     const syncedEntities = snapshot.entities.filter((entity) => entity.type !== 'pheromone');
     const shouldPurgeStructures = this.pendingStructurePurge;
     this.pendingStructurePurge = false;
+
     this.syncQueue = this.syncQueue
       .then(async () => {
         if (shouldPurgeStructures) {
@@ -2871,26 +2951,90 @@ export class LuxEngine {
           }
         }
 
-        const { error: entitiesError } = await supabase
-          .from('entities')
-          .upsert(syncedEntities, { onConflict: 'id' });
-
-        if (entitiesError) {
-          throw entitiesError;
-        }
-
-        const { error: worldStateError } = await supabase
-          .from('world_state')
-          .upsert(snapshot.worldState, { onConflict: 'id' });
-
-        if (worldStateError) {
-          throw worldStateError;
-        }
+        await this.safeUpsertEntities(supabase, syncedEntities);
+        await this.safeUpsertWorldState(supabase, snapshot.worldState);
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Unknown Supabase error';
-        console.error(`[supabase] ${message}`);
+        if (error && typeof error === 'object') {
+          const err = error as Record<string, unknown>;
+          console.error(
+            `[supabase] ${err.message ?? 'Unknown Supabase error'} (code: ${err.code ?? 'n/a'})`,
+          );
+        } else {
+          console.error(`[supabase] ${String(error)}`);
+        }
       });
+  }
+
+  private async safeUpsertEntities(
+    supabase: LuxSupabaseClient,
+    entities: Entity[],
+  ): Promise<void> {
+    const { usedFallback } = await upsertEntitiesWithSchemaFallback(supabase, entities);
+
+    if (usedFallback && !this.hasWarnedEntitySchemaMismatch) {
+      console.warn(
+        '[supabase] Retrying entity sync without optional columns (schema may be behind migrations).',
+      );
+      this.hasWarnedEntitySchemaMismatch = true;
+    }
+  }
+
+  private async safeUpsertWorldState(
+    supabase: LuxSupabaseClient,
+    worldState: WorldState,
+  ): Promise<void> {
+    const { error } = await supabase.from('world_state').upsert(worldState, { onConflict: 'id' });
+
+    if (!error) {
+      return;
+    }
+
+    const err = error as unknown as Record<string, unknown>;
+    if (err.code !== 'PGRST204') {
+      throw error;
+    }
+
+    if (!this.hasWarnedWorldStateSchemaMismatch) {
+      console.warn(
+        '[supabase] Retrying world_state sync without optional columns (schema may be behind migrations).',
+      );
+      this.hasWarnedWorldStateSchemaMismatch = true;
+    }
+
+    const {
+      paused: _paused,
+      saved_overlay_names: _savedOverlayNames,
+      automate: _automate,
+      visionary_prompt: _visionaryPrompt,
+      architect_prompt: _architectPrompt,
+      critic_prompt: _criticPrompt,
+      pending_edit_path: _pendingEditPath,
+      pending_edit_content: _pendingEditContent,
+      commit_message: _commitMessage,
+      should_push: _shouldPush,
+      active_tasks: _activeTasks,
+      explanation_status: _explanationStatus,
+      explanation_target_path: _explanationTargetPath,
+      explanation_agent_id: _explanationAgentId,
+      explanation_content_hash: _explanationContentHash,
+      explanation_text: _explanationText,
+      explanation_error: _explanationError,
+      explanation_updated_at_tick: _explanationUpdatedAtTick,
+      queen_cycle: _qc,
+      queen_alarm: _qa,
+      queen_urgency: _qu,
+      agent_activities: _aa,
+      ...safeWorldState
+    } = worldState as Record<string, unknown>;
+
+    const { error: retryError } = await supabase
+      .from('world_state')
+      .upsert(safeWorldState as WorldState, { onConflict: 'id' });
+
+    if (retryError) {
+      throw retryError;
+    }
   }
 
   private createSnapshot(): WorldSnapshot {
@@ -2999,9 +3143,9 @@ export class LuxEngine {
       paused: this.paused,
       saved_overlay_names: this.savedOverlayNames,
       automate: this.automate,
-      visionary_prompt: this.visionaryPrompt.length > 0 ? this.visionaryPrompt : null,
-      architect_prompt: this.architectPrompt.length > 0 ? this.architectPrompt : null,
-      critic_prompt: this.criticPrompt.length > 0 ? this.criticPrompt : null,
+      visionary_prompt: this.visionaryPrompt,
+      architect_prompt: this.architectPrompt,
+      critic_prompt: this.criticPrompt,
       pending_edit_path: null,
       pending_edit_content: null,
       commit_message: null,
@@ -3058,6 +3202,282 @@ export class LuxEngine {
     return goal !== undefined && goal.x === agent.x && goal.y === agent.y;
   }
 
+  private getPheromoneMap(): PheromoneMap {
+    const structureEntities = this.getStructureEntities();
+    const totalEntityMass = Array.from(this.entities.values()).reduce((sum, entity) => sum + (entity.mass ?? 0), 0);
+    const totalLooseMass = this.shatteredMassGrid.reduce((sum, value) => sum + value, 0);
+    const totalMass = totalEntityMass + totalLooseMass;
+    const occupancyRatio = Math.round((structureEntities.length * 255) / (GRID_WIDTH * GRID_HEIGHT));
+    const pendingTaskCount = this.activeTasks.filter((task) => task.status === 'pending').length;
+    const structureTaskCount = structureEntities.filter((entity) => entity.node_state === 'task').length;
+    const maintenanceOnly = pendingTaskCount === 0 && structureTaskCount === 0;
+
+    return {
+      alarm: this.queenState.pheromoneAlarm,
+      urgency: this.queenState.pheromoneUrgency,
+      scarcity: totalMass < 100 ? 192 : totalMass < 180 ? 96 : 0,
+      swarm: Math.min(255, occupancyRatio),
+      explore: maintenanceOnly ? 224 : this.queenState.pheromoneUrgency > 0 ? 96 : 160,
+    };
+  }
+
+  private getAdjacentEntities(
+    x: number,
+    y: number,
+    z: number,
+  ): Array<{ entity: Entity; dx: number; dy: number }> {
+    const result: Array<{ entity: Entity; dx: number; dy: number }> = [];
+    const offsets = [
+      { dx: 0, dy: -1 },
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+    ];
+    for (const { dx, dy } of offsets) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= GRID_WIDTH || ny < 0 || ny >= GRID_HEIGHT) {
+        continue;
+      }
+      const ids = this.positionIndex.get(`${nx},${ny},${z}`) ?? [];
+      for (const id of ids) {
+        const entity = this.entities.get(id);
+        if (entity) {
+          result.push({ entity, dx, dy });
+        }
+      }
+    }
+    return result;
+  }
+
+  private getCellEntities(
+    x: number,
+    y: number,
+    z: number,
+    excludeEntityId?: string,
+  ): Entity[] {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT || z < 0 || z >= GRID_DEPTH) {
+      return [];
+    }
+
+    const ids = this.positionIndex.get(`${x},${y},${z}`) ?? [];
+    const result: Entity[] = [];
+    for (const id of ids) {
+      if (id === excludeEntityId) {
+        continue;
+      }
+
+      const entity = this.entities.get(id);
+      if (entity) {
+        result.push(entity);
+      }
+    }
+    return result;
+  }
+
+  private getLooseMass(x: number, y: number, z: number): number {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT || z < 0 || z >= GRID_DEPTH) {
+      return 0;
+    }
+
+    return this.shatteredMassGrid[toIndex(x, y, z)] ?? 0;
+  }
+
+  private getTrail(x: number, y: number, z: number): { trail: number; trailType: number } {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT || z < 0 || z >= GRID_DEPTH) {
+      return { trail: 0, trailType: 0 };
+    }
+    const idx = toIndex(x, y, z);
+    return { trail: this.trailGrid[idx]!, trailType: this.trailTypeGrid[idx]! };
+  }
+
+  private decayTrails(): void {
+    for (let i = 0; i < this.trailGrid.length; i++) {
+      if (this.trailGrid[i]! > 0) {
+        this.trailGrid[i] = Math.max(0, this.trailGrid[i]! - 1);
+      }
+      if (this.trailGrid[i]! === 0) {
+        this.trailTypeGrid[i] = 0;
+      }
+    }
+  }
+
+  private applyTrophallaxis(): void {
+    // Mass transfer between adjacent LMM agents
+    const lmmAgents = this.agentIds
+      .map((id) => this.entities.get(id))
+      .filter((a): a is LMMEntity => a != null && isLMMEntity(a));
+
+    for (const agent of lmmAgents) {
+      if (agent.cargo <= 0) {
+        continue;
+      }
+      const neighbors = this.getAdjacentEntities(agent.x, agent.y, agent.z ?? 0);
+      for (const { entity } of neighbors) {
+        if (!isLMMEntity(entity)) {
+          continue;
+        }
+        if (entity.cargo < agent.cargo) {
+          const transfer = 1;
+          agent.cargo -= transfer;
+          entity.cargo += transfer;
+          this.patchEntity(agent.id, { cargo: agent.cargo });
+          this.patchEntity(entity.id, { cargo: entity.cargo });
+          break;
+        }
+      }
+    }
+  }
+
+  private applyLMMDecisions(): void {
+    const lmmAgents = this.agentIds
+      .map((id) => this.entities.get(id))
+      .filter((a): a is LMMEntity => a != null && isLMMEntity(a));
+
+    if (lmmAgents.length === 0) {
+      return;
+    }
+
+    const buildScan = (agent: LMMEntity) =>
+      buildLMMScan(
+        agent,
+        this.getCellEntities.bind(this),
+        this.getLooseMass.bind(this),
+        this.getTrail.bind(this),
+        this.absoluteTick,
+      );
+
+    const pheromone = this.getPheromoneMap();
+    const phase = this.getCurrentPhase();
+    const decisions = computeLMMDecisions(
+      lmmAgents,
+      buildScan,
+      this.absoluteTick,
+      phase,
+      pheromone,
+      this.lmmRuleRegistry,
+    );
+
+    for (const [agentId, decision] of decisions) {
+      const agent = this.entities.get(agentId);
+      if (!agent || !isLMMEntity(agent)) {
+        continue;
+      }
+      this.executeLMMDecision(agent, decision);
+    }
+  }
+
+  private executeLMMDecision(agent: LMMEntity, decision: LMMDecision): void {
+    // Lay trail if requested (at current position before moving)
+    if ('layTrail' in decision && decision.layTrail) {
+      const idx = toIndex(agent.x, agent.y, agent.z ?? 0);
+      const currentStrength = this.trailGrid[idx]!;
+      if (decision.layTrail.strength > currentStrength) {
+        this.trailGrid[idx] = decision.layTrail.strength;
+        this.trailTypeGrid[idx] = decision.layTrail.type;
+      }
+    }
+
+    if (decision.action === 'move' && decision.direction) {
+      const target = step(agent, decision.direction);
+      if (isWithinBounds(target) && this.canOccupy(target, agent.id)) {
+        this.moveEntity(agent, target);
+      }
+      // Increment state register for patrol orbit progression
+      const nextStateRegister = ((agent.state_register ?? 0) + 1) % 256;
+      this.patchEntity(agent.id, { state_register: nextStateRegister });
+      return;
+    }
+
+    if (decision.action === 'wait') {
+      const nextStateRegister = ((agent.state_register ?? 0) + 1) % 256;
+      this.patchEntity(agent.id, { state_register: nextStateRegister });
+      return;
+    }
+
+    if (decision.action === 'recycle') {
+      const recyclePositions = [
+        { x: agent.x, y: agent.y, z: agent.z ?? 0 },
+        ...DIRS.map(({ dx, dy }) => ({ x: agent.x + dx, y: agent.y + dy, z: agent.z ?? 0 })),
+      ];
+
+      for (const position of recyclePositions) {
+        if (!isWithinBounds(position)) {
+          continue;
+        }
+
+        const idx = toIndex(position.x, position.y, position.z ?? 0);
+        if (this.shatteredMassGrid[idx]! > 0) {
+          this.shatteredMassGrid[idx] = Math.max(0, this.shatteredMassGrid[idx]! - 1);
+          const nextCargo = (agent.cargo ?? 0) + 1;
+          this.patchEntity(agent.id, { cargo: nextCargo });
+          break;
+        }
+      }
+      return;
+    }
+
+    if (decision.action === 'extract') {
+      const extractPositions = [
+        { x: agent.x, y: agent.y, z: agent.z ?? 0 },
+        ...DIRS.map(({ dx, dy }) => ({ x: agent.x + dx, y: agent.y + dy, z: agent.z ?? 0 })),
+      ];
+
+      for (const position of extractPositions) {
+        if (!isWithinBounds(position)) {
+          continue;
+        }
+
+        const extractable = this.getCellEntities(position.x, position.y, position.z ?? 0).find(
+          (entity) =>
+            (entity.type === 'file' || entity.type === 'directory') &&
+            (entity.node_state === 'task' || entity.node_state === 'in-progress') &&
+            (entity.mass ?? 1) > 1,
+        );
+
+        if (extractable) {
+          this.patchEntity(extractable.id, { mass: (extractable.mass ?? 1) - 1 });
+          this.patchEntity(agent.id, { cargo: (agent.cargo ?? 0) + 1 });
+          break;
+        }
+      }
+      return;
+    }
+
+    if (decision.action === 'deposit') {
+      if ((agent.cargo ?? 0) <= 0) {
+        return;
+      }
+
+      const depositPositions = [
+        { x: agent.x, y: agent.y, z: agent.z ?? 0 },
+        ...DIRS.map(({ dx, dy }) => ({ x: agent.x + dx, y: agent.y + dy, z: agent.z ?? 0 })),
+      ];
+
+      for (const position of depositPositions) {
+        if (!isWithinBounds(position)) {
+          continue;
+        }
+
+        const entities = this.getCellEntities(position.x, position.y, position.z ?? 0);
+        const target =
+          entities.find(
+            (entity) =>
+              (entity.type === 'file' || entity.type === 'directory') &&
+              (entity.node_state === 'task' || entity.node_state === 'in-progress'),
+          ) ??
+          entities.find((entity) => entity.type === 'file' || entity.type === 'directory' || entity.type === 'wall');
+
+        if (target) {
+          this.patchEntity(target.id, { mass: (target.mass ?? 1) + 1 });
+          this.patchEntity(agent.id, { cargo: (agent.cargo ?? 0) - 1 });
+          break;
+        }
+      }
+      return;
+    }
+  }
+
   private logTickIfNeeded(): void {
     if (this.maxTicks > 10 && this.absoluteTick % 10 !== 0) {
       return;
@@ -3067,6 +3487,10 @@ export class LuxEngine {
     const primaryArchitect = architects[0] ?? this.getPrimaryAgent();
     const visionary = this.getAgentByRole('visionary');
     const critic = this.getAgentByRole('critic');
+    const lmmAgents = this.agentIds
+      .map((id) => this.entities.get(id))
+      .filter((a): a is LMMEntity => a != null && isLMMEntity(a));
+    const lmmCargo = lmmAgents.reduce((sum, a) => sum + (a.cargo ?? 0), 0);
     const distance = manhattanDistance(primaryArchitect, GOAL_POSITION);
     const structureNodes = this.getStructureEntities();
     const taskCount = structureNodes.filter((entity) => entity.node_state === 'task').length;
@@ -3077,7 +3501,7 @@ export class LuxEngine {
     const doneTasks = this.activeTasks.filter((t) => t.status === 'done').length;
 
     console.log(
-      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architects=[${architects.map((a) => `(${a.x},${a.y})`).join(', ')}] visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} goal_distance=${distance} nodes_task=${taskCount} nodes_asymmetry=${asymmetryCount} tasks_pending=${pendingTasks} tasks_active=${inProgressTasks} tasks_review=${reviewTasks} tasks_done=${doneTasks} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} queue_depth=${this.getQueueDepth()} tick_ms=${this.lastTickDurationMs ?? 0} ai_latency_ms=${this.lastAiLatencyMs ?? 0} control=${this.controlStatus} supabase=${this.supabase ? 'on' : 'off'}`,
+      `[tick ${String(this.absoluteTick).padStart(3, '0')} phase ${this.getCurrentPhase()}] architects=[${architects.map((a) => `(${a.x},${a.y})`).join(', ')}] visionary=${visionary ? `(${visionary.x},${visionary.y})` : 'off'} critic=${critic ? `(${critic.x},${critic.y})` : 'off'} lmm=${lmmAgents.length} cargo=${lmmCargo} goal_distance=${distance} nodes_task=${taskCount} nodes_asymmetry=${asymmetryCount} tasks_pending=${pendingTasks} tasks_active=${inProgressTasks} tasks_review=${reviewTasks} tasks_done=${doneTasks} queued=${this.decisionQueue.size} pending_ai=${this.pendingAiAgents.size} queue_depth=${this.getQueueDepth()} tick_ms=${this.lastTickDurationMs ?? 0} ai_latency_ms=${this.lastAiLatencyMs ?? 0} control=${this.controlStatus} supabase=${this.supabase ? 'on' : 'off'}`,
     );
   }
 

@@ -1,12 +1,14 @@
 export interface Camera {
   panX: number;
   panY: number;
+  rotation: number;
   zoom: number;
 }
 
 export const DEFAULT_CAMERA: Camera = {
   panX: 0,
   panY: 0,
+  rotation: 0,
   zoom: 1,
 };
 
@@ -60,9 +62,18 @@ export function toScreen(
   z: number,
   layout: IsoLayout,
 ): ScreenPoint {
-  return {
+  const basePoint = {
     sx: layout.originX + ((x - y) * layout.halfWidth),
     sy: layout.originY + ((x + y) * layout.halfHeight) - (z * layout.tileZ),
+  };
+  const offsetX = basePoint.sx - layout.originX;
+  const offsetY = basePoint.sy - layout.originY;
+  const cosine = Math.cos(layout.camera.rotation);
+  const sine = Math.sin(layout.camera.rotation);
+
+  return {
+    sx: layout.originX + (offsetX * cosine) - (offsetY * sine),
+    sy: layout.originY + (offsetX * sine) + (offsetY * cosine),
   };
 }
 
@@ -71,8 +82,14 @@ export function fromScreen(
   sy: number,
   layout: IsoLayout,
 ): { x: number; y: number } {
-  const dx = (sx - layout.originX) / layout.halfWidth;
-  const dy = (sy - layout.originY) / layout.halfHeight;
+  const offsetX = sx - layout.originX;
+  const offsetY = sy - layout.originY;
+  const cosine = Math.cos(-layout.camera.rotation);
+  const sine = Math.sin(-layout.camera.rotation);
+  const unrotatedX = (offsetX * cosine) - (offsetY * sine);
+  const unrotatedY = (offsetX * sine) + (offsetY * cosine);
+  const dx = unrotatedX / layout.halfWidth;
+  const dy = unrotatedY / layout.halfHeight;
   return {
     x: (dx + dy) / 2,
     y: (dy - dx) / 2,

@@ -7,9 +7,15 @@ import test from 'node:test';
 
 import { LuxEngine, findReadableTargetInEntities, resolvePathWithinRoot } from './engine';
 import { createRepositoryOverlay, findOpenPosition } from './git-parser';
-import { computeChiralMass } from './hivemind';
+import { computeChiralMass, getAgentRole } from './hivemind';
+import { buildLMMScan } from './lmm/core';
+import { builderRule } from './lmm/rules/builderRule';
+import { recyclerRule } from './lmm/rules/recyclerRule';
+import { workerRule } from './lmm/rules/workerRule';
+import { createLMMEntity } from './lmm/spawn';
+import { TC } from './lmm/types';
 import { parseOperatorDirective } from './operator-control';
-import { createInitialEntities } from './seed';
+import { createInitialEntities, toIndex } from './seed';
 import { applyDelete, applyInsert, applyPatch } from './surgical-edit';
 import {
   AgentDecisionSchema,
@@ -23,6 +29,7 @@ import {
 } from './types';
 
 interface EngineHarness {
+  applyLMMDecisions(): void;
   entities: Map<string, Entity>;
   executeBroadcast(agent: Entity, decision: AgentDecision): void;
   executeRead(agent: Entity, decision: AgentDecision): void;
@@ -63,6 +70,24 @@ function createCommittedTempRepo(): string {
   execFileSync('git', ['commit', '-m', 'init'], { cwd: repositoryRoot, stdio: 'ignore' });
 
   return repositoryRoot;
+}
+
+function findUnusedCell(entities: Iterable<Entity>, startX = 30, startY = 30): Position {
+  const occupied = new Set<string>();
+  for (const entity of entities) {
+    occupied.add(`${entity.x},${entity.y},${entity.z ?? 0}`);
+  }
+
+  for (let y = startY; y < 49; y += 1) {
+    for (let x = startX; x < 49; x += 1) {
+      const key = `${x},${y},0`;
+      if (!occupied.has(key)) {
+        return { x, y, z: 0 };
+      }
+    }
+  }
+
+  throw new Error('Unable to find an unused test cell.');
 }
 
 test('createInitialEntities is deterministic for the same seed', () => {
@@ -368,6 +393,235 @@ test('createInitialEntities places agents at exact spawn positions', () => {
   assert.deepEqual({ x: critic.x, y: critic.y }, { x: 0, y: 1 });
 });
 
+test('createInitialEntities encodes Tier 1 automata with snake_case schema fields', () => {
+  const entities = createInitialEntities('lux-alpha-001');
+  const lmmAgents = entities.filter((entity) => entity.type === 'agent' && entity.lmm_rule != null);
+
+  assert.ok(lmmAgents.length > 0);
+
+  for (const agent of lmmAgents) {
+    assert.equal('lmmRule' in agent, false);
+    assert.equal('birthTick' in agent, false);
+    assert.equal('stateRegister' in agent, false);
+    assert.equal(typeof agent.lmm_rule, 'string');
+    assert.equal(typeof agent.cargo, 'number');
+    assert.equal(typeof agent.birth_tick, 'number');
+    assert.equal(typeof agent.state_register, 'number');
+    assert.equal(getAgentRole(agent), null);
+  }
+});
+
+test('buildLMMScan classifies current cells, loose mass, and ignores pheromones', () => {
+  const agent = createLMMEntity('lmm-builder-test', 10, 10, 'builder');
+  const cells = new Map<string, Entity[]>([
+    ['10,10,0', [{
+      id: 'file:current-task',
+      type: 'file',
+      x: 10,
+      y: 10,
+      z: 0,
+      mass: 5,
+      tick_updated: 0,
+      node_state: 'task',
+      path: 'src/current-task.ts',
+    }]],
+    ['10,9,0', [
+      {
+        id: 'agent-neighbor',
+        type: 'agent',
+        x: 10,
+        y: 9,
+        z: 0,
+        mass: 1,
+        tick_updated: 0,
+      },
+      {
+        id: 'file:north-task',
+        type: 'file',
+        x: 10,
+        y: 9,
+        z: 0,
+        mass: 4,
+        tick_updated: 0,
+        node_state: 'task',
+        path: 'src/north-task.ts',
+      },
+    ]],
+    ['9,10,0', [{
+      id: 'pheromone-west',
+      type: 'pheromone',
+      x: 9,
+      y: 10,
+      z: 0,
+      mass: 1,
+      tick_updated: 0,
+      ttl_ticks: 10,
+    }]],
+  ]);
+  const looseMass = new Map<string, number>([['11,10,0', 3]]);
+
+  const scan = buildLMMScan(
+    agent,
+    (x, y, z, excludeEntityId) => (cells.get(`${x},${y},${z}`) ?? []).filter((entity) => entity.id !== excludeEntityId),
+    (x, y, z) => looseMass.get(`${x},${y},${z}`) ?? 0,
+    () => ({ trail: 0, trailType: 0 }),
+    0,
+  );
+
+  assert.equal(scan.self.cellTypeCode, TC.TASK);
+  assert.equal(scan.self.cellMass, 5);
+  assert.equal(scan.neighbors.find((neighbor) => neighbor.dx === 0 && neighbor.dy === -1)?.typeCode, TC.TASK);
+  assert.equal(scan.neighbors.find((neighbor) => neighbor.dx === 1 && neighbor.dy === 0)?.typeCode, TC.LOOSE_MASS);
+  assert.equal(scan.neighbors.find((neighbor) => neighbor.dx === -1 && neighbor.dy === 0)?.typeCode, TC.EMPTY);
+});
+
+test('builder, recycler, and worker rules keep LMMs active when work is reachable or local space is open', () => {
+  const pheromone = { alarm: 0, urgency: 0, scarcity: 0, swarm: 0, explore: 0 };
+  const emptyNeighbors = [
+    { dx: 0, dy: -1, mass: 0, typeCode: TC.EMPTY, trail: 0, trailType: 0 },
+    { dx: 1, dy: 0, mass: 0, typeCode: TC.EMPTY, trail: 0, trailType: 0 },
+    { dx: 0, dy: 1, mass: 0, typeCode: TC.EMPTY, trail: 0, trailType: 0 },
+    { dx: -1, dy: 0, mass: 0, typeCode: TC.EMPTY, trail: 0, trailType: 0 },
+  ];
+
+  const baseSelf = {
+    x: 0,
+    y: 0,
+    z: 0,
+    mass: 1,
+    cellTypeCode: TC.EMPTY,
+    cellMass: 0,
+    cargo: 0,
+    idHash: 7,
+    birthTick: 0,
+    stateRegister: 0,
+  };
+
+  assert.deepEqual(
+    builderRule(
+      { ...baseSelf, cargo: 1 },
+      [{ dx: 1, dy: 0, mass: 4, typeCode: TC.TASK, trail: 0, trailType: 0 }],
+      0,
+      0,
+      pheromone,
+    ),
+    { action: 'deposit' },
+  );
+
+  assert.deepEqual(
+    recyclerRule(
+      baseSelf,
+      [{ dx: 0, dy: -1, mass: 2, typeCode: TC.LOOSE_MASS, trail: 0, trailType: 0 }],
+      0,
+      0,
+    ),
+    { action: 'recycle' },
+  );
+
+  assert.equal(workerRule(baseSelf, emptyNeighbors, 10, 0, pheromone).action, 'move');
+  assert.equal(
+    builderRule(
+      baseSelf,
+      [
+        { dx: 0, dy: -1, mass: 2, typeCode: TC.STRUCTURE_DONE, trail: 0, trailType: 0 },
+        { dx: 1, dy: 0, mass: 1, typeCode: TC.WALL, trail: 0, trailType: 0 },
+        { dx: 0, dy: 1, mass: 1, typeCode: TC.WALL, trail: 0, trailType: 0 },
+        { dx: -1, dy: 0, mass: 1, typeCode: TC.WALL, trail: 0, trailType: 0 },
+      ],
+      0,
+      0,
+      pheromone,
+    ).action,
+    'move',
+  );
+});
+
+test('executeLMMDecision deposits on the current task cell and recycles adjacent loose mass', () => {
+  const engine = new LuxEngine('lmm-execution-test', 100, 5, false);
+  const harness = engine as unknown as EngineHarness & {
+    executeLMMDecision(agent: Entity, decision: { action: 'deposit' } | { action: 'recycle' }): void;
+    shatteredMassGrid: Uint8Array;
+  };
+
+  harness.resetWorld([]);
+
+  const openCell = findUnusedCell(harness.entities.values());
+  const lmm = createLMMEntity('lmm-builder-exec', openCell.x, openCell.y, 'builder');
+  const taskEntity: Entity = {
+    id: 'file:lmm-task',
+    type: 'file',
+    x: openCell.x,
+    y: openCell.y,
+    z: 0,
+    mass: 4,
+    tick_updated: 0,
+    node_state: 'task',
+    path: 'src/lmm-task.ts',
+  };
+
+  harness.registerEntity(taskEntity);
+  harness.registerEntity(lmm);
+  harness.patchEntity(lmm.id, { cargo: 1 });
+
+  let builder = harness.entities.get(lmm.id);
+  assert.ok(builder);
+  harness.executeLMMDecision(builder, { action: 'deposit' });
+
+  const updatedTask = harness.entities.get(taskEntity.id);
+  const afterDeposit = harness.entities.get(lmm.id);
+  assert.equal(updatedTask?.mass, 5);
+  assert.equal(afterDeposit?.cargo, 0);
+
+  const looseMassIndex = toIndex(openCell.x + 1, openCell.y, 0);
+  harness.shatteredMassGrid[looseMassIndex] = 1;
+
+  builder = harness.entities.get(lmm.id);
+  assert.ok(builder);
+  harness.executeLMMDecision(builder, { action: 'recycle' });
+
+  const afterRecycle = harness.entities.get(lmm.id);
+  assert.equal(harness.shatteredMassGrid[looseMassIndex], 0);
+  assert.equal(afterRecycle?.cargo, 1);
+});
+
+test('applyLMMDecisions keeps the lower-tier swarm moving on a quiet lattice', () => {
+  const engine = new LuxEngine('lmm-quiet-lattice-test', 100, 5, false);
+  const harness = engine as unknown as EngineHarness;
+
+  harness.resetWorld([]);
+
+  const initialPositions = new Map(
+    Array.from(harness.entities.values())
+      .filter((entity) => entity.type === 'agent' && entity.lmm_rule != null)
+      .map((entity) => [entity.id, `${entity.x},${entity.y}`]),
+  );
+
+  let movedOnEveryStep = true;
+  for (let index = 0; index < 4; index += 1) {
+    const beforeStep = new Map(
+      Array.from(harness.entities.values())
+        .filter((entity) => entity.type === 'agent' && entity.lmm_rule != null)
+        .map((entity) => [entity.id, `${entity.x},${entity.y}`]),
+    );
+
+    harness.applyLMMDecisions();
+
+    const stepMoved = Array.from(harness.entities.values())
+      .filter((entity) => entity.type === 'agent' && entity.lmm_rule != null)
+      .some((entity) => beforeStep.get(entity.id) !== `${entity.x},${entity.y}`);
+
+    movedOnEveryStep &&= stepMoved;
+  }
+
+  const finalPositions = Array.from(harness.entities.values())
+    .filter((entity) => entity.type === 'agent' && entity.lmm_rule != null);
+
+  const movedAgents = finalPositions.filter((entity) => initialPositions.get(entity.id) !== `${entity.x},${entity.y}`);
+
+  assert.ok(movedOnEveryStep);
+  assert.ok(movedAgents.length >= 3);
+});
+
 test('createInitialEntities places goal and required wall', () => {
   const entities = createInitialEntities('lux-alpha-001');
 
@@ -646,30 +900,30 @@ test('computeChiralMass falls back to content_preview when content is null', () 
 // ---------------------------------------------------------------------------
 
 test('findOpenPosition returns preferred position when free', () => {
-  const result = findOpenPosition(10, 10, new Set(), new Set());
-  assert.deepEqual(result, { x: 10, y: 10 });
+  const result = findOpenPosition(10, 10, 0, new Set(), new Set());
+  assert.deepEqual(result, { x: 10, y: 10, z: 0 });
 });
 
 test('findOpenPosition spirals outward when preferred is occupied', () => {
-  const occupied = new Set(['10,10']);
-  const result = findOpenPosition(10, 10, occupied, new Set());
+  const occupied = new Set(['10,10,0']);
+  const result = findOpenPosition(10, 10, 0, occupied, new Set());
 
   const distance = Math.abs(result.x - 10) + Math.abs(result.y - 10);
   assert.equal(distance, 1);
-  assert.ok(!occupied.has(`${result.x},${result.y}`));
+  assert.ok(!occupied.has(`${result.x},${result.y},0`));
 });
 
 test('findOpenPosition respects reserved positions', () => {
   const occupied = new Set<string>();
-  const reserved = new Set(['10,10', '10,11', '11,10', '9,10', '10,9']);
+  const reserved = new Set(['10,10,0', '10,11,0', '11,10,0', '9,10,0', '10,9,0']);
 
-  const result = findOpenPosition(10, 10, occupied, reserved);
+  const result = findOpenPosition(10, 10, 0, occupied, reserved);
 
-  assert.notEqual(`${result.x},${result.y}`, '10,10');
-  assert.notEqual(`${result.x},${result.y}`, '10,11');
-  assert.notEqual(`${result.x},${result.y}`, '11,10');
-  assert.notEqual(`${result.x},${result.y}`, '9,10');
-  assert.notEqual(`${result.x},${result.y}`, '10,9');
+  assert.notEqual(`${result.x},${result.y},${result.z}`, '10,10,0');
+  assert.notEqual(`${result.x},${result.y},${result.z}`, '10,11,0');
+  assert.notEqual(`${result.x},${result.y},${result.z}`, '11,10,0');
+  assert.notEqual(`${result.x},${result.y},${result.z}`, '9,10,0');
+  assert.notEqual(`${result.x},${result.y},${result.z}`, '10,9,0');
 });
 
 test('findOpenPosition throws when grid is exhausted', () => {
@@ -678,13 +932,13 @@ test('findOpenPosition throws when grid is exhausted', () => {
 
   for (let x = 0; x < 50; x += 1) {
     for (let y = 0; y < 50; y += 1) {
-      occupied.add(`${x},${y}`);
+      occupied.add(`${x},${y},0`);
     }
   }
 
   assert.throws(() => {
-    findOpenPosition(0, 0, occupied, reserved);
-  }, /Repository lattice exceeds the available 50x50 grid./);
+    findOpenPosition(0, 0, 0, occupied, reserved);
+  }, /Repository lattice exceeds the available 50x50 grid at layer z=0./);
 });
 
 // ---------------------------------------------------------------------------

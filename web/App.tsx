@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, PanelRight, X } from 'lucide-react';
 
 import {
@@ -30,28 +30,19 @@ import { computeLineDiff, type DiffLine } from './diff';
 import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
 import { QueenHUD } from './QueenHUD';
+import { drawBuilding } from './building-render';
+import { getFileFootprint } from './file-colors';
+import { getBuildingHeight } from './file-colors';
 import { drawTethers } from './tether-render';
+import { drawAdaptiveRoads, drawDistrictLabels } from './roads';
 import {
   createIsoLayout,
-  createPrismProjection,
   DEFAULT_CAMERA,
   fromScreen,
   toScreen,
-  traceFace,
   type Camera,
   type IsoLayout,
 } from './iso';
-import { ParticleSystem } from './particles';
-import {
-  drawBuilding,
-  drawDrone,
-  drawGoal,
-  drawPheromone,
-  drawCommandCenter,
-  drawHoverHighlight,
-  drawSelectionRing,
-} from './city-renderer';
-import { getBuildingHeight } from './building-styles';
 
 interface Viewport {
   height: number;
@@ -61,52 +52,6 @@ interface Viewport {
 interface DisplayPoint {
   x: number;
   y: number;
-}
-
-function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): void {
-  const background = context.createLinearGradient(0, 0, 0, viewport.height);
-  background.addColorStop(0, '#020409');
-  background.addColorStop(0.55, '#05070d');
-  background.addColorStop(1, '#010204');
-  context.fillStyle = background;
-  context.fillRect(0, 0, viewport.width, viewport.height);
-
-  const glow = context.createRadialGradient(
-    viewport.width * 0.55,
-    viewport.height * 0.08,
-    12,
-    viewport.width * 0.55,
-    viewport.height * 0.08,
-    viewport.width * 0.75,
-  );
-  glow.addColorStop(0, 'rgba(44, 207, 255, 0.12)');
-  glow.addColorStop(1, 'rgba(44, 207, 255, 0)');
-  context.fillStyle = glow;
-  context.fillRect(0, 0, viewport.width, viewport.height);
-}
-
-function drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout): void {
-  context.lineWidth = 1;
-
-  for (let x = 0; x <= 50; x += 1) {
-    const start = toScreen(x, 0, 0, layout);
-    const end = toScreen(x, 50, 0, layout);
-    context.beginPath();
-    context.moveTo(start.sx, start.sy);
-    context.lineTo(end.sx, end.sy);
-    context.strokeStyle = x % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
-    context.stroke();
-  }
-
-  for (let y = 0; y <= 50; y += 1) {
-    const start = toScreen(0, y, 0, layout);
-    const end = toScreen(50, y, 0, layout);
-    context.beginPath();
-    context.moveTo(start.sx, start.sy);
-    context.lineTo(end.sx, end.sy);
-    context.strokeStyle = y % 5 === 0 ? 'rgba(46, 201, 255, 0.2)' : 'rgba(46, 201, 255, 0.08)';
-    context.stroke();
-  }
 }
 
 type LogKind = 'scan' | 'move' | 'read' | 'state' | 'alert' | 'verify' | 'decision';
@@ -124,14 +69,6 @@ interface StructureFocus {
   entity: Entity | null;
 }
 
-interface StatusPalette {
-  accent: string;
-  glow: string;
-  left: string;
-  right: string;
-  top: string;
-}
-
 interface AgentPalette {
   fill: string;
   glow: string;
@@ -144,139 +81,7 @@ interface WorkforceStatus {
   role: HivemindAgentRole;
 }
 
-// Demo entities for vibe coder onboarding — shows all building styles
-const DEMO_ENTITIES: Entity[] = [
-  {
-    id: 'demo-cmd',
-    type: 'command_center',
-    x: 25,
-    y: 25,
-    z: 0,
-    mass: 5,
-    tick_updated: 0,
-    name: 'Command Center Alpha',
-  },
-  {
-    id: 'demo-api',
-    type: 'file',
-    x: 22,
-    y: 22,
-    z: 0,
-    mass: 5,
-    tick_updated: 0,
-    name: 'api.ts',
-    path: 'src/api.ts',
-    extension: '.ts',
-    node_state: 'stable',
-    git_status: 'clean',
-    content_preview: '// API routes and handlers\nexport async function handleRequest(req: Request) { ... }',
-  },
-  {
-    id: 'demo-components',
-    type: 'directory',
-    x: 28,
-    y: 22,
-    z: 0,
-    mass: 5,
-    tick_updated: 0,
-    name: 'components',
-    path: 'src/components',
-    node_state: 'stable',
-    git_status: 'clean',
-  },
-  {
-    id: 'demo-button',
-    type: 'file',
-    x: 27,
-    y: 23,
-    z: 0,
-    mass: 3,
-    tick_updated: 0,
-    name: 'Button.tsx',
-    path: 'src/components/Button.tsx',
-    extension: '.tsx',
-    node_state: 'stable',
-    git_status: 'clean',
-    content_preview: 'export function Button({ children, onClick }) { ... }',
-  },
-  {
-    id: 'demo-styles',
-    type: 'file',
-    x: 29,
-    y: 23,
-    z: 0,
-    mass: 2,
-    tick_updated: 0,
-    name: 'styles.css',
-    path: 'src/styles.css',
-    extension: '.css',
-    node_state: 'stable',
-    git_status: 'clean',
-    content_preview: '.button { background: #56d9ff; }',
-  },
-  {
-    id: 'demo-readme',
-    type: 'file',
-    x: 25,
-    y: 28,
-    z: 0,
-    mass: 1,
-    tick_updated: 0,
-    name: 'README.md',
-    path: 'README.md',
-    extension: '.md',
-    node_state: 'stable',
-    git_status: 'clean',
-    content_preview: '# My Project\n\nA spatial codebase visualization.',
-  },
-  {
-    id: 'demo-config',
-    type: 'file',
-    x: 23,
-    y: 28,
-    z: 0,
-    mass: 2,
-    tick_updated: 0,
-    name: 'package.json',
-    path: 'package.json',
-    extension: '.json',
-    node_state: 'stable',
-    git_status: 'clean',
-    content_preview: '{ "name": "my-project", "version": "1.0.0" }',
-  },
-  {
-    id: 'demo-test',
-    type: 'file',
-    x: 27,
-    y: 28,
-    z: 0,
-    mass: 3,
-    tick_updated: 0,
-    name: 'api.test.ts',
-    path: 'src/api.test.ts',
-    extension: '.test.ts',
-    node_state: 'verified',
-    git_status: 'clean',
-    content_preview: 'test("API handles requests", () => { ... })',
-  },
-  {
-    id: 'demo-bigfile',
-    type: 'file',
-    x: 20,
-    y: 25,
-    z: 0,
-    mass: 8,
-    tick_updated: 0,
-    name: 'legacy.ts',
-    path: 'src/legacy.ts',
-    extension: '.ts',
-    node_state: 'asymmetry',
-    git_status: 'modified',
-    content_preview: '// 5000 lines of messy code\nfunction doEverything() { ... }',
-  },
-];
-
-const PREVIEW_ENTITIES = [...createInitialEntities(DEFAULT_SEED), ...DEMO_ENTITIES].sort((left, right) =>
+const PREVIEW_ENTITIES = createInitialEntities(DEFAULT_SEED).sort((left, right) =>
   left.id.localeCompare(right.id),
 );
 
@@ -305,6 +110,98 @@ function createEntityList(map: Map<string, Entity>): Entity[] {
   return Array.from(map.values()).sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function getPrismHeight(entity: Entity): number {
+  if (entity.type === 'directory') {
+    return getBuildingHeight(entity, 0.5);
+  }
+
+  if (entity.type === 'wall') {
+    return getBuildingHeight(entity, 1.0);
+  }
+
+  if (entity.type === 'goal') {
+    return 0.2;
+  }
+
+  if (entity.type === 'file') {
+    const lineLift = Math.min(4, Math.floor(countEntityLines(entity) / 24));
+    const base = Math.min(6, Math.max(0.8, entity.mass * 0.5 + lineLift));
+    return getBuildingHeight(entity, base);
+  }
+
+  return getBuildingHeight(entity, 0.7);
+}
+
+function getAgentPalette(role: HivemindAgentRole): AgentPalette {
+  if (role === 'visionary') {
+    return { fill: '#ec4899', glow: 'rgba(236, 72, 153, 0.78)', stroke: '#ffb0dc' };
+  }
+
+  if (role === 'critic') {
+    return { fill: '#ef4444', glow: 'rgba(239, 68, 68, 0.8)', stroke: '#ffc0c0' };
+  }
+
+  return { fill: '#10b981', glow: 'rgba(16, 185, 129, 0.78)', stroke: '#8cffd3' };
+}
+
+function withAlpha(hexColor: string, alpha: number): string {
+  const normalized = hexColor.replace('#', '');
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+// getFileFootprint now imported from ./file-colors
+
+function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): void {
+  const background = context.createLinearGradient(0, 0, 0, viewport.height);
+  background.addColorStop(0, '#020409');
+  background.addColorStop(0.55, '#05070d');
+  background.addColorStop(1, '#010204');
+  context.fillStyle = background;
+  context.fillRect(0, 0, viewport.width, viewport.height);
+
+  const glow = context.createRadialGradient(
+    viewport.width * 0.55,
+    viewport.height * 0.08,
+    12,
+    viewport.width * 0.55,
+    viewport.height * 0.08,
+    viewport.width * 0.75,
+  );
+  glow.addColorStop(0, 'rgba(44, 207, 255, 0.12)');
+  glow.addColorStop(1, 'rgba(44, 207, 255, 0)');
+  context.fillStyle = glow;
+  context.fillRect(0, 0, viewport.width, viewport.height);
+}
+
+function drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout, z: number, color: string): void {
+  context.lineWidth = 1;
+
+  for (let x = 0; x <= 50; x += 1) {
+    const start = toScreen(x, 0, z, layout);
+    const end = toScreen(x, 50, z, layout);
+    context.beginPath();
+    context.moveTo(start.sx, start.sy);
+    context.lineTo(end.sx, end.sy);
+    context.strokeStyle = x % 5 === 0 ? color.replace('0.08', '0.22').replace('0.2', '0.35') : color;
+    context.stroke();
+  }
+
+  for (let y = 0; y <= 50; y += 1) {
+    const start = toScreen(0, y, z, layout);
+    const end = toScreen(50, y, z, layout);
+    context.beginPath();
+    context.moveTo(start.sx, start.sy);
+    context.lineTo(end.sx, end.sy);
+    context.strokeStyle = y % 5 === 0 ? color.replace('0.08', '0.22').replace('0.2', '0.35') : color;
+    context.stroke();
+  }
+}
+
+
+
 function getInterpolatedPoint(
   entity: Entity,
   displayPoints: Record<string, DisplayPoint>,
@@ -325,66 +222,443 @@ function getInterpolatedPoint(
   return display;
 }
 
-interface StructureFocus {
-  distance: number;
-  entity: Entity | null;
-}
-
-function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
-  if (!agent) {
-    return { distance: Infinity, entity: null };
+function drawTetherRoute(context: CanvasRenderingContext2D, routeNodes: Entity[], layout: IsoLayout): void {
+  if (routeNodes.length < 2) {
+    return;
   }
 
-  const structures = entities.filter((entity) => isStructureEntity(entity));
-  let nearest: StructureFocus = { distance: Infinity, entity: null };
+  context.save();
+  context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+  context.lineWidth = 2;
+  context.shadowBlur = 12;
+  context.shadowColor = 'rgba(16, 185, 129, 0.55)';
+  context.beginPath();
 
-  for (const structure of structures) {
-    const distance = manhattanDistance(agent, structure);
-    if (distance < nearest.distance) {
-      nearest = { distance, entity: structure };
+  routeNodes.forEach((node, index) => {
+    const height = getPrismHeight(node);
+    const footprint = getFileFootprint(node);
+    const screen = toScreen(
+      node.x + (footprint.width / 2),
+      node.y + (footprint.depth / 2),
+      (node.z ?? 0) + height + 0.08,
+      layout,
+    );
+
+    if (index === 0) {
+      context.moveTo(screen.sx, screen.sy);
+    } else {
+      context.lineTo(screen.sx, screen.sy);
+    }
+  });
+
+  context.stroke();
+  context.restore();
+}
+
+// drawStructureEntity replaced by drawBuilding from ./building-render
+
+function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: IsoLayout): void {
+  const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.65, layout);
+  context.save();
+  context.strokeStyle = 'rgba(255, 166, 0, 0.95)';
+  context.lineWidth = 2;
+  context.shadowBlur = 20;
+  context.shadowColor = 'rgba(255, 166, 0, 0.55)';
+  context.beginPath();
+  context.arc(center.sx, center.sy, layout.tileHeight * 0.55, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+function drawHoverHighlight(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  const display = getInterpolatedPoint(entity, displayPoints);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+  const radius = layout.tileHeight * 1.1;
+
+  context.save();
+  context.strokeStyle = 'rgba(86, 217, 255, 0.55)';
+  context.lineWidth = 1.5;
+  context.shadowBlur = 16;
+  context.shadowColor = 'rgba(86, 217, 255, 0.35)';
+  context.setLineDash([4, 4]);
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+function drawSelectionRing(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+  phase: number,
+): void {
+  const display = getInterpolatedPoint(entity, displayPoints);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+  const radius = layout.tileHeight * 1.25;
+  const pulse = 0.7 + ((phase % 12) * 0.04);
+
+  context.save();
+  context.strokeStyle = `rgba(86, 217, 255, ${pulse})`;
+  context.lineWidth = 2.2;
+  context.shadowBlur = 22;
+  context.shadowColor = 'rgba(86, 217, 255, 0.55)';
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+
+  context.fillStyle = `rgba(86, 217, 255, ${pulse * 0.15})`;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius * 0.85, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function drawAgentTethers(
+  context: CanvasRenderingContext2D,
+  agents: Entity[],
+  entities: Entity[],
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  for (const agent of agents) {
+    if (!agent.objective_path) {
+      continue;
+    }
+
+    const target = entities.find((e) => e.path === agent.objective_path);
+    if (!target) {
+      continue;
+    }
+
+    const agentDisplay = getInterpolatedPoint(agent, displayPoints);
+    const agentCenter = toScreen(agentDisplay.x + 0.5, agentDisplay.y + 0.5, 0.85, layout);
+    const targetCenter = toScreen(target.x + 0.5, target.y + 0.5, 0.5, layout);
+
+    context.save();
+    context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+    context.lineWidth = 1.2;
+    context.setLineDash([6, 4]);
+    context.beginPath();
+    context.moveTo(agentCenter.sx, agentCenter.sy);
+    context.lineTo(targetCenter.sx, targetCenter.sy);
+    context.stroke();
+
+    context.fillStyle = 'rgba(16, 185, 129, 0.5)';
+    context.beginPath();
+    context.arc(targetCenter.sx, targetCenter.sy, 3, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+}
+
+function drawPheromone(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+): void {
+  const ttl = entity.ttl_ticks ?? 0;
+  const maxTtl = 30;
+  const life = ttl / maxTtl;
+  if (life <= 0) {
+    return;
+  }
+
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.1, layout);
+  const baseRadius = layout.tileHeight * 0.75;
+  const pulse = 1 + ((phase % 8) * 0.03);
+  const radius = baseRadius * pulse;
+  const alpha = life * 0.35;
+
+  context.save();
+  context.strokeStyle = `rgba(167, 139, 250, ${alpha})`;
+  context.lineWidth = 1.5;
+  context.shadowBlur = 10 * life;
+  context.shadowColor = `rgba(167, 139, 250, ${alpha * 0.6})`;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.stroke();
+
+  context.strokeStyle = `rgba(167, 139, 250, ${alpha * 0.4})`;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.arc(center.sx, center.sy, radius * 0.6, 0, Math.PI * 2);
+  context.stroke();
+
+  context.restore();
+}
+
+function drawLMMGhost(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+  tick: number,
+): void {
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
+  const scale = layout.tileHeight * 0.38;
+  const pulse = 0.55 + ((phase % 10) * 0.035);
+  const floatY = Math.sin(tick * 0.15) * scale * 0.15;
+  const opacity = pulse;
+
+  if (opacity <= 0.01) {
+    return;
+  }
+
+  const bodyFill = `rgba(220, 230, 245, ${opacity * 0.85})`;
+  const bodyStroke = `rgba(180, 200, 230, ${opacity * 0.9})`;
+  const eyeFill = `rgba(30, 40, 60, ${opacity * 0.8})`;
+
+  context.save();
+  context.translate(center.sx, center.sy + floatY);
+
+  // Soft glow
+  context.shadowBlur = 18;
+  context.shadowColor = `rgba(160, 190, 240, ${opacity * 0.5})`;
+
+  // Ghost body (rounded top)
+  context.beginPath();
+  context.arc(0, -scale * 0.15, scale * 0.35, Math.PI, 0);
+  context.lineTo(scale * 0.35, scale * 0.35);
+
+  // Wavy bottom
+  const waves = 3;
+  const waveWidth = (scale * 0.7) / waves;
+  for (let i = 0; i < waves; i++) {
+    const wx = scale * 0.35 - (i + 1) * waveWidth;
+    context.quadraticCurveTo(
+      wx + waveWidth * 0.5,
+      scale * 0.35 + scale * 0.12,
+      wx,
+      scale * 0.35,
+    );
+  }
+
+  context.closePath();
+  context.fillStyle = bodyFill;
+  context.fill();
+  context.strokeStyle = bodyStroke;
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  // Disable shadow for eyes
+  context.shadowBlur = 0;
+
+  // Eyes
+  const eyeOffsetX = scale * 0.11;
+  const eyeOffsetY = -scale * 0.12;
+  const eyeRadius = scale * 0.07;
+
+  context.beginPath();
+  context.arc(-eyeOffsetX, eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+  context.arc(eyeOffsetX, eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+  context.fillStyle = eyeFill;
+  context.fill();
+
+  // Tiny mouth (soft o)
+  context.beginPath();
+  context.arc(0, scale * 0.05, scale * 0.04, 0, Math.PI * 2);
+  context.fillStyle = eyeFill;
+  context.fill();
+
+  // Role label above ghost
+  context.fillStyle = `rgba(180, 200, 230, ${opacity * 0.7})`;
+  context.font = `${Math.max(8, Math.round(scale * 0.35))}px monospace`;
+  context.textAlign = 'center';
+  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', 0, -scale * 0.65);
+
+  context.restore();
+}
+
+function drawAgent(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+  tick: number,
+): void {
+  const role = getAgentRole(entity) ?? 'architect';
+  const palette = getAgentPalette(role);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
+  const scale = layout.tileHeight * 0.55;
+  const pulse = 0.72 + ((phase % 10) * 0.04);
+
+  const idleTicks = tick - entity.tick_updated;
+  const hasObjective = entity.objective_path != null;
+  let opacity = pulse;
+  if (!hasObjective && idleTicks > 30) {
+    opacity = pulse * Math.max(0, 1 - (idleTicks - 30) / 90);
+  }
+
+  if (opacity <= 0.01) {
+    return;
+  }
+
+  const fill = withAlpha(palette.fill, opacity);
+  const stroke = withAlpha(palette.stroke, opacity);
+  const walkCycle = Math.sin(tick * 0.8) * 2.5;
+
+  context.save();
+  context.translate(center.sx, center.sy);
+
+  // Glow behind body
+  context.shadowBlur = 24;
+  context.shadowColor = palette.glow;
+
+  // Abdomen (rear segment)
+  context.beginPath();
+  context.ellipse(0, scale * 0.4, scale * 0.42, scale * 0.38, 0, 0, Math.PI * 2);
+  context.fillStyle = fill;
+  context.fill();
+  context.strokeStyle = stroke;
+  context.lineWidth = 1.5;
+  context.stroke();
+
+  // Thorax (middle segment)
+  context.beginPath();
+  context.ellipse(0, -scale * 0.08, scale * 0.28, scale * 0.22, 0, 0, Math.PI * 2);
+  context.fillStyle = fill;
+  context.fill();
+  context.stroke();
+
+  // Head
+  context.beginPath();
+  context.ellipse(0, -scale * 0.5, scale * 0.2, scale * 0.18, 0, 0, Math.PI * 2);
+  context.fillStyle = fill;
+  context.fill();
+  context.stroke();
+
+  // Eye / core glow
+  context.beginPath();
+  context.arc(0, -scale * 0.5, scale * 0.07, 0, Math.PI * 2);
+  context.fillStyle = stroke;
+  context.fill();
+
+  // Disable shadow for legs and antennae
+  context.shadowBlur = 0;
+
+  // Legs (3 pairs)
+  for (let i = 0; i < 3; i++) {
+    const legY = -scale * 0.2 + i * scale * 0.28;
+    const legSwing = (i % 2 === 0 ? 1 : -1) * walkCycle;
+
+    // Left leg
+    context.beginPath();
+    context.moveTo(-scale * 0.22, legY);
+    context.lineTo(-scale * 0.5, legY - legSwing);
+    context.lineTo(-scale * 0.7, legY + scale * 0.12);
+    context.strokeStyle = withAlpha(palette.stroke, opacity * 0.65);
+    context.lineWidth = 1.2;
+    context.stroke();
+
+    // Right leg
+    context.beginPath();
+    context.moveTo(scale * 0.22, legY);
+    context.lineTo(scale * 0.5, legY + legSwing);
+    context.lineTo(scale * 0.7, legY + scale * 0.12);
+    context.strokeStyle = withAlpha(palette.stroke, opacity * 0.65);
+    context.stroke();
+  }
+
+  // Antennae
+  context.beginPath();
+  context.moveTo(-scale * 0.06, -scale * 0.65);
+  context.quadraticCurveTo(-scale * 0.3, -scale * 0.9, -scale * 0.18, -scale * 1.1);
+  context.moveTo(scale * 0.06, -scale * 0.65);
+  context.quadraticCurveTo(scale * 0.3, -scale * 0.9, scale * 0.18, -scale * 1.1);
+  context.strokeStyle = withAlpha(palette.stroke, opacity * 0.55);
+  context.lineWidth = 1;
+  context.stroke();
+
+  // Mandibles
+  context.beginPath();
+  context.moveTo(-scale * 0.08, -scale * 0.65);
+  context.lineTo(-scale * 0.16, -scale * 0.82);
+  context.moveTo(scale * 0.08, -scale * 0.65);
+  context.lineTo(scale * 0.16, -scale * 0.82);
+  context.strokeStyle = withAlpha(palette.stroke, opacity * 0.75);
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.restore();
+}
+
+function drawEntities(
+  context: CanvasRenderingContext2D,
+  entities: Entity[],
+  layout: IsoLayout,
+  phase: number,
+  tick: number,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  const activeIds = new Set(entities.map((entity) => entity.id));
+  for (const id of Object.keys(displayPoints)) {
+    if (!activeIds.has(id)) {
+      delete displayPoints[id];
     }
   }
 
-  return nearest;
-}
+  const renderables = entities.map((entity) => ({
+    depth: entity.x + entity.y + (entity.z ?? 0) * 0.5 + (getPrismHeight(entity) * 0.1),
+    entity,
+  }));
 
-function getLoadedFile(agent: Entity | null, entities: Entity[]): Entity | null {
-  if (!agent) {
-    return null;
-  }
+  renderables.sort((left, right) => left.depth - right.depth);
 
-  const files = entities.filter((entity) => entity.type === 'file');
-  const match = files.find((file) => file.x === agent.x && file.y === agent.y);
-  return match ?? null;
-}
+  for (const item of renderables) {
+    const { entity } = item;
+    const display = getInterpolatedPoint(entity, displayPoints);
 
-function buildRouteNodes(focus: Entity | null, entityByPath: Map<string, Entity>): Entity[] {
-  if (!focus || !focus.path) {
-    return [];
-  }
-
-  const segments = focus.path.split('/');
-  const nodes: Entity[] = [];
-
-  for (let index = 1; index <= segments.length; index += 1) {
-    const partial = segments.slice(0, index).join('/');
-    const match = entityByPath.get(partial);
-    if (match) {
-      nodes.push(match);
+    if (entity.type === 'pheromone') {
+      drawPheromone(context, entity, display, layout, phase);
+      continue;
     }
+
+    if (entity.type === 'agent') {
+      if (entity.lmm_rule != null) {
+        drawLMMGhost(context, entity, display, layout, phase, tick);
+      } else {
+        drawAgent(context, entity, display, layout, phase, tick);
+      }
+      continue;
+    }
+
+    if (entity.type === 'goal') {
+      drawGoal(context, entity, layout);
+      continue;
+    }
+
+    if (isStructureEntity(entity)) {
+      drawBuilding({
+        context,
+        entity,
+        display,
+        layout,
+        phase,
+        nodeState: entity.node_state ?? 'stable',
+      });
+      continue;
+    }
+
+    drawBuilding({
+      context,
+      entity,
+      display,
+      layout,
+      phase,
+      nodeState: 'stable',
+    });
   }
-
-  return nodes;
-}
-
-function createLogEntry(kind: LogKind, tick: number, message: string): LogEntry {
-  return {
-    id: `${tick}-${kind}-${Date.now()}`,
-    kind,
-    message,
-    tick,
-    timestamp: formatTimestamp(),
-  };
 }
 
 function formatTimestamp(): string {
@@ -508,6 +782,84 @@ function TaskDiff({ lines }: { lines: DiffLine[] }) {
   );
 }
 
+function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
+  if (!agent) {
+    return { distance: Number.POSITIVE_INFINITY, entity: null };
+  }
+
+  let nearest: Entity | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const entity of entities) {
+    const distance = manhattanDistance(agent, entity);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = entity;
+    }
+  }
+
+  return { distance: bestDistance, entity: nearest };
+}
+
+function getLoadedFile(agent: Entity | null, entities: Entity[]): Entity | null {
+  if (!agent) {
+    return null;
+  }
+
+  const fileCandidates = entities.filter((entity) => entity.type === 'file');
+  const nearest = getNearestStructure(agent, fileCandidates);
+  return !nearest.entity || nearest.distance > 1 ? null : nearest.entity;
+}
+
+function buildRouteNodes(focus: Entity | null, entityByPath: Map<string, Entity>): Entity[] {
+  if (!focus) {
+    return [];
+  }
+
+  const route: Entity[] = [];
+  const root = entityByPath.get('.');
+  if (root) {
+    route.push(root);
+  }
+
+  if (!focus.path || focus.path === '.') {
+    return route;
+  }
+
+  const segments = focus.path.split('/');
+  const prefixes: string[] = [];
+
+  if (focus.type === 'directory') {
+    for (let index = 0; index < segments.length; index += 1) {
+      prefixes.push(segments.slice(0, index + 1).join('/'));
+    }
+  } else {
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      prefixes.push(segments.slice(0, index + 1).join('/'));
+    }
+    prefixes.push(focus.path);
+  }
+
+  for (const prefix of prefixes) {
+    const entity = entityByPath.get(prefix);
+    if (entity) {
+      route.push(entity);
+    }
+  }
+
+  return route;
+}
+
+function createLogEntry(kind: LogKind, tick: number, message: string): LogEntry {
+  return {
+    id: `${kind}-${tick}-${crypto.randomUUID()}`,
+    kind,
+    message,
+    tick,
+    timestamp: formatTimestamp(),
+  };
+}
+
 function getCodePreview(entity: Entity | null): string {
   if (!entity) {
     return '';
@@ -535,6 +887,45 @@ interface GitTreeItemProps {
   node: GitTreeNode;
   nodeStatesByPath: Map<string, HivemindNodeState>;
 }
+
+interface SidebarSectionProps {
+  children: ReactNode;
+  meta?: string;
+  onToggle: () => void;
+  open: boolean;
+  title: string;
+}
+
+type LeftPanelSection =
+  | 'overview'
+  | 'operator'
+  | 'visibility'
+  | 'tasks'
+  | 'workforce'
+  | 'tree'
+  | 'context'
+  | 'inspect';
+
+type RightPanelSection = 'status' | 'activity' | 'directive' | 'log' | 'legend';
+
+const DEFAULT_LEFT_PANEL_SECTIONS: Record<LeftPanelSection, boolean> = {
+  context: true,
+  inspect: true,
+  operator: true,
+  overview: true,
+  tasks: true,
+  tree: true,
+  visibility: true,
+  workforce: true,
+};
+
+const DEFAULT_RIGHT_PANEL_SECTIONS: Record<RightPanelSection, boolean> = {
+  activity: true,
+  directive: true,
+  legend: true,
+  log: true,
+  status: true,
+};
 
 function GitTreeItem({ activePathSet, depth, loadedPath, node, nodeStatesByPath }: GitTreeItemProps) {
   const active = activePathSet.has(node.path);
@@ -568,6 +959,75 @@ function GitTreeItem({ activePathSet, depth, loadedPath, node, nodeStatesByPath 
   );
 }
 
+function SidebarSection({ children, meta, onToggle, open, title }: SidebarSectionProps) {
+  return (
+    <section className={`sidebar-section ${open ? 'is-open' : 'is-collapsed'}`}>
+      <button
+        aria-expanded={open}
+        className="sidebar-section-toggle"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="sidebar-section-title-wrap">
+          <ChevronRight
+            className={`sidebar-section-chevron ${open ? 'is-open' : ''}`}
+            size={14}
+            strokeWidth={1.9}
+          />
+          <span className="sidebar-section-title">{title}</span>
+        </span>
+        {meta ? <span className="sidebar-section-meta">{meta}</span> : null}
+      </button>
+      {open ? <div className="sidebar-section-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function getEntityPath(entity: Entity): string {
+  return entity.path ?? entity.name ?? entity.id;
+}
+
+function buildVisibleStructurePathSet(
+  fileNodes: Entity[],
+  hiddenFilePaths: Set<string>,
+): Set<string> {
+  const visiblePaths = new Set<string>(['.']);
+
+  for (const fileNode of fileNodes) {
+    const filePath = fileNode.path;
+    if (!filePath || hiddenFilePaths.has(filePath)) {
+      continue;
+    }
+
+    const segments = filePath.split('/');
+    for (let index = 0; index < segments.length; index += 1) {
+      visiblePaths.add(segments.slice(0, index + 1).join('/'));
+    }
+  }
+
+  return visiblePaths;
+}
+
+function normalizeRotation(rotation: number): number {
+  const fullTurn = Math.PI * 2;
+  const normalized = rotation % fullTurn;
+  return normalized < 0 ? normalized + fullTurn : normalized;
+}
+
+function formatRotation(rotation: number): string {
+  return `${Math.round((normalizeRotation(rotation) * 180) / Math.PI)}°`;
+}
+
+function stripUnsafeOperatorControlFields(
+  control: Record<string, unknown>,
+): Pick<OperatorControl, 'id' | 'repo_path' | 'operator_prompt'> {
+  return {
+    id: String(control.id ?? 'lux-control'),
+    repo_path: String(control.repo_path ?? ''),
+    operator_prompt: String(control.operator_prompt ?? ''),
+  };
+}
+
 function App() {
   const [entities, setEntities] = useState<Entity[]>(PREVIEW_ENTITIES);
   const [worldState, setWorldState] = useState<WorldState>(PREVIEW_WORLD_STATE);
@@ -581,7 +1041,7 @@ function App() {
   const [editContentInput, setEditContentInput] = useState<string>('');
   const [commitMessageInput, setCommitMessageInput] = useState<string>('');
   const [shouldPushInput, setShouldPushInput] = useState<boolean>(false);
-  const [controlMessage, setControlMessage] = useState<string>('Drag anywhere on the canvas to drop a prompt. Or import a repository below.');
+  const [controlMessage, setControlMessage] = useState<string>('Enter a repository path and directive, then commit it into the lattice.');
   const [isSavingControl, setIsSavingControl] = useState(false);
   const [mode, setMode] = useState<'preview' | 'live'>('preview');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -589,21 +1049,21 @@ function App() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [contextTab, setContextTab] = useState<'code' | 'explanation'>('code');
-  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [camera, setCamera] = useState<Camera>({ panX: 0, panY: 0, zoom: 0.85 });
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [leftPanelSections, setLeftPanelSections] = useState<Record<LeftPanelSection, boolean>>(
+    DEFAULT_LEFT_PANEL_SECTIONS,
+  );
+  const [rightPanelSections, setRightPanelSections] = useState<Record<RightPanelSection, boolean>>(
+    DEFAULT_RIGHT_PANEL_SECTIONS,
+  );
+  const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
+  const [fileFilterQuery, setFileFilterQuery] = useState('');
+  const [hiddenFilePaths, setHiddenFilePaths] = useState<string[]>([]);
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
-
-  // Drag-to-prompt state
-  const [isPromptDragging, setIsPromptDragging] = useState(false);
-  const [promptDragStart, setPromptDragStart] = useState<{ sx: number; sy: number } | null>(null);
-  const [promptDragCurrent, setPromptDragCurrent] = useState<{ sx: number; sy: number } | null>(null);
-  const [promptInput, setPromptInput] = useState<string>('');
-  const [showPromptInput, setShowPromptInput] = useState(false);
-  const [promptWorldPos, setPromptWorldPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Welcome overlay for first-time vibe coders
-  const [showWelcome, setShowWelcome] = useState(true);
+  const [engineRunning, setEngineRunning] = useState(false);
+  const [engineLoading, setEngineLoading] = useState(false);
+  const [engineError, setEngineError] = useState<string | null>(null);
 
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
@@ -612,11 +1072,12 @@ function App() {
   const supabaseRef = useRef<ReturnType<typeof createBrowserSupabaseClient> | null>(null);
   const entityMapRef = useRef<Map<string, Entity>>(entityMapFromList(PREVIEW_ENTITIES));
   const entityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
+  const visibleEntityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
+  const visibleStructureListRef = useRef<Entity[]>(PREVIEW_ENTITIES.filter((entity) => isStructureEntity(entity)));
   const displayPointsRef = useRef<Record<string, DisplayPoint>>({});
   const controlDirtyRef = useRef(false);
   const phaseRef = useRef<number>(worldState.phase);
   const tickRef = useRef<number>(worldState.tick);
-  const particlesRef = useRef<ParticleSystem>(new ParticleSystem());
   const routeNodesRef = useRef<Entity[]>([]);
   const previousTickRef = useRef<number>(-1);
   const previousStatusRef = useRef<string | null>(null);
@@ -631,12 +1092,49 @@ function App() {
   const previousAsymmetrySignatureRef = useRef<string>('');
   const previousAgentActivitiesRef = useRef<Record<string, AgentActivity>>({});
   const selectedEntityRef = useRef<Entity | null>(null);
+  const cameraRef = useRef<Camera>(DEFAULT_CAMERA);
   const inspectPanelRef = useRef<HTMLDivElement | null>(null);
 
   const agents = entities.filter((entity) => entity.type === 'agent');
   const primaryAgent = agents[0] ?? null;
   const primaryRole = primaryAgent ? (getAgentRole(primaryAgent) ?? 'architect') : 'architect';
   const structureNodes = entities.filter((entity) => isStructureEntity(entity));
+  const fileNodes = structureNodes
+    .filter((entity) => entity.type === 'file')
+    .sort((left, right) => getEntityPath(left).localeCompare(getEntityPath(right)));
+  const hiddenFilePathSet = new Set(hiddenFilePaths);
+  const visibleStructurePathSet = buildVisibleStructurePathSet(fileNodes, hiddenFilePathSet);
+  const visibleStructureNodes = structureNodes.filter((entity) => {
+    if (!entity.path) {
+      return false;
+    }
+
+    return visibleStructurePathSet.has(entity.path);
+  });
+  const visibleEntities = entities.filter((entity) => {
+    if (!isStructureEntity(entity)) {
+      return true;
+    }
+
+    return entity.path != null && visibleStructurePathSet.has(entity.path);
+  });
+  const visibleFileCount = fileNodes.filter((entity) => {
+    if (!entity.path) {
+      return false;
+    }
+
+    return !hiddenFilePathSet.has(entity.path);
+  }).length;
+  const normalizedFileFilterQuery = fileFilterQuery.trim().toLowerCase();
+  const filteredFileNodes = fileNodes.filter((entity) => {
+    if (normalizedFileFilterQuery.length === 0) {
+      return true;
+    }
+
+    const entityPath = getEntityPath(entity).toLowerCase();
+    const entityName = (entity.name ?? '').toLowerCase();
+    return entityPath.includes(normalizedFileFilterQuery) || entityName.includes(normalizedFileFilterQuery);
+  });
   const repositoryRoot =
     structureNodes.find((entity) => entity.type === 'directory' && entity.path === '.') ?? null;
   const focus = getNearestStructure(primaryAgent, structureNodes);
@@ -648,8 +1146,11 @@ function App() {
       .map((entity) => [entity.path as string, entity]),
   );
   const routeNodes = buildRouteNodes(loadedFile ?? activeStructure ?? repositoryRoot, entityByPath);
+  const visibleRouteNodes = routeNodes.filter(
+    (entity) => entity.path != null && visibleStructurePathSet.has(entity.path),
+  );
   const activePathSet = buildActivePathSet((loadedFile ?? activeStructure ?? repositoryRoot)?.path ?? null);
-  const gitTree = buildGitTree(structureNodes);
+  const gitTree = buildGitTree(visibleStructureNodes);
   const nodeStatesByPath = new Map(
     structureNodes
       .filter((entity) => entity.path !== null && entity.path !== undefined)
@@ -665,8 +1166,10 @@ function App() {
   const asymmetryNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'asymmetry');
   const genesisNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'task');
   const verifiedNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'verified');
+  const t2Agents = agents.filter((entity) => entity.lmm_rule == null);
+  const lmmAgents = agents.filter((entity) => entity.lmm_rule != null);
   const workforce: WorkforceStatus[] = WORKFORCE_ROLES.map((role) => ({
-    agents: agents.filter((entity) => (getAgentRole(entity) ?? 'architect') === role),
+    agents: t2Agents.filter((entity) => (getAgentRole(entity) ?? 'architect') === role),
     label: getAgentRoleLabel(role),
     role,
   }));
@@ -707,11 +1210,10 @@ function App() {
   const inspectPopupPosition = ((): { left: number; top: number } | null => {
     if (!selectedEntity) return null;
     const layout = createIsoLayout(viewport.width, viewport.height, camera);
-    const height = getBuildingHeight(selectedEntity);
     const center = toScreen(
       selectedEntity.x + 0.5,
       selectedEntity.y + 0.5,
-      height + 0.8,
+      (selectedEntity.z ?? 0) + getPrismHeight(selectedEntity) + 0.8,
       layout,
     );
     const popupWidth = 320;
@@ -722,77 +1224,6 @@ function App() {
     top = Math.max(12, Math.min(viewport.height - popupHeight - 12, top));
     return { left, top };
   })();
-
-  // Spawn command center from drag-prompt
-  const handlePromptDrop = async (): Promise<void> => {
-    if (!promptWorldPos || !promptInput.trim()) return;
-    
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      // Preview mode: just add the command center locally
-      const newCmd: Entity = {
-        id: `cmd-${Date.now()}`,
-        type: 'command_center',
-        x: Math.floor(promptWorldPos.x),
-        y: Math.floor(promptWorldPos.y),
-        z: 0,
-        mass: 5,
-        tick_updated: tickRef.current,
-        name: promptInput.slice(0, 40),
-        message: promptInput,
-      };
-      entityMapRef.current.set(newCmd.id, newCmd);
-      entityListRef.current = createEntityList(entityMapRef.current);
-      setEntities(entityListRef.current);
-      setControlMessage(`Command Center spawned at (${newCmd.x}, ${newCmd.y}): "${promptInput.slice(0, 50)}"`);
-      particlesRef.current.spawnCommandCenterDrop(newCmd.x + 0.5, newCmd.y + 0.5);
-      return;
-    }
-
-    // Live mode: create command center + set operator prompt
-    try {
-      setIsSavingControl(true);
-      
-      // Insert command center entity
-      const { error: entityError } = await supabase.from('entities').insert({
-        id: `cmd-${Date.now()}`,
-        type: 'command_center',
-        x: Math.floor(promptWorldPos.x),
-        y: Math.floor(promptWorldPos.y),
-        z: 0,
-        mass: 5,
-        tick_updated: tickRef.current,
-        name: promptInput.slice(0, 40),
-        message: promptInput,
-      });
-      
-      if (entityError) throw entityError;
-
-      // Set the operator prompt to activate agents
-      const { error: controlError } = await supabase
-        .from('operator_controls')
-        .upsert(
-          {
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: promptInput.trim(),
-            paused: false,
-            automate: true,
-          },
-          { onConflict: 'id' },
-        );
-
-      if (controlError) throw controlError;
-
-      setControlMessage(`Agents dispatched! Command Center at (${Math.floor(promptWorldPos.x)}, ${Math.floor(promptWorldPos.y)}) processing: "${promptInput.slice(0, 50)}..."`);
-      particlesRef.current.spawnCommandCenterDrop(Math.floor(promptWorldPos.x) + 0.5, Math.floor(promptWorldPos.y) + 0.5);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      setControlMessage(`Failed to spawn Command Center: ${message}`);
-    } finally {
-      setIsSavingControl(false);
-    }
-  };
 
   const handleToggleAutomate = async (): Promise<void> => {
     const supabase = supabaseRef.current;
@@ -808,7 +1239,7 @@ function App() {
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          {
+          stripUnsafeOperatorControlFields({
             id: DEFAULT_OPERATOR_CONTROL.id,
             repo_path: repoInput.trim(),
             operator_prompt: directiveInput.trim(),
@@ -821,7 +1252,7 @@ function App() {
             pending_edit_content: operatorControl.pending_edit_content,
             commit_message: operatorControl.commit_message,
             should_push: operatorControl.should_push,
-          },
+          }),
           { onConflict: 'id' },
         );
 
@@ -850,7 +1281,7 @@ function App() {
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          {
+          stripUnsafeOperatorControlFields({
             id: DEFAULT_OPERATOR_CONTROL.id,
             repo_path: repoInput.trim(),
             operator_prompt: directiveInput.trim(),
@@ -863,7 +1294,7 @@ function App() {
             pending_edit_content: operatorControl.pending_edit_content,
             commit_message: operatorControl.commit_message,
             should_push: operatorControl.should_push,
-          },
+          }),
           { onConflict: 'id' },
         );
 
@@ -875,6 +1306,37 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown pause toggle failure';
       setControlMessage(`Pause toggle failed: ${message}`);
+    }
+  };
+
+  const handleToggleEngine = async (): Promise<void> => {
+    setEngineLoading(true);
+    setEngineError(null);
+
+    try {
+      if (engineRunning) {
+        const res = await fetch('http://localhost:3001/api/engine/stop', { method: 'POST' });
+        if (!res.ok) {
+          const data = (await res.json()) as { error?: string };
+          setEngineError(data.error ?? 'Failed to stop engine');
+        } else {
+          setEngineRunning(false);
+          setControlMessage('Engine stopped.');
+        }
+      } else {
+        const res = await fetch('http://localhost:3001/api/engine/start', { method: 'POST' });
+        if (!res.ok) {
+          const data = (await res.json()) as { error?: string };
+          setEngineError(data.error ?? 'Failed to start engine');
+        } else {
+          setEngineRunning(true);
+          setControlMessage('Engine started. Automata are now ticking.');
+        }
+      }
+    } catch {
+      setEngineError('Bridge not running. Start it with: npm run bridge');
+    } finally {
+      setEngineLoading(false);
     }
   };
 
@@ -908,7 +1370,7 @@ function App() {
     try {
       const { error } = await supabase
         .from('operator_controls')
-        .upsert(nextControl, { onConflict: 'id' });
+        .upsert(stripUnsafeOperatorControlFields(nextControl as Record<string, unknown>), { onConflict: 'id' });
 
       if (error) {
         throw error;
@@ -948,7 +1410,7 @@ function App() {
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          {
+          stripUnsafeOperatorControlFields({
             id: DEFAULT_OPERATOR_CONTROL.id,
             repo_path: repoInput.trim(),
             operator_prompt: directiveInput.trim(),
@@ -961,7 +1423,7 @@ function App() {
             pending_edit_content: editContentInput,
             commit_message: operatorControl.commit_message,
             should_push: operatorControl.should_push,
-          },
+          }),
           { onConflict: 'id' },
         );
       if (error) throw error;
@@ -986,7 +1448,7 @@ function App() {
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          {
+          stripUnsafeOperatorControlFields({
             id: DEFAULT_OPERATOR_CONTROL.id,
             repo_path: repoInput.trim(),
             operator_prompt: prompt,
@@ -999,7 +1461,7 @@ function App() {
             pending_edit_content: operatorControl.pending_edit_content,
             commit_message: operatorControl.commit_message,
             should_push: operatorControl.should_push,
-          },
+          }),
           { onConflict: 'id' },
         );
       if (error) throw error;
@@ -1027,7 +1489,7 @@ function App() {
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          {
+          stripUnsafeOperatorControlFields({
             id: DEFAULT_OPERATOR_CONTROL.id,
             repo_path: repoInput.trim(),
             operator_prompt: directiveInput.trim(),
@@ -1040,7 +1502,7 @@ function App() {
             pending_edit_content: operatorControl.pending_edit_content,
             commit_message: commitMessageInput.trim(),
             should_push: shouldPushInput,
-          },
+          }),
           { onConflict: 'id' },
         );
       if (error) throw error;
@@ -1056,6 +1518,62 @@ function App() {
   useEffect(() => {
     entityListRef.current = entities;
   }, [entities]);
+
+  useEffect(() => {
+    visibleEntityListRef.current = visibleEntities;
+    visibleStructureListRef.current = visibleStructureNodes;
+  }, [visibleEntities, visibleStructureNodes]);
+
+  useEffect(() => {
+    const validPaths = new Set(fileNodes.map((entity) => entity.path).filter((path): path is string => path != null));
+    setHiddenFilePaths((prev) => prev.filter((path) => validPaths.has(path)));
+  }, [fileNodes]);
+
+  useEffect(() => {
+    if (!hoveredEntityId) {
+      return;
+    }
+
+    if (!visibleStructureNodes.some((entity) => entity.id === hoveredEntityId)) {
+      setHoveredEntityId(null);
+    }
+  }, [hoveredEntityId, visibleStructureNodes]);
+
+  useEffect(() => {
+    if (!selectedEntity || !isStructureEntity(selectedEntity) || !selectedEntity.path) {
+      return;
+    }
+
+    if (!visibleStructurePathSet.has(selectedEntity.path)) {
+      setSelectedEntity(null);
+    }
+  }, [selectedEntity, visibleStructurePathSet]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkStatus = async (): Promise<void> => {
+      try {
+        const res = await fetch('http://localhost:3001/api/engine/status');
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          setEngineRunning(data.running);
+          setEngineError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setEngineRunning(false);
+        }
+      }
+    };
+
+    checkStatus();
+    const handle = window.setInterval(checkStatus, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, []);
 
   useEffect(() => {
     if (mode !== 'live' || isSavingControl) {
@@ -1083,7 +1601,7 @@ function App() {
       return;
     }
 
-    setControlMessage('Drag anywhere on the canvas to drop a prompt. Or import a repository below.');
+    setControlMessage('Enter a repository path and directive, then commit it into the lattice.');
   }, [
     activeRepositoryPath,
     isSavingControl,
@@ -1101,16 +1619,23 @@ function App() {
   }, [worldState.phase, worldState.tick]);
 
   useEffect(() => {
-    routeNodesRef.current = routeNodes;
-  }, [routeNodes]);
+    routeNodesRef.current = visibleRouteNodes;
+  }, [visibleRouteNodes]);
 
   useEffect(() => {
     selectedEntityRef.current = selectedEntity;
   }, [selectedEntity]);
 
   useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
+
+  useEffect(() => {
     if (selectedEntity && !leftPanelOpen) {
       setLeftPanelOpen(true);
+    }
+    if (selectedEntity) {
+      setLeftPanelSections((prev) => (prev.inspect ? prev : { ...prev, inspect: true }));
     }
   // Only react to selection changes, not leftPanelOpen toggles
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1353,175 +1878,178 @@ function App() {
     }
 
     const DRAG_THRESHOLD = 4;
-    const PROMPT_DRAG_THRESHOLD = 12;
-    const LONG_PRESS_DELAY = 400;
-    let isMouseDown = false;
+    type DragMode = 'idle' | 'pending-select' | 'orbit' | 'pan';
+
+    let dragMode: DragMode = 'idle';
     let dragStartX = 0;
     let dragStartY = 0;
-    let isPanning = false;
-    let lastPanX = 0;
-    let lastPanY = 0;
-    let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-    let didLongPress = false;
+    let lastPointerX = 0;
+    let lastPointerY = 0;
+    let lastOrbitAngle = 0;
+
+    const resolveCanvasPoint = (event: MouseEvent): { sx: number; sy: number } => {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        sx: event.clientX - rect.left,
+        sy: event.clientY - rect.top,
+      };
+    };
+
+    const getOrbitMetrics = (
+      sx: number,
+      sy: number,
+      layout: IsoLayout,
+    ): { angle: number; radius: number } => {
+      const offsetX = sx - layout.originX;
+      const offsetY = sy - layout.originY;
+      return {
+        angle: Math.atan2(offsetY, offsetX),
+        radius: Math.hypot(offsetX, offsetY),
+      };
+    };
+
+    const normalizeAngleDelta = (delta: number): number => {
+      const fullTurn = Math.PI * 2;
+      let normalized = delta;
+      while (normalized > Math.PI) {
+        normalized -= fullTurn;
+      }
+      while (normalized < -Math.PI) {
+        normalized += fullTurn;
+      }
+      return Math.max(-0.35, Math.min(0.35, normalized));
+    };
+
+    const findNearestVisibleStructure = (
+      sx: number,
+      sy: number,
+      layout: IsoLayout,
+      thresholdMultiplier: number,
+    ): Entity | null => {
+      const nearest = visibleStructureListRef.current
+        .map((entity) => {
+          const center = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+          const dist = Math.hypot(center.sx - sx, center.sy - sy);
+          return { entity, dist };
+        })
+        .filter((item) => item.dist < layout.tileHeight * thresholdMultiplier)
+        .sort((left, right) => left.dist - right.dist)[0];
+
+      return nearest?.entity ?? null;
+    };
 
     const handleWheel = (event: WheelEvent): void => {
       event.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = event.clientX - rect.left;
-      const mouseY = event.clientY - rect.top;
+      const { sx: mouseX, sy: mouseY } = resolveCanvasPoint(event);
 
       setCamera((prev) => {
         const oldLayout = createIsoLayout(viewport.width, viewport.height, prev);
-        const worldBefore = fromScreen(mouseX, mouseY, oldLayout);
+        const anchor = fromScreen(mouseX, mouseY, oldLayout);
         const newZoom = Math.max(0.3, Math.min(4, prev.zoom * (event.deltaY < 0 ? 1.12 : 0.88)));
         const next: Camera = { ...prev, zoom: newZoom };
         const newLayout = createIsoLayout(viewport.width, viewport.height, next);
-        const worldAfter = fromScreen(mouseX, mouseY, newLayout);
+        const anchorAfter = toScreen(anchor.x, anchor.y, 0, newLayout);
         return {
           ...next,
-          panX: prev.panX + ((worldAfter.x - worldBefore.x) * newLayout.tileWidth * 0.5),
-          panY: prev.panY + ((worldAfter.y - worldBefore.y) * newLayout.tileHeight * 0.5),
+          panX: next.panX + (mouseX - anchorAfter.sx),
+          panY: next.panY + (mouseY - anchorAfter.sy),
         };
       });
     };
 
     const handleMouseDown = (event: MouseEvent): void => {
       if (event.button === 0) {
-        isMouseDown = true;
         dragStartX = event.clientX;
         dragStartY = event.clientY;
-        isPanning = false;
-        didLongPress = false;
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
 
-        // Check if clicking on empty space (not on an entity)
-        const rect = canvas.getBoundingClientRect();
-        const sx = event.clientX - rect.left;
-        const sy = event.clientY - rect.top;
-        const layout = createIsoLayout(viewport.width, viewport.height, camera);
-        
-        const nearest = entityListRef.current
-          .filter((e) => isStructureEntity(e) || e.type === 'command_center')
-          .map((entity) => {
-            const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
-            const dist = Math.hypot(center.sx - sx, center.sy - sy);
-            return { entity, dist };
-          })
-          .filter((item) => item.dist < layout.tileHeight * 1.4)
-          .sort((a, b) => a.dist - b.dist)[0];
-
-        if (!nearest) {
-          // Clicked on empty space — start long-press timer for prompt drag
-          longPressTimer = setTimeout(() => {
-            didLongPress = true;
-            setIsPromptDragging(true);
-            setPromptDragStart({ sx, sy });
-            setPromptDragCurrent({ sx, sy });
-            setPromptInput('');
-            setShowPromptInput(true);
-            const worldPos = fromScreen(sx, sy, layout);
-            setPromptWorldPos({ x: worldPos.x, y: worldPos.y });
-            canvas.style.cursor = 'crosshair';
-          }, LONG_PRESS_DELAY);
+        if (event.shiftKey) {
+          dragMode = 'pan';
+          canvas.style.cursor = 'grabbing';
+          return;
         }
+
+        dragMode = 'pending-select';
+        const { sx, sy } = resolveCanvasPoint(event);
+        const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+        lastOrbitAngle = getOrbitMetrics(sx, sy, layout).angle;
       } else if (event.button === 1) {
-        isPanning = true;
-        lastPanX = event.clientX;
-        lastPanY = event.clientY;
+        event.preventDefault();
+        dragMode = 'pan';
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
         canvas.style.cursor = 'grabbing';
       }
     };
 
     const handleMouseMove = (event: MouseEvent): void => {
-      const rect = canvas.getBoundingClientRect();
-      const sx = event.clientX - rect.left;
-      const sy = event.clientY - rect.top;
-
-      if (isPromptDragging) {
-        setPromptDragCurrent({ sx, sy });
-        return;
-      }
-
-      if (isMouseDown && !isPanning && !didLongPress) {
+      if (dragMode === 'pending-select') {
         const dx = event.clientX - dragStartX;
         const dy = event.clientY - dragStartY;
         if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
-          // Cancel long press if dragged too far
-          if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-          }
-          isPanning = true;
-          lastPanX = event.clientX;
-          lastPanY = event.clientY;
+          dragMode = 'orbit';
+          lastPointerX = event.clientX;
+          lastPointerY = event.clientY;
+          const { sx, sy } = resolveCanvasPoint(event);
+          const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+          lastOrbitAngle = getOrbitMetrics(sx, sy, layout).angle;
           canvas.style.cursor = 'grabbing';
         }
       }
 
-      if (isPanning) {
-        const dx = event.clientX - lastPanX;
-        const dy = event.clientY - lastPanY;
-        lastPanX = event.clientX;
-        lastPanY = event.clientY;
+      if (dragMode === 'orbit') {
+        const { sx, sy } = resolveCanvasPoint(event);
+        const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+        const orbitMetrics = getOrbitMetrics(sx, sy, layout);
+        const delta =
+          orbitMetrics.radius < layout.tileWidth
+            ? (event.clientX - lastPointerX) * 0.01
+            : normalizeAngleDelta(orbitMetrics.angle - lastOrbitAngle);
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
+        lastOrbitAngle = orbitMetrics.angle;
+        if (Math.abs(delta) > 0.0001) {
+          setCamera((prev) => ({ ...prev, rotation: normalizeRotation(prev.rotation + delta) }));
+        }
+        return;
+      }
+
+      if (dragMode === 'pan') {
+        const dx = event.clientX - lastPointerX;
+        const dy = event.clientY - lastPointerY;
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
         setCamera((prev) => ({ ...prev, panX: prev.panX + dx, panY: prev.panY + dy }));
         return;
       }
 
-      const layout = createIsoLayout(viewport.width, viewport.height, camera);
-
-      const nearest = entityListRef.current
-        .filter((e) => isStructureEntity(e))
-        .map((entity) => {
-          const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
-          const dist = Math.hypot(center.sx - sx, center.sy - sy);
-          return { entity, dist };
-        })
-        .filter((item) => item.dist < layout.tileHeight * 1.2)
-        .sort((a, b) => a.dist - b.dist)[0];
-
-      setHoveredEntityId(nearest?.entity.id ?? null);
+      const { sx, sy } = resolveCanvasPoint(event);
+      const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+      const nearest = findNearestVisibleStructure(sx, sy, layout, 1.2);
+      setHoveredEntityId(nearest?.id ?? null);
       canvas.style.cursor = nearest ? 'pointer' : 'default';
     };
 
     const handleMouseUp = (event: MouseEvent): void => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-
-      if (isPromptDragging) {
-        // Prompt drag released — keep the input visible for typing
-        setIsPromptDragging(false);
-        canvas.style.cursor = 'default';
-        // Don't clear promptDragCurrent so we know where to position the input
-        return;
-      }
-
-      if (isPanning) {
-        isPanning = false;
-        isMouseDown = false;
+      if (dragMode === 'orbit' || dragMode === 'pan') {
+        dragMode = 'idle';
         canvas.style.cursor = 'default';
         return;
       }
 
-      if (isMouseDown) {
-        isMouseDown = false;
-        const rect = canvas.getBoundingClientRect();
-        const sx = event.clientX - rect.left;
-        const sy = event.clientY - rect.top;
-        const layout = createIsoLayout(viewport.width, viewport.height, camera);
-
-        const nearest = entityListRef.current
-          .filter((e) => isStructureEntity(e))
-          .map((entity) => {
-            const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.5, layout);
-            const dist = Math.hypot(center.sx - sx, center.sy - sy);
-            return { entity, dist };
-          })
-          .filter((item) => item.dist < layout.tileHeight * 1.4)
-          .sort((a, b) => a.dist - b.dist)[0];
-
-        setSelectedEntity(nearest?.entity ?? null);
+      if (dragMode === 'pending-select' && event.button === 0) {
+        dragMode = 'idle';
+        const { sx, sy } = resolveCanvasPoint(event);
+        const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+        const nearest = findNearestVisibleStructure(sx, sy, layout, 1.4);
+        setSelectedEntity(nearest);
+        canvas.style.cursor = nearest ? 'pointer' : 'default';
+        return;
       }
+
+      dragMode = 'idle';
+      canvas.style.cursor = 'default';
     };
 
     canvas.addEventListener('wheel', handleWheel, { passive: false });
@@ -1534,9 +2062,8 @@ function App() {
       canvas.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      if (longPressTimer) clearTimeout(longPressTimer);
     };
-  }, [viewport, camera]);
+  }, [viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1561,184 +2088,39 @@ function App() {
 
       const layout = createIsoLayout(viewport.width, viewport.height, camera);
       drawBackdrop(context, viewport);
-      drawGrid(context, layout);
-      drawTethers(context, entityListRef.current, layout, phaseRef.current);
-
-      // Update particles
-      particlesRef.current.update();
-
-      const activeIds = new Set(entityListRef.current.map((e) => e.id));
-      for (const id of Object.keys(displayPointsRef.current)) {
-        if (!activeIds.has(id)) {
-          delete displayPointsRef.current[id];
-        }
-      }
-
-      // Sort renderables by depth for proper isometric ordering
-      const renderables = entityListRef.current.map((entity) => {
-        const display = getInterpolatedPoint(entity, displayPointsRef.current);
-        const height = entity.type === 'directory' ? 1.2 : entity.type === 'file' ? Math.min(8, Math.max(0.8, (entity.mass ?? 1) * 0.5)) : entity.type === 'wall' ? 1.5 : 0.7;
-        return {
-          depth: display.x + display.y + (height * 0.1),
-          entity,
-          display,
-        };
-      });
-
-      renderables.sort((left, right) => left.depth - right.depth);
-
-      // Draw each entity with new city renderer
-      for (const item of renderables) {
-        const { entity, display } = item;
-
-        if (entity.type === 'command_center') {
-          drawCommandCenter(context, entity, display.x, display.y, layout, phaseRef.current);
-          continue;
-        }
-
-        if (entity.type === 'pheromone') {
-          drawPheromone(context, entity, display.x, display.y, layout, phaseRef.current);
-          continue;
-        }
-
-        if (entity.type === 'agent') {
-          drawDrone(context, entity, display.x, display.y, layout, phaseRef.current, tickRef.current);
-          continue;
-        }
-
-        if (entity.type === 'goal') {
-          drawGoal(context, entity, layout, phaseRef.current);
-          continue;
-        }
-
-        if (isStructureEntity(entity) || entity.type === 'wall') {
-          drawBuilding(context, entity, display.x, display.y, layout, phaseRef.current, entity.node_state ?? 'stable');
-          continue;
-        }
-      }
-
-      // Draw particles on top
-      particlesRef.current.draw(context);
-
-      // Draw prompt drag line
-      if (isPromptDragging && promptDragStart && promptDragCurrent) {
-        context.beginPath();
-        context.moveTo(promptDragStart.sx, promptDragStart.sy);
-        context.lineTo(promptDragCurrent.sx, promptDragCurrent.sy);
-        context.strokeStyle = 'rgba(236, 72, 153, 0.8)';
-        context.lineWidth = 2;
-        context.setLineDash([5, 5]);
-        context.stroke();
-        context.setLineDash([]);
-        
-        // Draw target circle
-        context.beginPath();
-        context.arc(promptDragCurrent.sx, promptDragCurrent.sy, 8, 0, Math.PI * 2);
-        context.fillStyle = 'rgba(236, 72, 153, 0.3)';
-        context.fill();
-        context.strokeStyle = 'rgba(236, 72, 153, 0.8)';
-        context.lineWidth = 2;
-        context.stroke();
-      }
-
-      // Minimap - StarCraft style
-      const mapSize = 140;
-      const mapPadding = 16;
-      const mapX = mapPadding;
-      const mapY = viewport.height - mapSize - mapPadding;
-      const mapScale = mapSize / 50;
-
-      context.save();
-      // Minimap background
-      context.fillStyle = 'rgba(2, 6, 12, 0.92)';
-      context.strokeStyle = 'rgba(86, 217, 255, 0.45)';
-      context.lineWidth = 1.5;
-      context.beginPath();
-      context.roundRect(mapX, mapY, mapSize, mapSize, 8);
-      context.fill();
-      context.stroke();
-
-      // Minimap grid
-      context.strokeStyle = 'rgba(46, 201, 255, 0.12)';
-      context.lineWidth = 0.5;
-      for (let mx = 0; mx <= 50; mx += 5) {
-        context.beginPath();
-        context.moveTo(mapX + mx * mapScale, mapY);
-        context.lineTo(mapX + mx * mapScale, mapY + mapSize);
-        context.stroke();
-      }
-      for (let my = 0; my <= 50; my += 5) {
-        context.beginPath();
-        context.moveTo(mapX, mapY + my * mapScale);
-        context.lineTo(mapX + mapSize, mapY + my * mapScale);
-        context.stroke();
-      }
-
-      // Draw entities on minimap
-      for (const entity of entityListRef.current) {
-        const mx = mapX + entity.x * mapScale;
-        const my = mapY + entity.y * mapScale;
-        if (entity.type === 'agent') {
-          context.fillStyle = entity.agent_role === 'visionary' ? '#ec4899' : entity.agent_role === 'critic' ? '#ef4444' : '#10b981';
-          context.shadowBlur = 4;
-          context.shadowColor = context.fillStyle;
-          context.beginPath();
-          context.arc(mx, my, 2.5, 0, Math.PI * 2);
-          context.fill();
-          context.shadowBlur = 0;
-        } else if (entity.type === 'wall') {
-          context.fillStyle = 'rgba(255, 255, 255, 0.35)';
-          context.fillRect(mx - 1, my - 1, 2, 2);
-        } else if (entity.type === 'file' || entity.type === 'directory') {
-          const ns = entity.node_state ?? 'stable';
-          const colors: Record<string, string> = {
-            task: '#ec4899',
-            'in-progress': '#fb923c',
-            asymmetry: '#fde047',
-            verified: '#22c55e',
-            stable: '#56d9ff',
-          };
-          context.fillStyle = colors[ns] ?? '#56d9ff';
-          context.fillRect(mx - 1.5, my - 1.5, 3, 3);
-        } else if (entity.type === 'command_center') {
-          context.fillStyle = '#ec4899';
-          context.shadowBlur = 6;
-          context.shadowColor = '#ec4899';
-          context.beginPath();
-          context.arc(mx, my, 3, 0, Math.PI * 2);
-          context.fill();
-          context.shadowBlur = 0;
-        }
-      }
-
-      // Viewport rectangle on minimap
-      const visibleW = Math.min(mapSize * 0.4, viewport.width / (layout.tileWidth * camera.zoom) * mapScale * 0.5);
-      const visibleH = Math.min(mapSize * 0.4, viewport.height / (layout.tileHeight * camera.zoom) * mapScale * 0.5);
-      const viewCenterX = mapX + 25 * mapScale - (camera.panX / layout.tileWidth / camera.zoom) * mapScale;
-      const viewCenterY = mapY + 25 * mapScale - (camera.panY / layout.tileHeight / camera.zoom) * mapScale;
-      context.strokeStyle = 'rgba(86, 217, 255, 0.8)';
-      context.lineWidth = 1.5;
-      context.strokeRect(
-        Math.max(mapX, viewCenterX - visibleW),
-        Math.max(mapY, viewCenterY - visibleH),
-        Math.min(mapSize - 2, visibleW * 2),
-        Math.min(mapSize - 2, visibleH * 2),
+      // Single grid at z=0
+      drawGrid(context, layout, 0, 'rgba(46, 201, 255, 0.08)');
+      // Organic roads + districts
+      drawAdaptiveRoads(context, layout, visibleEntityListRef.current);
+      drawDistrictLabels(context, layout, visibleEntityListRef.current);
+      drawTethers(context, visibleEntityListRef.current, layout, phaseRef.current);
+      drawTetherRoute(context, routeNodesRef.current, layout);
+      drawAgentTethers(
+        context,
+        agents,
+        visibleEntityListRef.current,
+        layout,
+        displayPointsRef.current,
+      );
+      drawEntities(
+        context,
+        visibleEntityListRef.current,
+        layout,
+        phaseRef.current,
+        tickRef.current,
+        displayPointsRef.current,
       );
 
-      context.restore();
-
       if (hoveredEntityId) {
-        const hovered = entityListRef.current.find((e) => e.id === hoveredEntityId);
-        if (hovered) {
-          const display = getInterpolatedPoint(hovered, displayPointsRef.current);
-          drawHoverHighlight(context, hovered, layout, display.x, display.y);
+        const hovered = visibleEntityListRef.current.find((e) => e.id === hoveredEntityId);
+        if (hovered && isStructureEntity(hovered)) {
+          drawHoverHighlight(context, hovered, layout, displayPointsRef.current);
         }
       }
 
       const selected = selectedEntityRef.current;
-      if (selected) {
-        const display = getInterpolatedPoint(selected, displayPointsRef.current);
-        drawSelectionRing(context, selected, layout, display.x, display.y, phaseRef.current);
+      if (selected && isStructureEntity(selected)) {
+        drawSelectionRing(context, selected, layout, displayPointsRef.current, phaseRef.current);
       }
 
       frameRef.current = window.requestAnimationFrame(render);
@@ -1752,7 +2134,7 @@ function App() {
         frameRef.current = null;
       }
     };
-  }, [viewport, camera, hoveredEntityId, agents, isPromptDragging, promptDragStart, promptDragCurrent]);
+  }, [viewport, camera, hoveredEntityId, agents]);
 
   useEffect(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
@@ -1931,68 +2313,6 @@ function App() {
         alarm={worldState.queen_alarm ?? 0}
         urgency={worldState.queen_urgency ?? 0}
       />
-      
-      {/* Welcome overlay for vibe coders */}
-      {showWelcome && mode === 'preview' && (
-        <div className="welcome-overlay" onClick={() => setShowWelcome(false)}>
-          <div className="welcome-content" onClick={(e) => e.stopPropagation()}>
-            <div className="welcome-title">🌆 Repocity</div>
-            <div className="welcome-subtitle">Your code is a city. You are the mayor.</div>
-            <div className="welcome-instructions">
-              <div className="welcome-step">
-                <span className="welcome-step-number">1</span>
-                <span>Hold click on empty space, drag to draw a line</span>
-              </div>
-              <div className="welcome-step">
-                <span className="welcome-step-number">2</span>
-                <span>Type what you want to build</span>
-              </div>
-              <div className="welcome-step">
-                <span className="welcome-step-number">3</span>
-                <span>Watch agents construct it in real-time</span>
-              </div>
-            </div>
-            <button className="welcome-button" onClick={() => setShowWelcome(false)}>
-              Enter the City
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Floating prompt input during drag */}
-      {showPromptInput && promptDragCurrent && (
-        <div
-          className="floating-prompt"
-          style={{
-            left: Math.min(promptDragCurrent.sx + 20, viewport.width - 300),
-            top: Math.max(20, promptDragCurrent.sy - 60),
-          }}
-        >
-          <input
-            type="text"
-            className="floating-prompt-input"
-            placeholder="What should the agents build?"
-            value={promptInput}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setPromptInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && promptInput.trim()) {
-                void handlePromptDrop();
-                setShowPromptInput(false);
-                setPromptInput('');
-              }
-              if (e.key === 'Escape') {
-                setShowPromptInput(false);
-                setPromptInput('');
-              }
-            }}
-            autoFocus
-          />
-          <div className="floating-prompt-hint">
-            Press Enter to dispatch agents · Escape to cancel
-          </div>
-        </div>
-      )}
-      
       <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
         <button
           className="panel-toggle"
@@ -2003,444 +2323,625 @@ function App() {
           {leftPanelOpen ? <ChevronLeft size={16} /> : <PanelLeft size={16} />}
         </button>
         {leftPanelOpen ? (
-          <>
+          <div className="panel-stack">
             <div className="panel-header">
               <div className="panel-title-wrap">
                 <GitBranch size={14} strokeWidth={1.85} />
                 <span className="panel-title">Git Overlay</span>
               </div>
-          <span className="panel-subtitle">{structureNodes.length} nodes</span>
-        </div>
+              <span className="panel-subtitle">
+                {visibleStructureNodes.length}/{structureNodes.length} visible nodes
+              </span>
+            </div>
 
-        <div className="repo-chip">
-          <span className="repo-chip-label">Repository</span>
-          <span className="repo-chip-value">{activeRepositoryName}</span>
-          <span className="repo-chip-path">{activeRepositoryPath ?? 'No repository overlay loaded yet.'}</span>
-        </div>
-
-        <form className="control-card" onSubmit={(event) => { void handleControlSubmit(event); }}>
-          <div className="control-card-header">
-            <div className="protocol-card-title">Operator Control</div>
-            <span className={`control-status status-${controlStatus} ${isSavingControl ? 'is-busy' : 'is-ready'}`}>
-              {isSavingControl ? 'writing' : formatControlStatus(controlStatus)}
-            </span>
-          </div>
-
-          <label className="control-field">
-            <span className="control-label">Repository Path</span>
-            <input
-              className="control-input"
-              onChange={(event) => {
-                controlDirtyRef.current = true;
-                setRepoInput(event.target.value);
-              }}
-              placeholder="C:\Users\Futureman\Desktop\lucianprotocol"
-              spellCheck={false}
-              type="text"
-              value={repoInput}
-            />
-            {worldState.saved_overlay_names && worldState.saved_overlay_names.length > 0 && (
-              <select
-                className="control-select"
-                onChange={(event) => {
-                  if (event.target.value) {
-                    controlDirtyRef.current = true;
-                    setRepoInput(event.target.value);
-                  }
-                }}
-                value=""
-              >
-                <option value="">— Load saved overlay —</option>
-                {worldState.saved_overlay_names.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-
-          <label className="control-field">
-            <span className="control-label">Directive</span>
-            <textarea
-              className="control-textarea"
-              onChange={(event) => {
-                controlDirtyRef.current = true;
-                setDirectiveInput(event.target.value);
-              }}
-              placeholder="Navigate to src/engine.ts and explain what the Architect is doing."
-              rows={4}
-              spellCheck={false}
-              value={directiveInput}
-            />
-          </label>
-
-          <div className="control-actions">
-            <button className="control-button" disabled={isSavingControl} type="submit">
-              {isSavingControl ? 'Committing...' : 'Apply To Lattice'}
-            </button>
-            <button
-              className={`control-button ${isPaused ? 'is-paused' : ''}`}
-              disabled={isSavingControl}
-              onClick={() => { void handleTogglePause(); }}
-              type="button"
+            <SidebarSection
+              meta={activeRepositoryName}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, overview: !prev.overview }))}
+              open={leftPanelSections.overview}
+              title="Overlay Overview"
             >
-              {isPaused ? 'Resume' : 'Pause'}
-            </button>
-            <button
-              className={`control-button ${isAutomated ? 'is-active' : ''}`}
-              disabled={isSavingControl}
-              onClick={() => { void handleToggleAutomate(); }}
-              type="button"
-            >
-              {isAutomated ? 'Automate On' : 'Automate'}
-            </button>
-          </div>
+              <div className="repo-chip">
+                <span className="repo-chip-label">Repository</span>
+                <span className="repo-chip-value">{activeRepositoryName}</span>
+                <span className="repo-chip-path">{activeRepositoryPath ?? 'No repository overlay loaded yet.'}</span>
+              </div>
 
-          <details className="control-details">
-            <summary className="control-summary">Edit &amp; Commit</summary>
-            <label className="control-field">
-              <span className="control-label">Edit Path</span>
-              <input
-                className="control-input"
-                onChange={(event) => setEditPathInput(event.target.value)}
-                placeholder="src/engine.ts"
-                spellCheck={false}
-                type="text"
-                value={editPathInput}
-              />
-            </label>
-            <label className="control-field">
-              <span className="control-label">Edit Content</span>
-              <textarea
-                className="control-textarea"
-                onChange={(event) => setEditContentInput(event.target.value)}
-                placeholder="Paste new file content..."
-                rows={4}
-                spellCheck={false}
-                value={editContentInput}
-              />
-            </label>
-            <div className="control-actions">
-              <button
-                className="control-button"
-                disabled={isSavingControl || !editPathInput.trim()}
-                onClick={() => { void handleStageEdit(); }}
-                type="button"
-              >
-                Stage Edit
-              </button>
-            </div>
-            <label className="control-field">
-              <span className="control-label">Commit Message</span>
-              <input
-                className="control-input"
-                onChange={(event) => setCommitMessageInput(event.target.value)}
-                placeholder="feat: update engine logic"
-                spellCheck={false}
-                type="text"
-                value={commitMessageInput}
-              />
-            </label>
-            <label className="control-field checkbox-field">
-              <input
-                checked={shouldPushInput}
-                onChange={(event) => setShouldPushInput(event.target.checked)}
-                type="checkbox"
-              />
-              <span className="control-label">Push to remote after commit</span>
-            </label>
-            <div className="control-actions">
-              <button
-                className="control-button"
-                disabled={isSavingControl || !commitMessageInput.trim()}
-                onClick={() => { void handleCommit(); }}
-                type="button"
-              >
-                Commit{shouldPushInput ? ' & Push' : ''}
-              </button>
-            </div>
-          </details>
-
-          <div className="control-note">
-            Leave the repo path unchanged to keep the current overlay and only swap the operator prompt.
-          </div>
-          <div className="control-feedback">{controlMessage}</div>
-          <div className="control-metrics">
-            <span>Action {operatorAction ?? 'maintain'}</span>
-            <span>Target {operatorTargetPath ?? operatorTargetQuery ?? 'none'}</span>
-            <span>Import {formatDuration(worldState.last_import_duration_ms)}</span>
-          </div>
-        </form>
-
-        {worldState.active_tasks && worldState.active_tasks.length > 0 ? (
-          <div className="protocol-card">
-            <div className="protocol-card-title">Task Pipeline</div>
-            <div className="task-stats">
-              <span className="task-stat is-pending">{worldState.active_tasks.filter((t) => t.status === 'pending').length} pending</span>
-              <span className="task-stat is-active">{worldState.active_tasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length} active</span>
-              <span className="task-stat is-review">{worldState.active_tasks.filter((t) => t.status === 'awaiting_review').length} review</span>
-              <span className="task-stat is-done">{worldState.active_tasks.filter((t) => t.status === 'done').length} done</span>
-            </div>
-            <div className="task-list">
-              {worldState.active_tasks.map((task) => {
-                const diffLines = shouldShowDiff(task)
-                  ? computeLineDiff(task.original_content ?? '', task.completed_content ?? '')
-                  : null;
-                const validationBadges = [
-                  { label: 'Lint', value: task.validation?.lint },
-                  { label: 'Types', value: task.validation?.typecheck },
-                ].filter((entry): entry is { label: string; value: TaskValidationResult } => entry.value != null);
-                return (
-                  <div className={`task-row status-${task.status}`} key={task.id}>
-                    <span className="task-id">{task.id}</span>
-                    <span className="task-path">{task.target_path}</span>
-                    <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
-                    {validationBadges.length > 0 ? (
-                      <div className="task-validation-strip">
-                        {validationBadges.map((entry) => (
-                          <span
-                            className={`task-validation-badge status-${entry.value.status}`}
-                            key={`${task.id}-${entry.label}`}
-                            title={entry.value.summary ?? `${entry.label} ${formatValidationStatus(entry.value.status)}`}
-                          >
-                            {entry.label} {formatValidationStatus(entry.value.status)}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {diffLines && diffLines.length > 0 ? (
-                      <TaskDiff lines={diffLines} />
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="protocol-card">
-          <div className="protocol-card-title">Hivemind Workforce</div>
-          <div className="workforce-list">
-            {workforce.map((member) => {
-              const promptValue = member.role === 'visionary'
-                ? visionaryPromptInput
-                : member.role === 'architect'
-                  ? architectPromptInput
-                  : criticPromptInput;
-              const promptSource = member.role === 'visionary'
-                ? worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''
-                : member.role === 'architect'
-                  ? worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''
-                  : worldState.critic_prompt ?? operatorControl.critic_prompt ?? '';
-
-              return (
-                <div className={`workforce-row role-${member.role}`} key={member.role}>
-                  <span className={`role-swatch role-${member.role}`} />
-                  <span className="workforce-label">{member.label}</span>
-                  <span className="workforce-value">
-                    {member.agents[0]
-                      ? `online ${member.agents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}`
-                      : 'standby'}
+              <div className="engine-control">
+                <div className="engine-control-header">
+                  <span className="protocol-card-title">Engine</span>
+                  <span className={`engine-status ${engineRunning ? 'is-running' : 'is-stopped'}`}>
+                    {engineRunning ? 'Running' : 'Stopped'}
                   </span>
-                  <details className="agent-prompt-details">
-                    <summary className="agent-prompt-summary">
-                      {promptSource.length > 0 ? 'Directive set' : 'Set directive'}
-                    </summary>
-                    <textarea
-                      className="control-textarea agent-prompt-textarea"
+                </div>
+                <button
+                  className={`control-button engine-button ${engineRunning ? 'is-stop' : 'is-start'}`}
+                  disabled={engineLoading}
+                  onClick={() => { void handleToggleEngine(); }}
+                  type="button"
+                >
+                  {engineLoading ? 'Working...' : engineRunning ? 'Stop Engine' : 'Start Engine'}
+                </button>
+                {engineError ? (
+                  <span className="engine-error">{engineError}</span>
+                ) : null}
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              meta={formatControlStatus(controlStatus)}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, operator: !prev.operator }))}
+              open={leftPanelSections.operator}
+              title="Operator Control"
+            >
+              <form className="control-card" onSubmit={(event) => { void handleControlSubmit(event); }}>
+                <div className="control-card-header">
+                  <div className="protocol-card-title">Operator Queue</div>
+                  <span className={`control-status status-${controlStatus} ${isSavingControl ? 'is-busy' : 'is-ready'}`}>
+                    {isSavingControl ? 'writing' : formatControlStatus(controlStatus)}
+                  </span>
+                </div>
+
+                <label className="control-field">
+                  <span className="control-label">Repository Path</span>
+                  <input
+                    className="control-input"
+                    onChange={(event) => {
+                      controlDirtyRef.current = true;
+                      setRepoInput(event.target.value);
+                    }}
+                    placeholder="C:\\Users\\Futureman\\Desktop\\lucianprotocol"
+                    spellCheck={false}
+                    type="text"
+                    value={repoInput}
+                  />
+                  {worldState.saved_overlay_names && worldState.saved_overlay_names.length > 0 && (
+                    <select
+                      className="control-select"
                       onChange={(event) => {
-                        if (member.role === 'visionary') setVisionaryPromptInput(event.target.value);
-                        else if (member.role === 'architect') setArchitectPromptInput(event.target.value);
-                        else setCriticPromptInput(event.target.value);
+                        if (event.target.value) {
+                          controlDirtyRef.current = true;
+                          setRepoInput(event.target.value);
+                        }
                       }}
-                      placeholder={`Specific instruction for the ${member.label}...`}
-                      rows={3}
+                      value=""
+                    >
+                      <option value="">— Load saved overlay —</option>
+                      {worldState.saved_overlay_names.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+
+                <label className="control-field">
+                  <span className="control-label">Directive</span>
+                  <textarea
+                    className="control-textarea"
+                    onChange={(event) => {
+                      controlDirtyRef.current = true;
+                      setDirectiveInput(event.target.value);
+                    }}
+                    placeholder="Navigate to src/engine.ts and explain what the Architect is doing."
+                    rows={4}
+                    spellCheck={false}
+                    value={directiveInput}
+                  />
+                </label>
+
+                <div className="control-actions">
+                  <button className="control-button" disabled={isSavingControl} type="submit">
+                    {isSavingControl ? 'Committing...' : 'Apply To Lattice'}
+                  </button>
+                  <button
+                    className={`control-button ${isPaused ? 'is-paused' : ''}`}
+                    disabled={isSavingControl}
+                    onClick={() => { void handleTogglePause(); }}
+                    type="button"
+                  >
+                    {isPaused ? 'Resume' : 'Pause'}
+                  </button>
+                  <button
+                    className={`control-button ${isAutomated ? 'is-active' : ''}`}
+                    disabled={isSavingControl}
+                    onClick={() => { void handleToggleAutomate(); }}
+                    type="button"
+                  >
+                    {isAutomated ? 'Automate On' : 'Automate'}
+                  </button>
+                </div>
+
+                <details className="control-details">
+                  <summary className="control-summary">Edit &amp; Commit</summary>
+                  <label className="control-field">
+                    <span className="control-label">Edit Path</span>
+                    <input
+                      className="control-input"
+                      onChange={(event) => setEditPathInput(event.target.value)}
+                      placeholder="src/engine.ts"
                       spellCheck={false}
-                      value={promptValue}
+                      type="text"
+                      value={editPathInput}
                     />
+                  </label>
+                  <label className="control-field">
+                    <span className="control-label">Edit Content</span>
+                    <textarea
+                      className="control-textarea"
+                      onChange={(event) => setEditContentInput(event.target.value)}
+                      placeholder="Paste new file content..."
+                      rows={4}
+                      spellCheck={false}
+                      value={editContentInput}
+                    />
+                  </label>
+                  <div className="control-actions">
                     <button
-                      className="control-button agent-prompt-button"
-                      disabled={isSavingControl}
-                      onClick={async () => {
-                        const supabase = supabaseRef.current;
-                        if (!supabase) {
-                          setControlMessage('Supabase keys missing; cannot set agent directive.');
-                          return;
-                        }
-                        try {
-                          const { error } = await supabase
-                            .from('operator_controls')
-                            .upsert(
-                              {
-                                id: DEFAULT_OPERATOR_CONTROL.id,
-                                repo_path: repoInput.trim(),
-                                operator_prompt: directiveInput.trim(),
-                                paused: isPaused,
-                                automate: isAutomated,
-                                visionary_prompt: member.role === 'visionary' ? promptValue.trim() : (worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''),
-                                architect_prompt: member.role === 'architect' ? promptValue.trim() : (worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''),
-                                critic_prompt: member.role === 'critic' ? promptValue.trim() : (worldState.critic_prompt ?? operatorControl.critic_prompt ?? ''),
-                              },
-                              { onConflict: 'id' },
-                            );
-                          if (error) throw error;
-                          setControlMessage(`${member.label} directive committed.`);
-                        } catch (error) {
-                          const message = error instanceof Error ? error.message : 'Unknown error';
-                          setControlMessage(`Directive failed: ${message}`);
-                        }
-                      }}
+                      className="control-button"
+                      disabled={isSavingControl || !editPathInput.trim()}
+                      onClick={() => { void handleStageEdit(); }}
                       type="button"
                     >
-                      Commit Directive
+                      Stage Edit
                     </button>
-                  </details>
-                </div>
-              );
-            })}
-          </div>
-          <div className="protocol-stats">
-            <span>Genesis {genesisNodes.length}</span>
-            <span>Asymmetry {asymmetryNodes.length}</span>
-            <span>Fission {criticalMassNodes.length}</span>
-          </div>
-        </div>
-
-        <div className="git-tree">
-          {gitTree ? (
-            <GitTreeItem
-              activePathSet={activePathSet}
-              depth={0}
-              loadedPath={loadedFile?.path ?? null}
-              node={gitTree}
-              nodeStatesByPath={nodeStatesByPath}
-            />
-          ) : (
-            <p className="panel-placeholder">No Git structure overlay loaded yet.</p>
-          )}
-        </div>
-
-        {contextEntity || hasExplanationTab ? (
-          <div className="panel-card context-panel">
-            <div className="panel-card-header">
-              <div className="panel-card-title">Spatial Context</div>
-              <div className="context-badge">
-                {contextTab === 'explanation' && hasExplanationTab
-                  ? formatExplanationStatus(explanationStatus)
-                  : getNodeStateLabel(contextNodeState ?? 'stable')}
-              </div>
-            </div>
-            <div className="context-meta">
-              <span>{contextEntity?.descriptor ?? 'Source artifact'}</span>
-              {contextEntity ? <span>Mass {contextEntity.mass}</span> : null}
-              {contextEntity ? <span>Chiral {computeChiralMass(contextEntity)}</span> : null}
-              {contextEntity ? <span>{contextEntity.git_status ?? 'clean'}</span> : null}
-              {hasExplanationTab ? <span>Explain {formatExplanationStatus(explanationStatus)}</span> : null}
-            </div>
-            {hasExplanationTab ? (
-              <div className="context-tabs">
-                <button
-                  className={`context-tab ${contextTab === 'code' ? 'is-active' : ''}`}
-                  onClick={() => setContextTab('code')}
-                  type="button"
-                >
-                  Code
-                </button>
-                <button
-                  className={`context-tab ${contextTab === 'explanation' ? 'is-active' : ''}`}
-                  onClick={() => setContextTab('explanation')}
-                  type="button"
-                >
-                  Explanation
-                </button>
-              </div>
-            ) : null}
-            {contextTab === 'explanation' && hasExplanationTab ? (
-              <div className="explanation-frame">
-                <div className={`explanation-status status-${explanationStatus}`}>
-                  {formatExplanationStatus(explanationStatus)}
-                </div>
-                {explanationError ? (
-                  <div className="explanation-placeholder is-error">{explanationError}</div>
-                ) : explanationText.trim().length > 0 ? (
-                  <div className="explanation-body">{explanationText}</div>
-                ) : (
-                  <div className="explanation-placeholder">
-                    {explanationStatus === 'pending'
-                      ? 'Awaiting Gemini explanation for this file.'
-                      : explanationStatus === 'streaming'
-                        ? 'Streaming explanation into the lattice.'
-                        : 'No explanation captured yet.'}
                   </div>
+                  <label className="control-field">
+                    <span className="control-label">Commit Message</span>
+                    <input
+                      className="control-input"
+                      onChange={(event) => setCommitMessageInput(event.target.value)}
+                      placeholder="feat: update engine logic"
+                      spellCheck={false}
+                      type="text"
+                      value={commitMessageInput}
+                    />
+                  </label>
+                  <label className="control-field checkbox-field">
+                    <input
+                      checked={shouldPushInput}
+                      onChange={(event) => setShouldPushInput(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span className="control-label">Push to remote after commit</span>
+                  </label>
+                  <div className="control-actions">
+                    <button
+                      className="control-button"
+                      disabled={isSavingControl || !commitMessageInput.trim()}
+                      onClick={() => { void handleCommit(); }}
+                      type="button"
+                    >
+                      Commit{shouldPushInput ? ' & Push' : ''}
+                    </button>
+                  </div>
+                </details>
+
+                <div className="control-note">
+                  Leave the repo path unchanged to keep the current overlay and only swap the operator prompt.
+                </div>
+                <div className="control-feedback">{controlMessage}</div>
+                <div className="control-metrics">
+                  <span>Action {operatorAction ?? 'maintain'}</span>
+                  <span>Target {operatorTargetPath ?? operatorTargetQuery ?? 'none'}</span>
+                  <span>Import {formatDuration(worldState.last_import_duration_ms)}</span>
+                </div>
+              </form>
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${visibleFileCount}/${fileNodes.length} visible`}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, visibility: !prev.visibility }))}
+              open={leftPanelSections.visibility}
+              title="Visible Files"
+            >
+              {fileNodes.length > 0 ? (
+                <>
+                  <div className="file-filter-toolbar">
+                    <input
+                      className="control-input file-filter-input"
+                      onChange={(event) => setFileFilterQuery(event.target.value)}
+                      placeholder="Search files..."
+                      spellCheck={false}
+                      type="text"
+                      value={fileFilterQuery}
+                    />
+                    <div className="file-filter-actions">
+                      <button
+                        className="file-filter-action"
+                        disabled={hiddenFilePaths.length === 0}
+                        onClick={() => setHiddenFilePaths([])}
+                        type="button"
+                      >
+                        Show All
+                      </button>
+                      <button
+                        className="file-filter-action"
+                        disabled={fileNodes.length === 0 || hiddenFilePaths.length === fileNodes.length}
+                        onClick={() =>
+                          setHiddenFilePaths(
+                            fileNodes
+                              .map((entity) => entity.path)
+                              .filter((path): path is string => path != null),
+                          )
+                        }
+                        type="button"
+                      >
+                        Hide All
+                      </button>
+                    </div>
+                    <div className="file-filter-summary">
+                      <span>{visibleFileCount} visible</span>
+                      <span>{Math.max(0, fileNodes.length - visibleFileCount)} hidden</span>
+                    </div>
+                  </div>
+
+                  <div className="file-filter-list">
+                    {filteredFileNodes.length > 0 ? (
+                      filteredFileNodes.map((entity) => {
+                        const filePath = entity.path ?? getEntityPath(entity);
+                        const isVisible = !hiddenFilePathSet.has(filePath);
+
+                        return (
+                          <label
+                            className={`file-filter-row ${isVisible ? 'is-visible' : 'is-hidden'}`}
+                            key={entity.id}
+                          >
+                            <input
+                              checked={isVisible}
+                              onChange={(event) => {
+                                const nextVisible = event.target.checked;
+                                setHiddenFilePaths((prev) => {
+                                  if (nextVisible) {
+                                    return prev.filter((path) => path !== filePath);
+                                  }
+
+                                  return prev.includes(filePath) ? prev : [...prev, filePath];
+                                });
+                              }}
+                              type="checkbox"
+                            />
+                            <span className="file-filter-copy">
+                              <span className="file-filter-name">{entity.name ?? filePath.split('/').at(-1) ?? filePath}</span>
+                              <span className="file-filter-path">{filePath}</span>
+                            </span>
+                          </label>
+                        );
+                      })
+                    ) : (
+                      <p className="panel-placeholder">No files match the current search.</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="panel-placeholder">No repository files are loaded yet.</p>
+              )}
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${worldState.active_tasks?.length ?? 0} tasks`}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, tasks: !prev.tasks }))}
+              open={leftPanelSections.tasks}
+              title="Task Pipeline"
+            >
+              {worldState.active_tasks && worldState.active_tasks.length > 0 ? (
+                <div className="protocol-card">
+                  <div className="protocol-card-title">Queued Work</div>
+                  <div className="task-stats">
+                    <span className="task-stat is-pending">{worldState.active_tasks.filter((t) => t.status === 'pending').length} pending</span>
+                    <span className="task-stat is-active">{worldState.active_tasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length} active</span>
+                    <span className="task-stat is-review">{worldState.active_tasks.filter((t) => t.status === 'awaiting_review').length} review</span>
+                    <span className="task-stat is-done">{worldState.active_tasks.filter((t) => t.status === 'done').length} done</span>
+                  </div>
+                  <div className="task-list">
+                    {worldState.active_tasks.map((task) => {
+                      const diffLines = shouldShowDiff(task)
+                        ? computeLineDiff(task.original_content ?? '', task.completed_content ?? '')
+                        : null;
+                      const validationBadges = [
+                        { label: 'Lint', value: task.validation?.lint },
+                        { label: 'Types', value: task.validation?.typecheck },
+                      ].filter((entry): entry is { label: string; value: TaskValidationResult } => entry.value != null);
+                      return (
+                        <div className={`task-row status-${task.status}`} key={task.id}>
+                          <span className="task-id">{task.id}</span>
+                          <span className="task-path">{task.target_path}</span>
+                          <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
+                          {validationBadges.length > 0 ? (
+                            <div className="task-validation-strip">
+                              {validationBadges.map((entry) => (
+                                <span
+                                  className={`task-validation-badge status-${entry.value.status}`}
+                                  key={`${task.id}-${entry.label}`}
+                                  title={entry.value.summary ?? `${entry.label} ${formatValidationStatus(entry.value.status)}`}
+                                >
+                                  {entry.label} {formatValidationStatus(entry.value.status)}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          {diffLines && diffLines.length > 0 ? (
+                            <TaskDiff lines={diffLines} />
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="panel-placeholder">No queued tasks are currently visible.</p>
+              )}
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${t2Agents.length} T2 · ${lmmAgents.length} LMM`}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, workforce: !prev.workforce }))}
+              open={leftPanelSections.workforce}
+              title="Hivemind Workforce"
+            >
+              <div className="protocol-card">
+                <div className="protocol-card-title">Active Roles</div>
+                <div className="workforce-list">
+                  {workforce.map((member) => {
+                    const promptValue = member.role === 'visionary'
+                      ? visionaryPromptInput
+                      : member.role === 'architect'
+                        ? architectPromptInput
+                        : criticPromptInput;
+                    const promptSource = member.role === 'visionary'
+                      ? worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''
+                      : member.role === 'architect'
+                        ? worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''
+                        : worldState.critic_prompt ?? operatorControl.critic_prompt ?? '';
+
+                    return (
+                      <div className={`workforce-row role-${member.role}`} key={member.role}>
+                        <span className={`role-swatch role-${member.role}`} />
+                        <span className="workforce-label">{member.label}</span>
+                        <span className="workforce-value">
+                          {member.agents[0]
+                            ? `online ${member.agents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}`
+                            : 'standby'}
+                        </span>
+                        <details className="agent-prompt-details">
+                          <summary className="agent-prompt-summary">
+                            {promptSource.length > 0 ? 'Directive set' : 'Set directive'}
+                          </summary>
+                          <textarea
+                            className="control-textarea agent-prompt-textarea"
+                            onChange={(event) => {
+                              if (member.role === 'visionary') setVisionaryPromptInput(event.target.value);
+                              else if (member.role === 'architect') setArchitectPromptInput(event.target.value);
+                              else setCriticPromptInput(event.target.value);
+                            }}
+                            placeholder={`Specific instruction for the ${member.label}...`}
+                            rows={3}
+                            spellCheck={false}
+                            value={promptValue}
+                          />
+                          <button
+                            className="control-button agent-prompt-button"
+                            disabled={isSavingControl}
+                            onClick={async () => {
+                              const supabase = supabaseRef.current;
+                              if (!supabase) {
+                                setControlMessage('Supabase keys missing; cannot set agent directive.');
+                                return;
+                              }
+                              try {
+                                const { error } = await supabase
+                                  .from('operator_controls')
+                                  .upsert(
+                                    stripUnsafeOperatorControlFields({
+                                      id: DEFAULT_OPERATOR_CONTROL.id,
+                                      repo_path: repoInput.trim(),
+                                      operator_prompt: directiveInput.trim(),
+                                      paused: isPaused,
+                                      automate: isAutomated,
+                                      visionary_prompt: member.role === 'visionary' ? promptValue.trim() : (worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''),
+                                      architect_prompt: member.role === 'architect' ? promptValue.trim() : (worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''),
+                                      critic_prompt: member.role === 'critic' ? promptValue.trim() : (worldState.critic_prompt ?? operatorControl.critic_prompt ?? ''),
+                                    }),
+                                    { onConflict: 'id' },
+                                  );
+                                if (error) throw error;
+                                setControlMessage(`${member.label} directive committed.`);
+                              } catch (error) {
+                                const message = error instanceof Error ? error.message : 'Unknown error';
+                                setControlMessage(`Directive failed: ${message}`);
+                              }
+                            }}
+                            type="button"
+                          >
+                            Commit Directive
+                          </button>
+                        </details>
+                      </div>
+                    );
+                  })}
+                  {lmmAgents.length > 0 && (
+                    <div className="workforce-row role-swarm">
+                      <span className="role-swatch role-swarm" />
+                      <span className="workforce-label">Swarm</span>
+                      <span className="workforce-value">
+                        {lmmAgents.length} automata {lmmAgents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="protocol-stats">
+                  <span>Genesis {genesisNodes.length}</span>
+                  <span>Asymmetry {asymmetryNodes.length}</span>
+                  <span>Fission {criticalMassNodes.length}</span>
+                </div>
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${visibleFileCount} visible files`}
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, tree: !prev.tree }))}
+              open={leftPanelSections.tree}
+              title="Overlay Tree"
+            >
+              <div className="git-tree">
+                {gitTree && visibleFileCount > 0 ? (
+                  <GitTreeItem
+                    activePathSet={activePathSet}
+                    depth={0}
+                    loadedPath={loadedFile?.path ?? null}
+                    node={gitTree}
+                    nodeStatesByPath={nodeStatesByPath}
+                  />
+                ) : (
+                  <p className="panel-placeholder">
+                    {fileNodes.length > 0
+                      ? 'All files are hidden by the current visibility filter.'
+                      : 'No Git structure overlay loaded yet.'}
+                  </p>
                 )}
               </div>
-            ) : contextEntity ? (
-              <CodeSyntaxPreview code={codePreview} />
-            ) : (
-              <div className="explanation-placeholder">No file content is loaded for this target yet.</div>
-            )}
-          </div>
-        ) : null}
+            </SidebarSection>
 
-        {selectedEntity ? (
-          <div className="panel-card inspect-panel" ref={inspectPanelRef}>
-            <div className="panel-card-header">
-              <div className="panel-card-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
-              <button
-                className="inspect-close"
-                onClick={() => setSelectedEntity(null)}
-                type="button"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="context-meta">
-              <span>{selectedEntity.type}</span>
-              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
-              <span>Mass {selectedEntity.mass}</span>
-              <span>Chiral {computeChiralMass(selectedEntity)}</span>
-              <span>{selectedEntity.git_status ?? 'clean'}</span>
-              <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
-            </div>
-            {selectedEntity.path ? (
-              <div className="inspect-actions">
-                <button
-                  className="inspect-action-btn"
-                  onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Send Architect
-                </button>
-                <button
-                  className="inspect-action-btn is-repair"
-                  onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Repair File
-                </button>
-                <button
-                  className="inspect-action-btn is-explain"
-                  onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Explain
-                </button>
-              </div>
-            ) : null}
-            {selectedEntity.content_preview || selectedEntity.content ? (
-              <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
-            ) : (
-              <div className="code-frame">
-                <div className="code-line">
-                  <span className="code-gutter">—</span>
-                  <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
+            <SidebarSection
+              meta={
+                contextTab === 'explanation' && hasExplanationTab
+                  ? formatExplanationStatus(explanationStatus)
+                  : getNodeStateLabel(contextNodeState ?? 'stable')
+              }
+              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, context: !prev.context }))}
+              open={leftPanelSections.context}
+              title="Spatial Context"
+            >
+              {contextEntity || hasExplanationTab ? (
+                <div className="panel-card context-panel">
+                  <div className="panel-card-header">
+                    <div className="panel-card-title">Spatial Context</div>
+                    <div className="context-badge">
+                      {contextTab === 'explanation' && hasExplanationTab
+                        ? formatExplanationStatus(explanationStatus)
+                        : getNodeStateLabel(contextNodeState ?? 'stable')}
+                    </div>
+                  </div>
+                  <div className="context-meta">
+                    <span>{contextEntity?.descriptor ?? 'Source artifact'}</span>
+                    {contextEntity ? <span>Mass {contextEntity.mass}</span> : null}
+                    {contextEntity ? <span>Chiral {computeChiralMass(contextEntity)}</span> : null}
+                    {contextEntity ? <span>{contextEntity.git_status ?? 'clean'}</span> : null}
+                    {hasExplanationTab ? <span>Explain {formatExplanationStatus(explanationStatus)}</span> : null}
+                  </div>
+                  {hasExplanationTab ? (
+                    <div className="context-tabs">
+                      <button
+                        className={`context-tab ${contextTab === 'code' ? 'is-active' : ''}`}
+                        onClick={() => setContextTab('code')}
+                        type="button"
+                      >
+                        Code
+                      </button>
+                      <button
+                        className={`context-tab ${contextTab === 'explanation' ? 'is-active' : ''}`}
+                        onClick={() => setContextTab('explanation')}
+                        type="button"
+                      >
+                        Explanation
+                      </button>
+                    </div>
+                  ) : null}
+                  {contextTab === 'explanation' && hasExplanationTab ? (
+                    <div className="explanation-frame">
+                      <div className={`explanation-status status-${explanationStatus}`}>
+                        {formatExplanationStatus(explanationStatus)}
+                      </div>
+                      {explanationError ? (
+                        <div className="explanation-placeholder is-error">{explanationError}</div>
+                      ) : explanationText.trim().length > 0 ? (
+                        <div className="explanation-body">{explanationText}</div>
+                      ) : (
+                        <div className="explanation-placeholder">
+                          {explanationStatus === 'pending'
+                            ? 'Awaiting Gemini explanation for this file.'
+                            : explanationStatus === 'streaming'
+                              ? 'Streaming explanation into the lattice.'
+                              : 'No explanation captured yet.'}
+                        </div>
+                      )}
+                    </div>
+                  ) : contextEntity ? (
+                    <CodeSyntaxPreview code={codePreview} />
+                  ) : (
+                    <div className="explanation-placeholder">No file content is loaded for this target yet.</div>
+                  )}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="panel-placeholder">No spatial context is available for the current focus.</p>
+              )}
+            </SidebarSection>
+
+            {selectedEntity ? (
+              <SidebarSection
+                meta={selectedEntity.type}
+                onToggle={() => setLeftPanelSections((prev) => ({ ...prev, inspect: !prev.inspect }))}
+                open={leftPanelSections.inspect}
+                title="Inspector"
+              >
+                <div className="panel-card inspect-panel" ref={inspectPanelRef}>
+                  <div className="panel-card-header">
+                    <div className="panel-card-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
+                    <button
+                      className="inspect-close"
+                      onClick={() => setSelectedEntity(null)}
+                      type="button"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="context-meta">
+                    <span>{selectedEntity.type}</span>
+                    <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
+                    <span>Mass {selectedEntity.mass}</span>
+                    <span>Chiral {computeChiralMass(selectedEntity)}</span>
+                    <span>{selectedEntity.git_status ?? 'clean'}</span>
+                    <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
+                  </div>
+                  {selectedEntity.path ? (
+                    <div className="inspect-actions">
+                      <button
+                        className="inspect-action-btn"
+                        onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
+                        type="button"
+                      >
+                        Send Architect
+                      </button>
+                      <button
+                        className="inspect-action-btn is-repair"
+                        onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
+                        type="button"
+                      >
+                        Repair File
+                      </button>
+                      <button
+                        className="inspect-action-btn is-explain"
+                        onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
+                        type="button"
+                      >
+                        Explain
+                      </button>
+                    </div>
+                  ) : null}
+                  {selectedEntity.content_preview || selectedEntity.content ? (
+                    <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
+                  ) : (
+                    <div className="code-frame">
+                      <div className="code-line">
+                        <span className="code-gutter">—</span>
+                        <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </SidebarSection>
+            ) : null}
           </div>
-        ) : null}
-          </>
         ) : null}
       </aside>
 
@@ -2484,13 +2985,15 @@ function App() {
           </button>
           <button
             className="zoom-button"
-            onClick={() => setCamera(DEFAULT_CAMERA)}
+            onClick={() => setCamera({ ...DEFAULT_CAMERA })}
             title="Reset view"
             type="button"
           >
             ⌂
           </button>
           <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
+          <span className="zoom-level">Rot {formatRotation(camera.rotation)}</span>
+          <span className="view-hint">Drag orbit · Shift drag pan</span>
         </div>
 
         {selectedEntity && inspectPopupPosition ? (
@@ -2573,7 +3076,7 @@ function App() {
           {rightPanelOpen ? <ChevronRight size={16} /> : <PanelRight size={16} />}
         </button>
         {rightPanelOpen ? (
-          <>
+          <div className="panel-stack">
             <div className="panel-header">
               <div className="panel-title-wrap">
                 <GitBranch size={14} strokeWidth={1.85} />
@@ -2582,119 +3085,152 @@ function App() {
               <span className="panel-subtitle">{mode === 'live' ? 'live feed' : 'preview feed'}</span>
             </div>
 
-        <div className={`cognition-status role-${primaryRole}`}>
-          <span className={`cursor-pulse role-${primaryRole}`} />
-          <span>
-            {loadedFile
-              ? `${getAgentRoleLabel(primaryRole).toLowerCase()} reading ${loadedFile.name ?? loadedFile.path ?? 'node'}`
-              : activeStructure
-                ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
-                : 'awaiting structure lock'}
-          </span>
-        </div>
+            <SidebarSection
+              meta={mode === 'live' ? 'live' : 'preview'}
+              onToggle={() => setRightPanelSections((prev) => ({ ...prev, status: !prev.status }))}
+              open={rightPanelSections.status}
+              title="Live Status"
+            >
+              <div className={`cognition-status role-${primaryRole}`}>
+                <span className={`cursor-pulse role-${primaryRole}`} />
+                <span>
+                  {loadedFile
+                    ? `${getAgentRoleLabel(primaryRole).toLowerCase()} reading ${loadedFile.name ?? loadedFile.path ?? 'node'}`
+                    : activeStructure
+                      ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
+                      : 'awaiting structure lock'}
+                </span>
+              </div>
 
-        {worldState.agent_activities && worldState.agent_activities.length > 0 ? (
-          <div className="activity-panel">
-            <div className="activity-panel-title">Workforce Activity</div>
-            <div className="activity-list">
-              {worldState.agent_activities.map((activity) => (
-                <div className={`activity-row status-${activity.status}`} key={activity.agent_id}>
-                  <span className={`activity-swatch ${getActivitySwatchClass(activity.status)}`} />
-                  <span className="activity-id">{activity.agent_id.replace('agent-', '')}</span>
-                  <span className="activity-status">{formatActivityStatus(activity.status)}</span>
-                  {activity.target_path ? (
-                    <span className="activity-target">{activity.target_path}</span>
-                  ) : null}
+              <div className="cognition-footer">
+                <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
+                <div>Verified: {verifiedNodes.length}</div>
+                <div>Critical Mass: {criticalMassNodes.length}</div>
+                <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
+                <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
+                <div>Queue: {worldState.queue_depth ?? 0}</div>
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${worldState.agent_activities?.length ?? 0} agents`}
+              onToggle={() => setRightPanelSections((prev) => ({ ...prev, activity: !prev.activity }))}
+              open={rightPanelSections.activity}
+              title="Workforce Activity"
+            >
+              {worldState.agent_activities && worldState.agent_activities.length > 0 ? (
+                <div className="activity-panel">
+                  <div className="activity-list">
+                    {worldState.agent_activities.map((activity) => (
+                      <div className={`activity-row status-${activity.status}`} key={activity.agent_id}>
+                        <span className={`activity-swatch ${getActivitySwatchClass(activity.status)}`} />
+                        <span className="activity-id">{activity.agent_id.replace('agent-', '')}</span>
+                        <span className="activity-status">{formatActivityStatus(activity.status)}</span>
+                        {activity.target_path ? (
+                          <span className="activity-target">{activity.target_path}</span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
+              ) : (
+                <p className="panel-placeholder">No activity events are streaming yet.</p>
+              )}
+            </SidebarSection>
 
-        <div className="directive-strip">
-          <span className="directive-label">Operator Prompt</span>
-          <span className="directive-value">{activeDirective}</span>
-        </div>
+            <SidebarSection
+              meta={formatControlStatus(controlStatus)}
+              onToggle={() => setRightPanelSections((prev) => ({ ...prev, directive: !prev.directive }))}
+              open={rightPanelSections.directive}
+              title="Directive & Laws"
+            >
+              <div className="directive-strip">
+                <span className="directive-label">Operator Prompt</span>
+                <span className="directive-value">{activeDirective}</span>
+              </div>
 
-        <div className="laws-strip">
-          {HIVEMIND_LAWS.slice(0, 3).map((law, index) => (
-            <div className="law-chip" key={`law-${index}`}>
-              L{index + 1}: {law}
-            </div>
-          ))}
-        </div>
+              <div className="laws-strip">
+                {HIVEMIND_LAWS.slice(0, 3).map((law, index) => (
+                  <div className="law-chip" key={`law-${index}`}>
+                    L{index + 1}: {law}
+                  </div>
+                ))}
+              </div>
+            </SidebarSection>
 
-        <div className="cognition-log">
-          {logEntries.length > 0 ? (
-            logEntries.map((entry) => (
-              <div className={`log-entry log-${entry.kind}`} key={entry.id}>
-                <div className="log-meta">
-                  <span>{entry.timestamp}</span>
-                  <span>T+{entry.tick}</span>
+            <SidebarSection
+              meta={`${logEntries.length} events`}
+              onToggle={() => setRightPanelSections((prev) => ({ ...prev, log: !prev.log }))}
+              open={rightPanelSections.log}
+              title="Cognition Log"
+            >
+              <div className="cognition-log">
+                {logEntries.length > 0 ? (
+                  logEntries.map((entry) => (
+                    <div className={`log-entry log-${entry.kind}`} key={entry.id}>
+                      <div className="log-meta">
+                        <span>{entry.timestamp}</span>
+                        <span>T+{entry.tick}</span>
+                      </div>
+                      <div className="log-message">{entry.message}</div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
+                )}
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              meta={`${verifiedNodes.length} verified`}
+              onToggle={() => setRightPanelSections((prev) => ({ ...prev, legend: !prev.legend }))}
+              open={rightPanelSections.legend}
+              title="Hivemind Taxonomy"
+            >
+              <div className="legend-section">
+                <div className="legend-heading">Agents</div>
+                <div className="legend-list">
+                  <div className="legend-row">
+                    <span className="legend-swatch is-visionary" />
+                    <span>Visionary</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-architect" />
+                    <span>Architect</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-critic" />
+                    <span>Critic</span>
+                  </div>
                 </div>
-                <div className="log-message">{entry.message}</div>
               </div>
-            ))
-          ) : (
-            <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
-          )}
-        </div>
-
-        <div className="cognition-footer">
-          <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
-          <div>Verified: {verifiedNodes.length}</div>
-          <div>Critical Mass: {criticalMassNodes.length}</div>
-          <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
-          <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
-          <div>Queue: {worldState.queue_depth ?? 0}</div>
-        </div>
-
-        <div className="panel-card legend-panel">
-          <div className="panel-card-title">Hivemind Taxonomy</div>
-          <div className="legend-section">
-            <div className="legend-heading">Agents</div>
-            <div className="legend-list">
-              <div className="legend-row">
-                <span className="legend-swatch is-visionary" />
-                <span>Visionary</span>
+              <div className="legend-section">
+                <div className="legend-heading">Node States</div>
+                <div className="legend-list">
+                  <div className="legend-row">
+                    <span className="legend-swatch is-task" />
+                    <span>Genesis Task</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-progress" />
+                    <span>Locked Build</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-asymmetry" />
+                    <span>Asymmetry / Error</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-stable" />
+                    <span>Stable Code</span>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-swatch is-verified" />
+                    <span>Verified</span>
+                  </div>
+                </div>
               </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-architect" />
-                <span>Architect</span>
-              </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-critic" />
-                <span>Critic</span>
-              </div>
-            </div>
+            </SidebarSection>
           </div>
-          <div className="legend-section">
-            <div className="legend-heading">Node States</div>
-            <div className="legend-list">
-              <div className="legend-row">
-                <span className="legend-swatch is-task" />
-                <span>Genesis Task</span>
-              </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-progress" />
-                <span>Locked Build</span>
-              </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-asymmetry" />
-                <span>Asymmetry / Error</span>
-              </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-stable" />
-                <span>Stable Code</span>
-              </div>
-              <div className="legend-row">
-                <span className="legend-swatch is-verified" />
-                <span>Verified</span>
-              </div>
-            </div>
-          </div>
-        </div>
-          </>
         ) : null}
       </aside>
     </main>

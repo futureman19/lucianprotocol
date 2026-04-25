@@ -112,6 +112,10 @@ export const EntitySchema = z.object({
   tether_to: z.array(z.string()).nullable().optional(),
   tether_from: z.array(z.string()).nullable().optional(),
   tether_broken: z.boolean().nullable().optional(),
+  lmm_rule: z.string().min(1).nullable().optional(),
+  cargo: z.number().int().nonnegative().nullable().optional(),
+  birth_tick: z.number().int().nonnegative().nullable().optional(),
+  state_register: z.number().int().min(0).max(255).nullable().optional(),
 });
 
 export type Entity = z.input<typeof EntitySchema>;

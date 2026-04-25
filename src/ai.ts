@@ -9,6 +9,36 @@ import {
 
 const GEMINI_API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MAX_CALLS_PER_MINUTE = 60;
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60_000;
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
+  if (!retryAfterHeader) {
+    return null;
+  }
+
+  const seconds = Number.parseInt(retryAfterHeader, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const timestamp = Date.parse(retryAfterHeader);
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return Math.max(0, timestamp - Date.now());
+}
 
 const ARCHITECT_SYSTEM_PROMPT = [
   'You are an Architect agent in the Lux Protocol Hivemind.',
@@ -129,13 +159,22 @@ const GeminiCommitMessageSchema = z.object({
 export class GeminiNavigator {
   private readonly warnedConfiguration = { value: false };
   private readonly warnedRequestFailure = { value: false };
-  private readonly warnedRateLimit = { value: false };
+  private readonly warnedLocalRateLimit = { value: false };
+  private readonly warnedProviderRateLimit = { value: false };
   private readonly callTimestamps: number[] = [];
+  private rateLimitCooldownUntilMs = 0;
 
   public constructor(
     private readonly apiKey = process.env.GEMINI_API_KEY,
     private readonly model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
-    private readonly maxCallsPerMinute = 60,
+    private readonly maxCallsPerMinute = parsePositiveIntEnv(
+      'GEMINI_MAX_CALLS_PER_MINUTE',
+      DEFAULT_MAX_CALLS_PER_MINUTE,
+    ),
+    private readonly rateLimitCooldownMs = parsePositiveIntEnv(
+      'GEMINI_RATE_LIMIT_COOLDOWN_MS',
+      DEFAULT_RATE_LIMIT_COOLDOWN_MS,
+    ),
   ) {}
 
   public isConfigured(): boolean {
@@ -155,6 +194,15 @@ export class GeminiNavigator {
     this.callTimestamps.push(Date.now());
   }
 
+  private isProviderCoolingDown(): boolean {
+    return Date.now() < this.rateLimitCooldownUntilMs;
+  }
+
+  private applyProviderCooldown(retryAfterHeader: string | null): void {
+    const cooldownMs = parseRetryAfterMs(retryAfterHeader) ?? this.rateLimitCooldownMs;
+    this.rateLimitCooldownUntilMs = Date.now() + cooldownMs;
+  }
+
   private async callGemini(
     systemPrompt: string,
     userContent: unknown,
@@ -171,16 +219,32 @@ export class GeminiNavigator {
     }
 
     if (this.isRateLimited()) {
-      if (!this.warnedRateLimit.value) {
+      if (!this.warnedLocalRateLimit.value) {
         console.warn(
           `[ai] Rate limit reached (${this.maxCallsPerMinute} calls/minute). Agent will wait until the window resets.`,
         );
-        this.warnedRateLimit.value = true;
+        this.warnedLocalRateLimit.value = true;
       }
       return null;
     }
 
-    this.warnedRateLimit.value = false;
+    this.warnedLocalRateLimit.value = false;
+
+    if (this.isProviderCoolingDown()) {
+      if (!this.warnedProviderRateLimit.value) {
+        const retryInSeconds = Math.max(
+          1,
+          Math.ceil((this.rateLimitCooldownUntilMs - Date.now()) / 1000),
+        );
+        console.warn(
+          `[ai] Gemini provider rate limit active; agent will wait ${retryInSeconds}s before retrying.`,
+        );
+        this.warnedProviderRateLimit.value = true;
+      }
+      return null;
+    }
+
+    this.warnedProviderRateLimit.value = false;
     this.recordCall();
 
     try {
@@ -222,9 +286,25 @@ export class GeminiNavigator {
       });
 
       if (!response.ok) {
+        if (response.status === 429) {
+          this.applyProviderCooldown(response.headers.get('retry-after'));
+          const retryInSeconds = Math.max(
+            1,
+            Math.ceil((this.rateLimitCooldownUntilMs - Date.now()) / 1000),
+          );
+          if (!this.warnedProviderRateLimit.value) {
+            console.warn(
+              `[ai] Gemini provider returned 429; agent will back off for ${retryInSeconds}s.`,
+            );
+            this.warnedProviderRateLimit.value = true;
+          }
+          return null;
+        }
+
         throw new Error(`Gemini request failed with status ${response.status}`);
       }
 
+      this.warnedRequestFailure.value = false;
       const rawResponse = await response.json();
       const parsedResponse = GeminiResponseSchema.parse(rawResponse);
       const text = parsedResponse.candidates

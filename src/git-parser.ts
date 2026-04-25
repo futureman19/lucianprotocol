@@ -9,10 +9,11 @@ import { simpleGit, type FileStatusResult, type StatusResult } from 'simple-git'
 import { z } from 'zod';
 
 import { DEFAULT_SEED, GRID_HEIGHT, GRID_WIDTH, createInitialEntities } from './seed';
-import { createServiceSupabaseClient } from './supabase';
+import { createServiceSupabaseClient, upsertEntitiesWithSchemaFallback } from './supabase';
 import { describeStructureNode, getExtension, isBinaryExtension, mapMassToPath } from './mass-mapper';
 import { EntitySchema, type Entity, type GitStatus, type Position } from './types';
 import { buildTetherMap } from './import-graph';
+import { computeGraphLayout } from './graph-layout';
 
 const OVERLAY_DIRECTORY = path.join(process.cwd(), '.lux-state');
 const OVERLAY_FILE = path.join(OVERLAY_DIRECTORY, 'repository-overlay.json');
@@ -67,18 +68,6 @@ interface RepositoryNode {
   tetherTo: string[] | null;
   tetherFrom: string[] | null;
   tetherBroken: boolean | null;
-}
-
-function toKey(position: Position): string {
-  return `${position.x},${position.y}`;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function stableHash(value: string): number {
-  return Number.parseInt(createHash('sha1').update(value).digest('hex').slice(0, 8), 16);
 }
 
 function sanitizeForJson(value: string): string {
@@ -309,23 +298,32 @@ function collectReservedPositions(seed: string): Set<string> {
   const reserved = new Set<string>();
 
   for (const entity of createInitialEntities(seed)) {
-    reserved.add(toKey(entity));
+    reserved.add(`${entity.x},${entity.y},0`);
   }
 
   return reserved;
 }
 
+export interface LayoutBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 export function findOpenPosition(
   preferredX: number,
   preferredY: number,
+  z: number,
   occupied: Set<string>,
   reserved: Set<string>,
+  bounds?: LayoutBounds,
 ): Position {
   for (let radius = 0; radius <= GRID_WIDTH + GRID_HEIGHT; radius += 1) {
-    const minY = Math.max(0, preferredY - radius);
-    const maxY = Math.min(GRID_HEIGHT - 1, preferredY + radius);
-    const minX = Math.max(0, preferredX - radius);
-    const maxX = Math.min(GRID_WIDTH - 1, preferredX + radius);
+    const minY = Math.max(bounds?.minY ?? 0, preferredY - radius);
+    const maxY = Math.min(bounds?.maxY ?? GRID_HEIGHT - 1, preferredY + radius);
+    const minX = Math.max(bounds?.minX ?? 0, preferredX - radius);
+    const maxX = Math.min(bounds?.maxX ?? GRID_WIDTH - 1, preferredX + radius);
 
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
@@ -334,39 +332,51 @@ export function findOpenPosition(
           continue;
         }
 
-        const key = `${x},${y}`;
+        const key = `${x},${y},${z}`;
         if (occupied.has(key) || reserved.has(key)) {
           continue;
         }
 
-        return { x, y };
+        return { x, y, z };
       }
     }
   }
 
-  throw new Error('Repository lattice exceeds the available 50x50 grid.');
+  throw new Error(
+    bounds
+      ? `Repository lattice exceeds bounds (${bounds.minX}-${bounds.maxX}, ${bounds.minY}-${bounds.maxY}).`
+      : `Repository lattice exceeds the available 50x50 grid at layer z=${z}.`,
+  );
 }
 
 function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, Position> {
-  const coordinates = new Map<string, Position>();
-  const occupied = new Set<string>();
   const reserved = collectReservedPositions(seed);
+  const layoutInputs = nodes.map((node) => ({
+    path: node.path,
+    type: node.type,
+    name: node.name,
+    extension: node.extension,
+    tetherTo: node.tetherTo,
+    tetherFrom: node.tetherFrom,
+    depth: node.depth,
+  }));
 
-  const rootPosition = findOpenPosition(0, 0, occupied, reserved);
-  coordinates.set(ROOT_NODE_PATH, rootPosition);
-  occupied.add(toKey(rootPosition));
+  const coordinates = computeGraphLayout(layoutInputs, seed);
 
-  for (const node of nodes.filter((candidate) => candidate.path !== ROOT_NODE_PATH)) {
-    const preferredY = clamp(
-      node.type === 'directory' ? (node.depth * 5) : ((node.depth * 5) + 2),
-      0,
-      GRID_HEIGHT - 1,
-    );
-    const preferredX = stableHash(`${node.type}:${node.path}`) % GRID_WIDTH;
-    const position = findOpenPosition(preferredX, preferredY, occupied, reserved);
-
-    coordinates.set(node.path, position);
-    occupied.add(toKey(position));
+  // Ensure reserved positions are not overwritten (shouldn't happen due to margins,
+  // but guard just in case)
+  for (const [path, pos] of coordinates) {
+    if (reserved.has(`${pos.x},${pos.y},${pos.z ?? 0}`)) {
+      // Re-resolve with occupied set including reserved
+      const occupied = new Set<string>();
+      for (const [, otherPos] of coordinates) {
+        if (otherPos !== pos) {
+          occupied.add(`${otherPos.x},${otherPos.y},${otherPos.z ?? 0}`);
+        }
+      }
+      const resolved = findOpenPosition(pos.x, pos.y, pos.z ?? 0, occupied, reserved);
+      coordinates.set(path, resolved);
+    }
   }
 
   return coordinates;
@@ -657,11 +667,8 @@ export async function syncRepositoryEntitiesToSupabase(entities: Entity[]): Prom
     return;
   }
 
-  const { error: upsertError } = await supabase
-    .from('entities')
-    .upsert(entities, { onConflict: 'id' });
-
-  if (upsertError) {
-    throw upsertError;
+  const { usedFallback } = await upsertEntitiesWithSchemaFallback(supabase, entities);
+  if (usedFallback) {
+    console.warn('[supabase] Repository entity sync retried without optional columns.');
   }
 }

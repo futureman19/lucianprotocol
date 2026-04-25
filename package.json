@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "engine": "tsx src/engine.ts",
+    "bridge": "tsx src/bridge.ts",
     "import-git": "tsx src/import-git.ts",
     "test": "node --import tsx --test src/engine.test.ts",
     "lint": "eslint .",

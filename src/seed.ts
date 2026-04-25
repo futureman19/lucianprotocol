@@ -1,6 +1,7 @@
 import seedrandom from 'seedrandom';
 
 import type { AgentRole, Direction, Entity, Position } from './types';
+import { createLMMEntity } from './lmm/spawn.js';
 
 export const GRID_WIDTH = 50;
 export const GRID_HEIGHT = 50;
@@ -147,6 +148,36 @@ export function createInitialEntities(seed: string): Entity[] {
       `${REQUIRED_COLLISION_WALL.x},${REQUIRED_COLLISION_WALL.y}`,
     ],
   );
+
+  // Spawn Tier 1 Automata (LMM swarm)
+  const lmmRoles: Array<'scout' | 'worker' | 'builder' | 'patrol' | 'recycler'> = [
+    'scout', 'scout', 'scout',
+    'worker', 'worker', 'worker', 'worker',
+    'builder', 'builder',
+    'patrol', 'patrol',
+    'recycler', 'recycler', 'recycler',
+  ];
+  let lmmIndex = 0;
+  for (const role of lmmRoles) {
+    // Place in a small deterministic ring around the start
+    const angle = (lmmIndex * 2.4) % (2 * Math.PI);
+    const radius = 2 + Math.floor((lmmIndex % 3));
+    const lx = Math.max(0, Math.min(GRID_WIDTH - 1, Math.round(START_POSITION.x + Math.cos(angle) * radius)));
+    const ly = Math.max(0, Math.min(GRID_HEIGHT - 1, Math.round(START_POSITION.y + Math.sin(angle) * radius)));
+    const key = `${lx},${ly}`;
+    if (!occupied.has(key)) {
+      occupied.add(key);
+      entities.push(createLMMEntity(
+        `lmm-${role}-${String(lmmIndex + 1).padStart(2, '0')}`,
+        lx,
+        ly,
+        role,
+        1,
+        0,
+      ));
+    }
+    lmmIndex += 1;
+  }
 
   while (entities.filter((entity) => entity.type === 'wall').length < WALL_COUNT) {
     const candidate: Position = {

@@ -1,13 +1,10 @@
 import type { Entity } from '../src/types';
 import type { IsoLayout, ScreenPoint } from './iso';
 import { toScreen, createPrismProjection, traceFace } from './iso';
-import { getBuildingStyle, getDroneStyle, getNodeStatePalette, getFileFootprint, getBuildingHeight } from './building-styles';
-import { ParticleSystem } from './particles';
+import { getBuildingStyle, getDroneStyle, getNodeStatePalette } from './building-styles';
 import {
   getPisanoWave,
-  getPisanoOscillation,
   getSyncState,
-  getFibonacciMass,
   getFibonacciTier,
   getChirality,
   getChiralityTilt,
@@ -74,7 +71,7 @@ function drawWindow(
 }
 
 // Draw windows on building faces
-function drawBuildingWindows(
+function _drawBuildingWindows(
   context: CanvasRenderingContext2D,
   projection: ReturnType<typeof createPrismProjection>,
   style: ReturnType<typeof getBuildingStyle>,
@@ -82,7 +79,7 @@ function drawBuildingWindows(
   phase: number,
   entity: Entity,
 ): void {
-  const { left, right, top } = projection;
+  const { left, right } = projection;
 
   // Skip windows for tiny buildings
   if (height < 1.2) return;
@@ -253,7 +250,6 @@ export function drawBuilding(
   const tenSumBrightness = 0.5 + (getPisanoWave(phase + fibMass) * 0.5);
   
   // Pisano wave for window lighting (60-step rhythm, not binary)
-  const pisanoLight = getPisanoWave(phase + fibTier);
   const syncState = getSyncState(phase + fibTier);
   
   // Fibonacci-based footprint and height
