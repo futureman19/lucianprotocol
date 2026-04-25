@@ -1091,6 +1091,7 @@ function App() {
   const selectedEntityRef = useRef<Entity | null>(null);
   const cameraRef = useRef<Camera>(DEFAULT_CAMERA);
   const inspectPanelRef = useRef<HTMLDivElement | null>(null);
+  const zoomAnimationRef = useRef<{ frame: number | null; target: Camera | null }>({ frame: null, target: null });
 
   const agents = entities.filter((entity) => entity.type === 'agent');
   const primaryAgent = agents[0] ?? null;
@@ -2042,6 +2043,11 @@ function App() {
         const nearest = findNearestVisibleStructure(sx, sy, layout, 1.4);
         setSelectedEntity(nearest);
         canvas.style.cursor = nearest ? 'pointer' : 'default';
+        // Auto-open left panel and focus on inspect/context when clicking a building
+        if (nearest) {
+          setLeftPanelOpen(true);
+          setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
+        }
         return;
       }
 
@@ -2049,16 +2055,87 @@ function App() {
       canvas.style.cursor = 'default';
     };
 
+    const handleDoubleClick = (event: MouseEvent): void => {
+      const { sx, sy } = resolveCanvasPoint(event);
+      const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
+      const nearest = findNearestVisibleStructure(sx, sy, layout, 1.4);
+      
+      if (!nearest) return;
+      
+      // Select the entity
+      setSelectedEntity(nearest);
+      
+      // Calculate target camera to zoom in on the building
+      const targetZoom = 2.5;
+      const entityScreen = toScreen(nearest.x + 0.5, nearest.y + 0.5, 0, layout);
+      
+      // Calculate pan to center the building
+      const targetPanX = viewport.width / 2 - entityScreen.sx * targetZoom;
+      const targetPanY = viewport.height / 2 - entityScreen.sy * targetZoom;
+      
+      const targetCamera: Camera = {
+        panX: targetPanX,
+        panY: targetPanY,
+        rotation: cameraRef.current.rotation,
+        zoom: targetZoom,
+      };
+      
+      // Start smooth zoom animation
+      const startCamera = { ...cameraRef.current };
+      const startTime = performance.now();
+      const duration = 600;
+      
+      const animate = (time: number): void => {
+        const elapsed = time - startTime;
+        const t = Math.min(1, elapsed / duration);
+        // Ease-out cubic
+        const ease = 1 - Math.pow(1 - t, 3);
+        
+        const nextCamera: Camera = {
+          panX: startCamera.panX + (targetCamera.panX - startCamera.panX) * ease,
+          panY: startCamera.panY + (targetCamera.panY - startCamera.panY) * ease,
+          rotation: startCamera.rotation,
+          zoom: startCamera.zoom + (targetCamera.zoom - startCamera.zoom) * ease,
+        };
+        
+        setCamera(nextCamera);
+        
+        if (t < 1) {
+          zoomAnimationRef.current.frame = requestAnimationFrame(animate);
+        } else {
+          zoomAnimationRef.current.frame = null;
+          zoomAnimationRef.current.target = null;
+        }
+      };
+      
+      // Cancel any existing animation
+      if (zoomAnimationRef.current.frame) {
+        cancelAnimationFrame(zoomAnimationRef.current.frame);
+      }
+      zoomAnimationRef.current.target = targetCamera;
+      zoomAnimationRef.current.frame = requestAnimationFrame(animate);
+      
+      // Auto-open left panel and focus on inspect section
+      setLeftPanelOpen(true);
+      setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
+    };
+
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('dblclick', handleDoubleClick);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
     return () => {
       canvas.removeEventListener('wheel', handleWheel);
       canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('dblclick', handleDoubleClick);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      const frame = zoomAnimationRef.current.frame;
+      if (frame) {
+        cancelAnimationFrame(frame);
+      }
     };
   }, [viewport]);
 
