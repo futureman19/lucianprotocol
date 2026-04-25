@@ -4,7 +4,6 @@ import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, Pane
 import {
   HIVEMIND_LAWS,
   computeChiralMass,
-  countEntityLines,
   getAgentRole,
   getAgentRoleLabel,
   getNodeStateLabel,
@@ -30,11 +29,9 @@ import { computeLineDiff, type DiffLine } from './diff';
 import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
 import { QueenHUD } from './QueenHUD';
-import { drawBuilding } from './building-render';
-import { getFileFootprint } from './file-colors';
-import { getBuildingHeight } from './file-colors';
+import { drawBuilding } from './simcity-building-render';
+import { getUnifiedFootprint as getFileFootprint, getUnifiedHeight as getPrismHeight } from './city-layout';
 import { drawTethers } from './tether-render';
-import { drawAdaptiveRoads, drawDistrictLabels } from './roads';
 import {
   createIsoLayout,
   DEFAULT_CAMERA,
@@ -43,7 +40,7 @@ import {
   type Camera,
   type IsoLayout,
 } from './iso';
-import { createTrafficSystem, drawRoadsAndTraffic, drawDistricts, drawGroundPlane, spawnCars, updateCars } from './traffic';
+import { createTrafficSystem, drawRoadsAndTraffic, drawGroundPlane, spawnCars, updateCars } from './traffic';
 import { computeCityLayout } from './city-layout';
 
 interface Viewport {
@@ -103,6 +100,15 @@ const DEFAULT_OPERATOR_CONTROL: OperatorControl = {
 };
 
 const WORKFORCE_ROLES: readonly HivemindAgentRole[] = ['visionary', 'architect', 'critic'];
+const AUTO_HIDDEN_PATH_PREFIXES = [
+  '.venv/',
+  '.venv-pdf/',
+  'node_modules/',
+  'dist/',
+  'codex-runlogs/',
+  '.codex-runlogs/',
+  '.lux-state/',
+] as const;
 
 function entityMapFromList(entities: Entity[]): Map<string, Entity> {
   return new Map(entities.map((entity) => [entity.id, entity]));
@@ -112,27 +118,7 @@ function createEntityList(map: Map<string, Entity>): Entity[] {
   return Array.from(map.values()).sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function getPrismHeight(entity: Entity): number {
-  if (entity.type === 'directory') {
-    return getBuildingHeight(entity, 0.5);
-  }
 
-  if (entity.type === 'wall') {
-    return getBuildingHeight(entity, 1.0);
-  }
-
-  if (entity.type === 'goal') {
-    return 0.2;
-  }
-
-  if (entity.type === 'file') {
-    const lineLift = Math.min(4, Math.floor(countEntityLines(entity) / 24));
-    const base = Math.min(6, Math.max(0.8, entity.mass * 0.5 + lineLift));
-    return getBuildingHeight(entity, base);
-  }
-
-  return getBuildingHeight(entity, 0.7);
-}
 
 function getAgentPalette(role: HivemindAgentRole): AgentPalette {
   if (role === 'visionary') {
@@ -156,26 +142,59 @@ function _withAlpha(hexColor: string, alpha: number): string {
 
 // getFileFootprint now imported from ./file-colors
 
-function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport): void {
+function shouldAutoHidePath(path: string): boolean {
+  return AUTO_HIDDEN_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport, phase: number): void {
+  const daylight = 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
+  const night = 1 - daylight;
   const background = context.createLinearGradient(0, 0, 0, viewport.height);
-  background.addColorStop(0, '#020409');
-  background.addColorStop(0.55, '#05070d');
-  background.addColorStop(1, '#010204');
+  background.addColorStop(0, `rgba(${Math.round(22 + (76 * daylight))}, ${Math.round(34 + (116 * daylight))}, ${Math.round(64 + (129 * daylight))}, 1)`);
+  background.addColorStop(0.55, `rgba(${Math.round(18 + (87 * daylight))}, ${Math.round(28 + (112 * daylight))}, ${Math.round(46 + (96 * daylight))}, 1)`);
+  background.addColorStop(1, `rgba(${Math.round(10 + (58 * daylight))}, ${Math.round(16 + (73 * daylight))}, ${Math.round(24 + (51 * daylight))}, 1)`);
   context.fillStyle = background;
   context.fillRect(0, 0, viewport.width, viewport.height);
 
+  const sunX = viewport.width * (0.2 + ((phase / 60) * 0.6));
+  const sunY = viewport.height * (0.12 + (night * 0.08));
   const glow = context.createRadialGradient(
-    viewport.width * 0.55,
-    viewport.height * 0.08,
+    sunX,
+    sunY,
     12,
-    viewport.width * 0.55,
-    viewport.height * 0.08,
-    viewport.width * 0.75,
+    sunX,
+    sunY,
+    viewport.width * 0.3,
   );
-  glow.addColorStop(0, 'rgba(44, 207, 255, 0.12)');
-  glow.addColorStop(1, 'rgba(44, 207, 255, 0)');
+  glow.addColorStop(0, `rgba(255, ${Math.round(220 + (20 * daylight))}, ${Math.round(165 + (70 * daylight))}, ${0.05 + (daylight * 0.18)})`);
+  glow.addColorStop(1, 'rgba(255, 214, 170, 0)');
   context.fillStyle = glow;
   context.fillRect(0, 0, viewport.width, viewport.height);
+
+  if (night > 0.45) {
+    context.save();
+    context.fillStyle = `rgba(255, 245, 220, ${night * 0.45})`;
+    for (let index = 0; index < 24; index += 1) {
+      const x = (viewport.width * (((index * 37) % 100) / 100));
+      const y = 20 + (((index * 53) % 120));
+      context.fillRect(x, y, 1.5, 1.5);
+    }
+    context.restore();
+  }
 }
 
 function _drawGrid(context: CanvasRenderingContext2D, layout: IsoLayout, z: number, color: string): void {
@@ -224,28 +243,73 @@ function getInterpolatedPoint(
   return display;
 }
 
-function drawTetherRoute(context: CanvasRenderingContext2D, routeNodes: Entity[], layout: IsoLayout): void {
+function getFootprintPolygon(
+  x: number,
+  y: number,
+  width: number,
+  depth: number,
+  z: number,
+  layout: IsoLayout,
+): Array<{ sx: number; sy: number }> {
+  return [
+    toScreen(x, y, z, layout),
+    toScreen(x + width, y, z, layout),
+    toScreen(x + width, y + depth, z, layout),
+    toScreen(x, y + depth, z, layout),
+  ];
+}
+
+function tracePolygonPath(
+  context: CanvasRenderingContext2D,
+  points: Array<{ sx: number; sy: number }>,
+): void {
+  const first = points[0];
+  if (!first) {
+    return;
+  }
+
+  context.beginPath();
+  context.moveTo(first.sx, first.sy);
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+    if (!point) {
+      continue;
+    }
+
+    context.lineTo(point.sx, point.sy);
+  }
+  context.closePath();
+}
+
+function drawTetherRoute(
+  context: CanvasRenderingContext2D,
+  routeNodes: Entity[],
+  layout: IsoLayout,
+  phase: number,
+): void {
   if (routeNodes.length < 2) {
     return;
   }
 
-  context.save();
-  context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
-  context.lineWidth = 2;
-  context.shadowBlur = 12;
-  context.shadowColor = 'rgba(16, 185, 129, 0.55)';
-  context.beginPath();
-
-  routeNodes.forEach((node, index) => {
+  const routePoints = routeNodes.map((node) => {
     const height = getPrismHeight(node);
     const footprint = getFileFootprint(node);
-    const screen = toScreen(
+    return toScreen(
       node.x + (footprint.width / 2),
       node.y + (footprint.depth / 2),
-      (node.z ?? 0) + height + 0.08,
+      (node.z ?? 0) + height + 0.1,
       layout,
     );
+  });
 
+  context.save();
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.strokeStyle = 'rgba(52, 63, 80, 0.92)';
+  context.lineWidth = 5;
+  context.beginPath();
+
+  routePoints.forEach((screen, index) => {
     if (index === 0) {
       context.moveTo(screen.sx, screen.sy);
     } else {
@@ -254,21 +318,76 @@ function drawTetherRoute(context: CanvasRenderingContext2D, routeNodes: Entity[]
   });
 
   context.stroke();
+
+  context.strokeStyle = 'rgba(255, 205, 96, 0.95)';
+  context.lineWidth = 1.4;
+  context.setLineDash([9, 7]);
+  context.lineDashOffset = -(phase * 1.8);
+  context.beginPath();
+  routePoints.forEach((screen, index) => {
+    if (index === 0) {
+      context.moveTo(screen.sx, screen.sy);
+    } else {
+      context.lineTo(screen.sx, screen.sy);
+    }
+  });
+  context.stroke();
+  context.setLineDash([]);
+
+  for (const point of routePoints) {
+    context.fillStyle = 'rgba(255, 231, 170, 0.9)';
+    context.beginPath();
+    context.arc(point.sx, point.sy, 2.3, 0, Math.PI * 2);
+    context.fill();
+  }
+
   context.restore();
 }
 
 // drawStructureEntity replaced by drawBuilding from ./building-render
 
 function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: IsoLayout): void {
-  const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.65, layout);
+  const plaza = getFootprintPolygon(entity.x + 0.16, entity.y + 0.16, 0.68, 0.68, 0.04, layout);
+  const center = toScreen(entity.x + 0.5, entity.y + 0.5, 0.1, layout);
+  const mastTop = toScreen(entity.x + 0.5, entity.y + 0.5, 1.0, layout);
+  const flagTip = toScreen(entity.x + 0.84, entity.y + 0.5, 0.86, layout);
+  const flagTail = toScreen(entity.x + 0.72, entity.y + 0.68, 0.74, layout);
   context.save();
-  context.strokeStyle = 'rgba(255, 166, 0, 0.95)';
-  context.lineWidth = 2;
-  context.shadowBlur = 20;
-  context.shadowColor = 'rgba(255, 166, 0, 0.55)';
+
+  context.fillStyle = 'rgba(110, 66, 26, 0.28)';
   context.beginPath();
-  context.arc(center.sx, center.sy, layout.tileHeight * 0.55, 0, Math.PI * 2);
+  context.ellipse(center.sx, center.sy + (layout.tileHeight * 0.18), layout.tileWidth * 0.24, layout.tileHeight * 0.16, 0, 0, Math.PI * 2);
+  context.fill();
+
+  tracePolygonPath(context, plaza);
+  context.fillStyle = 'rgba(191, 140, 78, 0.95)';
+  context.fill();
+  context.strokeStyle = 'rgba(252, 211, 153, 0.88)';
+  context.lineWidth = 1.4;
   context.stroke();
+
+  context.strokeStyle = 'rgba(94, 60, 32, 0.95)';
+  context.lineWidth = 2.6;
+  context.beginPath();
+  context.moveTo(center.sx, center.sy);
+  context.lineTo(mastTop.sx, mastTop.sy);
+  context.stroke();
+
+  context.beginPath();
+  context.moveTo(mastTop.sx, mastTop.sy + 1);
+  context.lineTo(flagTip.sx, flagTip.sy);
+  context.lineTo(flagTail.sx, flagTail.sy);
+  context.closePath();
+  context.fillStyle = 'rgba(220, 54, 54, 0.96)';
+  context.fill();
+
+  context.fillStyle = 'rgba(255, 223, 110, 0.95)';
+  context.shadowBlur = 12;
+  context.shadowColor = 'rgba(255, 223, 110, 0.75)';
+  context.beginPath();
+  context.arc(mastTop.sx, mastTop.sy, 3.2, 0, Math.PI * 2);
+  context.fill();
+
   context.restore();
 }
 
@@ -279,18 +398,39 @@ function drawHoverHighlight(
   displayPoints: Record<string, DisplayPoint>,
 ): void {
   const display = getInterpolatedPoint(entity, displayPoints);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + 0.5, layout);
-  const radius = layout.tileHeight * 1.1;
+  const footprint = getFileFootprint(entity);
+  const z = (entity.z ?? 0) + 0.04;
+  const margin = 0.08;
+  const parcel = getFootprintPolygon(
+    display.x - margin,
+    display.y - margin,
+    footprint.width + (margin * 2),
+    footprint.depth + (margin * 2),
+    z,
+    layout,
+  );
+  const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.14, z, layout);
 
   context.save();
-  context.strokeStyle = 'rgba(86, 217, 255, 0.55)';
+  tracePolygonPath(context, parcel);
+  context.fillStyle = 'rgba(92, 171, 219, 0.12)';
+  context.fill();
+  context.strokeStyle = 'rgba(186, 236, 255, 0.82)';
   context.lineWidth = 1.5;
-  context.shadowBlur = 16;
-  context.shadowColor = 'rgba(86, 217, 255, 0.35)';
-  context.setLineDash([4, 4]);
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.setLineDash([7, 4]);
   context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = 'rgba(17, 40, 62, 0.92)';
+  context.beginPath();
+  context.roundRect(plaque.sx - 14, plaque.sy - 8, 28, 12, 4);
+  context.fill();
+  context.strokeStyle = 'rgba(180, 231, 255, 0.78)';
+  context.lineWidth = 1;
+  context.stroke();
+
+  context.fillStyle = 'rgba(220, 247, 255, 0.9)';
+  context.fillRect(plaque.sx - 8, plaque.sy - 1, 16, 2);
   context.restore();
 }
 
@@ -302,23 +442,51 @@ function drawSelectionRing(
   phase: number,
 ): void {
   const display = getInterpolatedPoint(entity, displayPoints);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + 0.5, layout);
-  const radius = layout.tileHeight * 1.25;
+  const footprint = getFileFootprint(entity);
   const pulse = 0.7 + ((phase % 12) * 0.04);
+  const margin = 0.14;
+  const z = (entity.z ?? 0) + 0.05;
+  const parcel = getFootprintPolygon(
+    display.x - margin,
+    display.y - margin,
+    footprint.width + (margin * 2),
+    footprint.depth + (margin * 2),
+    z,
+    layout,
+  );
+  const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.18, z, layout);
 
   context.save();
-  context.strokeStyle = `rgba(86, 217, 255, ${pulse})`;
+  tracePolygonPath(context, parcel);
+  context.fillStyle = `rgba(57, 132, 183, ${pulse * 0.16})`;
+  context.fill();
+  context.strokeStyle = `rgba(132, 234, 255, ${0.72 + (pulse * 0.12)})`;
   context.lineWidth = 2.2;
   context.shadowBlur = 22;
   context.shadowColor = 'rgba(86, 217, 255, 0.55)';
+  context.setLineDash([10, 6]);
+  context.lineDashOffset = -(phase * 1.8);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.shadowBlur = 0;
+  context.fillStyle = `rgba(198, 244, 255, ${pulse * 0.85})`;
+  for (const point of parcel) {
+    context.beginPath();
+    context.arc(point.sx, point.sy, 2.4, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.fillStyle = 'rgba(18, 42, 56, 0.94)';
   context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.roundRect(plaque.sx - 18, plaque.sy - 9, 36, 14, 5);
+  context.fill();
+  context.strokeStyle = `rgba(132, 234, 255, ${0.72 + (pulse * 0.12)})`;
+  context.lineWidth = 1.1;
   context.stroke();
 
-  context.fillStyle = `rgba(86, 217, 255, ${pulse * 0.15})`;
-  context.beginPath();
-  context.arc(center.sx, center.sy, radius * 0.85, 0, Math.PI * 2);
-  context.fill();
+  context.fillStyle = 'rgba(220, 247, 255, 0.9)';
+  context.fillRect(plaque.sx - 10, plaque.sy - 1.5, 20, 3);
   context.restore();
 }
 
@@ -340,21 +508,43 @@ function drawAgentTethers(
     }
 
     const agentDisplay = getInterpolatedPoint(agent, displayPoints);
-    const agentCenter = toScreen(agentDisplay.x + 0.5, agentDisplay.y + 0.5, 0.85, layout);
-    const targetCenter = toScreen(target.x + 0.5, target.y + 0.5, 0.5, layout);
+    const targetFootprint = getFileFootprint(target);
+    const agentCenter = toScreen(agentDisplay.x + 0.5, agentDisplay.y + 0.5, 0.2, layout);
+    const targetCenter = toScreen(
+      target.x + (targetFootprint.width / 2),
+      target.y + (targetFootprint.depth / 2),
+      0.22,
+      layout,
+    );
+    const controlX = (agentCenter.sx + targetCenter.sx) / 2;
+    const controlY = Math.min(agentCenter.sy, targetCenter.sy) - (layout.tileHeight * 0.45);
 
     context.save();
-    context.strokeStyle = 'rgba(16, 185, 129, 0.35)';
-    context.lineWidth = 1.2;
-    context.setLineDash([6, 4]);
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.strokeStyle = 'rgba(83, 72, 42, 0.68)';
+    context.lineWidth = 2.8;
     context.beginPath();
     context.moveTo(agentCenter.sx, agentCenter.sy);
-    context.lineTo(targetCenter.sx, targetCenter.sy);
+    context.quadraticCurveTo(controlX, controlY, targetCenter.sx, targetCenter.sy);
     context.stroke();
 
-    context.fillStyle = 'rgba(16, 185, 129, 0.5)';
+    context.strokeStyle = 'rgba(255, 205, 105, 0.9)';
+    context.lineWidth = 1.1;
+    context.setLineDash([4, 6]);
     context.beginPath();
-    context.arc(targetCenter.sx, targetCenter.sy, 3, 0, Math.PI * 2);
+    context.moveTo(agentCenter.sx, agentCenter.sy);
+    context.quadraticCurveTo(controlX, controlY, targetCenter.sx, targetCenter.sy);
+    context.stroke();
+    context.setLineDash([]);
+
+    context.fillStyle = 'rgba(255, 216, 140, 0.95)';
+    context.beginPath();
+    context.moveTo(targetCenter.sx, targetCenter.sy - 5);
+    context.lineTo(targetCenter.sx + 4.5, targetCenter.sy);
+    context.lineTo(targetCenter.sx, targetCenter.sy + 5);
+    context.lineTo(targetCenter.sx - 4.5, targetCenter.sy);
+    context.closePath();
     context.fill();
     context.restore();
   }
@@ -375,25 +565,48 @@ function drawPheromone(
   }
 
   const center = toScreen(display.x + 0.5, display.y + 0.5, 0.1, layout);
-  const baseRadius = layout.tileHeight * 0.75;
-  const pulse = 1 + ((phase % 8) * 0.03);
-  const radius = baseRadius * pulse;
+  const pulse = 0.9 + ((phase % 8) * 0.04);
   const alpha = life * 0.35;
+  const coneHeight = layout.tileHeight * (0.7 + (life * 0.35));
+  const coneWidth = layout.tileWidth * 0.16;
+  const beaconY = center.sy - coneHeight;
 
   context.save();
-  context.strokeStyle = `rgba(167, 139, 250, ${alpha})`;
-  context.lineWidth = 1.5;
-  context.shadowBlur = 10 * life;
-  context.shadowColor = `rgba(167, 139, 250, ${alpha * 0.6})`;
+
+  context.fillStyle = 'rgba(94, 66, 28, 0.3)';
   context.beginPath();
-  context.arc(center.sx, center.sy, radius, 0, Math.PI * 2);
+  context.ellipse(center.sx, center.sy + 3, layout.tileWidth * 0.12, layout.tileHeight * 0.1, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = `rgba(255, 196, 92, ${alpha * 1.35})`;
+  context.lineWidth = 1;
+  context.setLineDash([4, 4]);
+  context.beginPath();
+  context.ellipse(center.sx, center.sy + 1, layout.tileWidth * (0.18 + ((pulse - 0.9) * 0.18)), layout.tileHeight * 0.12, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.beginPath();
+  context.moveTo(center.sx, beaconY);
+  context.lineTo(center.sx + coneWidth, center.sy + 1);
+  context.lineTo(center.sx - coneWidth, center.sy + 1);
+  context.closePath();
+  context.fillStyle = `rgba(242, 140, 40, ${0.72 + (life * 0.2)})`;
+  context.fill();
+
+  context.strokeStyle = `rgba(255, 240, 220, ${0.42 + (life * 0.18)})`;
+  context.lineWidth = 1.1;
+  context.beginPath();
+  context.moveTo(center.sx - (coneWidth * 0.6), beaconY + (coneHeight * 0.42));
+  context.lineTo(center.sx + (coneWidth * 0.6), beaconY + (coneHeight * 0.42));
   context.stroke();
 
-  context.strokeStyle = `rgba(167, 139, 250, ${alpha * 0.4})`;
-  context.lineWidth = 1;
+  context.fillStyle = `rgba(255, 224, 120, ${0.4 + (life * 0.3)})`;
+  context.shadowBlur = 10 * life;
+  context.shadowColor = `rgba(255, 214, 102, ${alpha * 0.8})`;
   context.beginPath();
-  context.arc(center.sx, center.sy, radius * 0.6, 0, Math.PI * 2);
-  context.stroke();
+  context.arc(center.sx, beaconY - 1.5, 2.3, 0, Math.PI * 2);
+  context.fill();
 
   context.restore();
 }
@@ -406,7 +619,10 @@ function drawLMMGhost(
   phase: number,
   tick: number,
 ): void {
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.85, layout);
+  const role = getAgentRole(entity) ?? 'architect';
+  const palette = getAgentPalette(role);
+  const ground = toScreen(display.x + 0.5, display.y + 0.5, 0.18, layout);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 1.02, layout);
   const scale = layout.tileHeight * 0.38;
   const pulse = 0.55 + ((phase % 10) * 0.035);
   const floatY = Math.sin(tick * 0.15) * scale * 0.15;
@@ -416,35 +632,48 @@ function drawLMMGhost(
     return;
   }
 
-  const bodyFill = `rgba(220, 230, 245, ${opacity * 0.85})`;
-  const bodyStroke = `rgba(180, 200, 230, ${opacity * 0.9})`;
-  const eyeFill = `rgba(30, 40, 60, ${opacity * 0.8})`;
+  const bodyFill = _withAlpha(palette.fill, opacity * 0.8);
+  const bodyStroke = _withAlpha(palette.stroke, opacity * 0.95);
+  const rotorFill = `rgba(214, 228, 240, ${opacity * 0.92})`;
+  const lensFill = `rgba(238, 248, 255, ${opacity * 0.96})`;
 
   context.save();
-  context.translate(center.sx, center.sy + floatY);
-
-  // Soft glow
-  context.shadowBlur = 18;
-  context.shadowColor = `rgba(160, 190, 240, ${opacity * 0.5})`;
-
-  // Ghost body (rounded top)
+  context.fillStyle = 'rgba(0, 0, 0, 0.2)';
   context.beginPath();
-  context.arc(0, -scale * 0.15, scale * 0.35, Math.PI, 0);
-  context.lineTo(scale * 0.35, scale * 0.35);
+  context.ellipse(ground.sx, ground.sy + (layout.tileHeight * 0.18), scale * 0.75, scale * 0.22, 0, 0, Math.PI * 2);
+  context.fill();
 
-  // Wavy bottom
-  const waves = 3;
-  const waveWidth = (scale * 0.7) / waves;
-  for (let i = 0; i < waves; i++) {
-    const wx = scale * 0.35 - (i + 1) * waveWidth;
-    context.quadraticCurveTo(
-      wx + waveWidth * 0.5,
-      scale * 0.35 + scale * 0.12,
-      wx,
-      scale * 0.35,
-    );
+  context.translate(center.sx, center.sy + floatY);
+  context.shadowBlur = 18;
+  context.shadowColor = palette.glow;
+
+  context.strokeStyle = bodyStroke;
+  context.lineWidth = 1.6;
+  context.beginPath();
+  context.moveTo(-scale * 0.55, -scale * 0.08);
+  context.lineTo(scale * 0.55, scale * 0.08);
+  context.moveTo(-scale * 0.12, -scale * 0.45);
+  context.lineTo(scale * 0.12, scale * 0.45);
+  context.stroke();
+
+  const rotorOffsets = [
+    { x: -scale * 0.62, y: -scale * 0.1 },
+    { x: scale * 0.62, y: scale * 0.1 },
+    { x: -scale * 0.14, y: -scale * 0.5 },
+    { x: scale * 0.14, y: scale * 0.5 },
+  ];
+  context.fillStyle = rotorFill;
+  for (const rotor of rotorOffsets) {
+    context.beginPath();
+    context.arc(rotor.x, rotor.y, scale * 0.12, 0, Math.PI * 2);
+    context.fill();
   }
 
+  context.beginPath();
+  context.moveTo(0, -scale * 0.28);
+  context.lineTo(scale * 0.3, 0);
+  context.lineTo(0, scale * 0.28);
+  context.lineTo(-scale * 0.3, 0);
   context.closePath();
   context.fillStyle = bodyFill;
   context.fill();
@@ -452,31 +681,16 @@ function drawLMMGhost(
   context.lineWidth = 1.2;
   context.stroke();
 
-  // Disable shadow for eyes
   context.shadowBlur = 0;
-
-  // Eyes
-  const eyeOffsetX = scale * 0.11;
-  const eyeOffsetY = -scale * 0.12;
-  const eyeRadius = scale * 0.07;
-
   context.beginPath();
-  context.arc(-eyeOffsetX, eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-  context.arc(eyeOffsetX, eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-  context.fillStyle = eyeFill;
+  context.arc(0, 0, scale * 0.12, 0, Math.PI * 2);
+  context.fillStyle = lensFill;
   context.fill();
 
-  // Tiny mouth (soft o)
-  context.beginPath();
-  context.arc(0, scale * 0.05, scale * 0.04, 0, Math.PI * 2);
-  context.fillStyle = eyeFill;
-  context.fill();
-
-  // Role label above ghost
-  context.fillStyle = `rgba(180, 200, 230, ${opacity * 0.7})`;
+  context.fillStyle = `rgba(15, 25, 38, ${opacity * 0.85})`;
   context.font = `${Math.max(8, Math.round(scale * 0.35))}px monospace`;
   context.textAlign = 'center';
-  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', 0, -scale * 0.65);
+  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', 0, scale * 0.07);
 
   context.restore();
 }
@@ -588,8 +802,48 @@ function drawAgent(
   context.restore();
 }
 
+function drawBuildingShadow(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number
+): void {
+  const footprint = getFileFootprint(entity);
+  const width = footprint.width;
+  const depth = footprint.depth;
+  
+  const daylight = 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
+  const night = 1 - daylight;
+  
+  const shadowLength = 0.4 + night * 1.5;
+  const shadowOffsetIsoX = -shadowLength * 0.3;
+  const shadowOffsetIsoY = -shadowLength * 0.3;
+  
+  const x = display.x + ((1 - width) / 2) + shadowOffsetIsoX;
+  const y = display.y + ((1 - depth) / 2) + shadowOffsetIsoY;
+  const z = entity.z ?? 0;
+  
+  const polygon = getFootprintPolygon(x, y, width, depth, z, layout);
+
+  context.save();
+  context.globalAlpha = 0.25;
+  context.fillStyle = '#0a1520';
+  context.beginPath();
+  if (polygon[0] && polygon[1] && polygon[2] && polygon[3]) {
+    context.moveTo(polygon[0].sx, polygon[0].sy);
+    context.lineTo(polygon[1].sx, polygon[1].sy);
+    context.lineTo(polygon[2].sx, polygon[2].sy);
+    context.lineTo(polygon[3].sx, polygon[3].sy);
+  }
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
 function drawEntities(
   context: CanvasRenderingContext2D,
+  viewport: Viewport,
   entities: Entity[],
   layout: IsoLayout,
   phase: number,
@@ -633,7 +887,16 @@ function drawEntities(
       continue;
     }
 
+    const screenPt = toScreen(display.x, display.y, entity.z ?? 0, layout);
+    const dist = Math.hypot(screenPt.sx - viewport.width / 2, screenPt.sy - viewport.height / 2);
+    const maxDist = Math.hypot(viewport.width, viewport.height) / 2;
+    const haze = Math.min(1, Math.max(0, dist / maxDist));
+
+    context.save();
+    context.globalAlpha = 1 - (haze * 0.3);
+
     if (isStructureEntity(entity)) {
+      drawBuildingShadow(context, entity, display, layout, phase);
       drawBuilding({
         context,
         entity,
@@ -642,9 +905,11 @@ function drawEntities(
         phase,
         nodeState: entity.node_state ?? 'stable',
       });
+      context.restore();
       continue;
     }
 
+    drawBuildingShadow(context, entity, display, layout, phase);
     drawBuilding({
       context,
       entity,
@@ -653,6 +918,7 @@ function drawEntities(
       phase,
       nodeState: 'stable',
     });
+    context.restore();
   }
 }
 
@@ -1003,15 +1269,7 @@ function buildVisibleStructurePathSet(
   return visiblePaths;
 }
 
-function normalizeRotation(rotation: number): number {
-  const fullTurn = Math.PI * 2;
-  const normalized = rotation % fullTurn;
-  return normalized < 0 ? normalized + fullTurn : normalized;
-}
 
-function formatRotation(rotation: number): string {
-  return `${Math.round((normalizeRotation(rotation) * 180) / Math.PI)}°`;
-}
 
 function stripUnsafeOperatorControlFields(
   control: Record<string, unknown>,
@@ -1056,6 +1314,7 @@ function App() {
   const [fileFilterQuery, setFileFilterQuery] = useState('');
   const [hiddenFilePaths, setHiddenFilePaths] = useState<string[]>([]);
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
+  const [showPlumbing, setShowPlumbing] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
   const [engineLoading, setEngineLoading] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
@@ -1090,8 +1349,10 @@ function App() {
   const previousAgentActivitiesRef = useRef<Record<string, AgentActivity>>({});
   const selectedEntityRef = useRef<Entity | null>(null);
   const cameraRef = useRef<Camera>(DEFAULT_CAMERA);
+  const showPlumbingRef = useRef(false);
   const inspectPanelRef = useRef<HTMLDivElement | null>(null);
   const zoomAnimationRef = useRef<{ frame: number | null; target: Camera | null }>({ frame: null, target: null });
+  const autoHiddenRepoRef = useRef<string | null>(null);
 
   const agents = entities.filter((entity) => entity.type === 'agent');
   const primaryAgent = agents[0] ?? null;
@@ -1524,8 +1785,26 @@ function App() {
 
   useEffect(() => {
     const validPaths = new Set(fileNodes.map((entity) => entity.path).filter((path): path is string => path != null));
-    setHiddenFilePaths((prev) => prev.filter((path) => validPaths.has(path)));
+    setHiddenFilePaths((prev) => {
+      const next = prev.filter((path) => validPaths.has(path));
+      return next.length === prev.length ? prev : next;
+    });
   }, [fileNodes]);
+
+  useEffect(() => {
+    const repoKey = `${activeRepositoryPath ?? 'preview'}:${fileNodes.length}`;
+    if (autoHiddenRepoRef.current === repoKey || fileNodes.length === 0) {
+      return;
+    }
+
+    const autoHidden = fileNodes
+      .map((entity) => entity.path)
+      .filter((path): path is string => path != null && shouldAutoHidePath(path));
+
+    setHiddenFilePaths((prev) => (arraysEqual(prev, autoHidden) ? prev : autoHidden));
+
+    autoHiddenRepoRef.current = repoKey;
+  }, [activeRepositoryPath, fileNodes]);
 
   useEffect(() => {
     if (!hoveredEntityId) {
@@ -1549,27 +1828,53 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let handle: number | null = null;
+    let failureCount = 0;
+
+    const schedule = (delayMs: number): void => {
+      if (cancelled) {
+        return;
+      }
+
+      if (handle !== null) {
+        window.clearTimeout(handle);
+      }
+
+      handle = window.setTimeout(() => {
+        void checkStatus();
+      }, delayMs);
+    };
 
     const checkStatus = async (): Promise<void> => {
       try {
         const res = await fetch('http://localhost:3001/api/engine/status');
-        if (!cancelled && res.ok) {
+        if (!res.ok) {
+          throw new Error(`Bridge returned ${res.status}`);
+        }
+
+        if (!cancelled) {
           const data = await res.json();
-          setEngineRunning(data.running);
+          failureCount = 0;
+          setEngineRunning(Boolean(data.running));
           setEngineError(null);
+          schedule(3000);
         }
       } catch {
         if (!cancelled) {
+          failureCount += 1;
           setEngineRunning(false);
+          setEngineError((prev) => prev ?? 'Bridge not running. Start it with: npm run bridge');
+          schedule(Math.min(30000, 5000 * failureCount));
         }
       }
     };
 
-    checkStatus();
-    const handle = window.setInterval(checkStatus, 2000);
+    void checkStatus();
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      if (handle !== null) {
+        window.clearTimeout(handle);
+      }
     };
   }, []);
 
@@ -1627,6 +1932,10 @@ function App() {
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
+
+  useEffect(() => {
+    showPlumbingRef.current = showPlumbing;
+  }, [showPlumbing]);
 
   useEffect(() => {
     if (selectedEntity && !leftPanelOpen) {
@@ -1876,14 +2185,13 @@ function App() {
     }
 
     const DRAG_THRESHOLD = 4;
-    type DragMode = 'idle' | 'pending-select' | 'orbit' | 'pan';
+    type DragMode = 'idle' | 'pending-select' | 'pan';
 
     let dragMode: DragMode = 'idle';
     let dragStartX = 0;
     let dragStartY = 0;
     let lastPointerX = 0;
     let lastPointerY = 0;
-    let lastOrbitAngle = 0;
 
     const resolveCanvasPoint = (event: MouseEvent): { sx: number; sy: number } => {
       const rect = canvas.getBoundingClientRect();
@@ -1891,31 +2199,6 @@ function App() {
         sx: event.clientX - rect.left,
         sy: event.clientY - rect.top,
       };
-    };
-
-    const getOrbitMetrics = (
-      sx: number,
-      sy: number,
-      layout: IsoLayout,
-    ): { angle: number; radius: number } => {
-      const offsetX = sx - layout.originX;
-      const offsetY = sy - layout.originY;
-      return {
-        angle: Math.atan2(offsetY, offsetX),
-        radius: Math.hypot(offsetX, offsetY),
-      };
-    };
-
-    const normalizeAngleDelta = (delta: number): number => {
-      const fullTurn = Math.PI * 2;
-      let normalized = delta;
-      while (normalized > Math.PI) {
-        normalized -= fullTurn;
-      }
-      while (normalized < -Math.PI) {
-        normalized += fullTurn;
-      }
-      return Math.max(-0.35, Math.min(0.35, normalized));
     };
 
     const findNearestVisibleStructure = (
@@ -1969,9 +2252,6 @@ function App() {
         }
 
         dragMode = 'pending-select';
-        const { sx, sy } = resolveCanvasPoint(event);
-        const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
-        lastOrbitAngle = getOrbitMetrics(sx, sy, layout).angle;
       } else if (event.button === 1) {
         event.preventDefault();
         dragMode = 'pan';
@@ -1986,31 +2266,11 @@ function App() {
         const dx = event.clientX - dragStartX;
         const dy = event.clientY - dragStartY;
         if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
-          dragMode = 'orbit';
+          dragMode = 'pan';
           lastPointerX = event.clientX;
           lastPointerY = event.clientY;
-          const { sx, sy } = resolveCanvasPoint(event);
-          const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
-          lastOrbitAngle = getOrbitMetrics(sx, sy, layout).angle;
           canvas.style.cursor = 'grabbing';
         }
-      }
-
-      if (dragMode === 'orbit') {
-        const { sx, sy } = resolveCanvasPoint(event);
-        const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
-        const orbitMetrics = getOrbitMetrics(sx, sy, layout);
-        const delta =
-          orbitMetrics.radius < layout.tileWidth
-            ? (event.clientX - lastPointerX) * 0.01
-            : normalizeAngleDelta(orbitMetrics.angle - lastOrbitAngle);
-        lastPointerX = event.clientX;
-        lastPointerY = event.clientY;
-        lastOrbitAngle = orbitMetrics.angle;
-        if (Math.abs(delta) > 0.0001) {
-          setCamera((prev) => ({ ...prev, rotation: normalizeRotation(prev.rotation + delta) }));
-        }
-        return;
       }
 
       if (dragMode === 'pan') {
@@ -2030,7 +2290,7 @@ function App() {
     };
 
     const handleMouseUp = (event: MouseEvent): void => {
-      if (dragMode === 'orbit' || dragMode === 'pan') {
+      if (dragMode === 'pan') {
         dragMode = 'idle';
         canvas.style.cursor = 'default';
         return;
@@ -2125,6 +2385,7 @@ function App() {
     canvas.addEventListener('dblclick', handleDoubleClick);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    const zoomAnimation = zoomAnimationRef.current;
 
     return () => {
       canvas.removeEventListener('wheel', handleWheel);
@@ -2132,7 +2393,7 @@ function App() {
       canvas.removeEventListener('dblclick', handleDoubleClick);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      const frame = zoomAnimationRef.current.frame;
+      const frame = zoomAnimation.frame;
       if (frame) {
         cancelAnimationFrame(frame);
       }
@@ -2164,30 +2425,26 @@ function App() {
       const currentEntities = visibleEntityListRef.current;
       const phase = phaseRef.current;
       const tick = tickRef.current;
-
-      drawBackdrop(context, viewport);
-
-      // Ground plane + districts
-      drawGroundPlane(context, viewport, layout);
-      
-      // Update city layout when entities change
       const layoutData = computeCityLayout(currentEntities);
       cityLayoutRef.current = layoutData;
-      drawDistricts(context, layoutData.districts, layout);
 
-      // Roads with traffic
-      drawAdaptiveRoads(context, layout, currentEntities);
-      drawDistrictLabels(context, layout, currentEntities);
-      
-      // Traffic cars on roads
+      drawBackdrop(context, viewport, phase);
+
+      // Underground plumbing — import dependency conduits (toggleable)
+      if (showPlumbingRef.current) {
+        drawTethers(context, currentEntities, layout, phase);
+      }
+
+      drawGroundPlane(context, viewport, layout, currentEntities, layoutData, phase);
+
+      // Render the SimCity-style road network from the computed city layout.
       const roadCount = layoutData.roads.length;
       const totalTraffic = layoutData.roads.reduce((s, r) => s + r.trafficDensity, 0);
       spawnCars(trafficRef.current, roadCount, totalTraffic, tick);
       updateCars(trafficRef.current, 1);
-      drawRoadsAndTraffic(context, layoutData.roads, trafficRef.current, layout, phase);
+      drawRoadsAndTraffic(context, layoutData.roads, trafficRef.current, layout, phase, currentEntities);
 
-      drawTethers(context, currentEntities, layout, phase);
-      drawTetherRoute(context, routeNodesRef.current, layout);
+      drawTetherRoute(context, routeNodesRef.current, layout, phase);
       drawAgentTethers(
         context,
         agents,
@@ -2197,6 +2454,7 @@ function App() {
       );
       drawEntities(
         context,
+        viewport,
         currentEntities,
         layout,
         phase,
@@ -2243,6 +2501,25 @@ function App() {
     const supabase = createBrowserSupabaseClient(url, anonKey);
     supabaseRef.current = supabase;
     let cancelled = false;
+    let channelHealthy = false;
+    let pollHandle: number | null = null;
+    let snapshotInFlight = false;
+
+    const scheduleSnapshot = (delayMs: number): void => {
+      if (cancelled) {
+        return;
+      }
+
+      if (pollHandle !== null) {
+        window.clearTimeout(pollHandle);
+      }
+
+      pollHandle = window.setTimeout(() => {
+        void loadSnapshot(false).catch(() => {
+          // A later retry is scheduled in loadSnapshot.
+        });
+      }, delayMs);
+    };
 
     const flushEntityState = (): void => {
       if (flushFrameRef.current !== null) {
@@ -2257,7 +2534,14 @@ function App() {
       });
     };
 
-    const loadSnapshot = async (): Promise<void> => {
+    const loadSnapshot = async (allowPreviewFallback = true): Promise<void> => {
+      if (snapshotInFlight || cancelled) {
+        return;
+      }
+
+      snapshotInFlight = true;
+
+      try {
       const [
         { data: entityRows, error: entityError },
         { data: worldRows, error: worldError },
@@ -2315,6 +2599,21 @@ function App() {
 
       setMode('live');
       setErrorMessage(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : 'Unknown Supabase load failure';
+        if (allowPreviewFallback) {
+          setErrorMessage(message);
+          setMode('preview');
+        }
+        throw error;
+      } finally {
+        snapshotInFlight = false;
+        scheduleSnapshot(channelHealthy ? 30000 : 5000);
+      }
     };
 
     void loadSnapshot().catch((error: unknown) => {
@@ -2326,12 +2625,6 @@ function App() {
       setErrorMessage(message);
       setMode('preview');
     });
-
-    const pollHandle = window.setInterval(() => {
-      void loadSnapshot().catch(() => {
-        // Realtime remains primary; polling only reconciles missed updates.
-      });
-    }, 1000);
 
     const channel = supabase
       .channel('lux-protocol')
@@ -2377,18 +2670,24 @@ function App() {
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          channelHealthy = true;
           setMode('live');
+          scheduleSnapshot(30000);
         }
 
         if (status === 'CHANNEL_ERROR') {
+          channelHealthy = false;
           setErrorMessage('Supabase realtime channel failed; showing the last confirmed lattice snapshot.');
+          scheduleSnapshot(2000);
         }
       });
 
     return () => {
       cancelled = true;
       supabaseRef.current = null;
-      window.clearInterval(pollHandle);
+      if (pollHandle !== null) {
+        window.clearTimeout(pollHandle);
+      }
 
       if (flushFrameRef.current !== null) {
         window.cancelAnimationFrame(flushFrameRef.current);
@@ -3084,9 +3383,16 @@ function App() {
           >
             ⌂
           </button>
+          <button
+            className={`zoom-button ${showPlumbing ? 'is-active' : ''}`}
+            onClick={() => setShowPlumbing((prev) => !prev)}
+            title={showPlumbing ? 'Hide plumbing' : 'Show plumbing'}
+            type="button"
+          >
+            <GitBranch size={14} />
+          </button>
           <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
-          <span className="zoom-level">Rot {formatRotation(camera.rotation)}</span>
-          <span className="view-hint">Drag orbit · Shift drag pan</span>
+          <span className="view-hint">Drag pan · Shift drag pan</span>
         </div>
 
         {selectedEntity && inspectPopupPosition ? (

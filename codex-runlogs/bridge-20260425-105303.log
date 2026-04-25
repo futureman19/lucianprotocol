@@ -1,0 +1,8 @@
+
+> lux-protocol-mvp@0.1.0 bridge
+> tsx src/bridge.ts
+
+[bridge] Engine bridge running on http://localhost:3001
+[bridge] POST http://localhost:3001/api/engine/start  → start engine
+[bridge] POST http://localhost:3001/api/engine/stop   → stop engine
+[bridge] GET  http://localhost:3001/api/engine/status → check status

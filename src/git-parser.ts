@@ -21,6 +21,26 @@ const ROOT_NODE_PATH = '.';
 const DEFAULT_PREVIEW_LENGTH = 200;
 const DEFAULT_MAX_CONTENT_LENGTH = 16_000;
 
+const EXCLUDED_SEGMENTS = new Set([
+  'node_modules',
+  '.venv-pdf',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.git',
+  'dist',
+  '.lux-state',
+  '.next',
+  '.nuxt',
+  'build',
+  'out',
+  'coverage',
+]);
+
+function shouldExcludePath(filePath: string): boolean {
+  return filePath.split('/').some((segment) => EXCLUDED_SEGMENTS.has(segment));
+}
+
 const RepositoryOverlaySchema = z.object({
   version: z.literal(1),
   repoRoot: z.string().min(1),
@@ -393,7 +413,7 @@ async function buildRepositoryNodes(
   const filePaths = rawTree
     .split('\n')
     .map((value) => value.trim())
-    .filter((value) => value.length > 0)
+    .filter((value) => value.length > 0 && !shouldExcludePath(value))
     .sort((left, right) => left.localeCompare(right));
 
   const directoryPaths = deriveDirectoryPaths(filePaths);

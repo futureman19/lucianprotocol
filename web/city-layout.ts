@@ -1,4 +1,5 @@
 import type { Entity } from '../src/types';
+import { getFileFootprint as getBaseFootprint } from './file-colors';
 
 export type DistrictType = 'downtown' | 'suburb' | 'industrial' | 'harbor' | 'park';
 
@@ -138,56 +139,63 @@ export function computeCityLayout(entities: Entity[]): CityLayout {
     color: 'rgba(40, 100, 40, 0.15)',
   });
 
-  // Generate roads from tethers
+  // Build a unified street grid from building positions.
+  // Horizontal streets run along each row that has buildings;
+  // vertical streets run along each column that has buildings.
+  // Streets are merged into continuous lines so corners fit cleanly.
   const roads: RoadSegment[] = [];
-  const entityByPath = new Map<string, Entity>();
-  for (const e of entities) {
-    if (e.path) entityByPath.set(e.path, e);
+
+  const fileStructures = structures.filter((s) => s.type === 'file');
+  const positions = fileStructures.map((e) => ({ x: e.x + 0.5, y: e.y + 0.5 }));
+
+  // Group positions by rounded y for horizontal streets
+  const yRows = new Map<number, number[]>();
+  for (const p of positions) {
+    const y = Math.round(p.y);
+    const xs = yRows.get(y) ?? [];
+    xs.push(p.x);
+    yRows.set(y, xs);
   }
 
-  for (const source of structures) {
-    if (!source.tether_to || source.tether_to.length === 0) continue;
-    
-    for (const targetPath of source.tether_to) {
-      const target = entityByPath.get(targetPath);
-      if (!target) continue;
+  // Group positions by rounded x for vertical streets
+  const xCols = new Map<number, number[]>();
+  for (const p of positions) {
+    const x = Math.round(p.x);
+    const ys = xCols.get(x) ?? [];
+    ys.push(p.y);
+    xCols.set(x, ys);
+  }
 
-      // Determine road name based on what it connects
-      let roadName = 'Utility Lane';
-      const srcName = source.name?.toLowerCase() ?? '';
-      const tgtName = target.name?.toLowerCase() ?? '';
-      
-      if (isEntryPoint(source) || isEntryPoint(target)) {
-        roadName = 'Main Street';
-      } else if (srcName.includes('auth') || tgtName.includes('auth')) {
-        roadName = 'Security Blvd';
-      } else if (srcName.includes('api') || tgtName.includes('api')) {
-        roadName = 'API Avenue';
-      } else if (srcName.includes('db') || tgtName.includes('db') || srcName.includes('model')) {
-        roadName = 'Data Drive';
-      } else if (isInfrastructure(source) || isInfrastructure(target)) {
-        roadName = 'Infrastructure Way';
-      } else if (isUtility(source) || isUtility(target)) {
-        roadName = 'Helper Lane';
-      } else if (srcName.includes('test') || tgtName.includes('test')) {
-        roadName = 'Test Track';
-      } else if (srcName.includes('style') || tgtName.includes('style') || srcName.includes('css')) {
-        roadName = 'Design District';
-      }
+  // Create merged horizontal streets — half a grid block wide with grass edges
+  for (const [y, xs] of yRows) {
+    const minX = Math.min(...xs) - 1;
+    const maxX = Math.max(...xs) + 1;
+    const isMain = xs.length >= 3;
+    roads.push({
+      fromX: minX,
+      fromY: y + 0.5,
+      toX: maxX,
+      toY: y + 0.5,
+      name: isMain ? 'Main Street' : 'Grid Avenue',
+      width: 0.5,
+      trafficDensity: isMain ? 0.6 : 0.3,
+    });
+  }
 
-      // Traffic density = how many files depend on this connection
-      const trafficDensity = Math.min(1, ((source.tether_to?.length ?? 0) + (target.tether_to?.length ?? 0)) / 10);
-
-      roads.push({
-        fromX: source.x + 0.5,
-        fromY: source.y + 0.5,
-        toX: target.x + 0.5,
-        toY: target.y + 0.5,
-        name: roadName,
-        width: 0.3 + trafficDensity * 0.4,
-        trafficDensity,
-      });
-    }
+  // Create merged vertical streets
+  for (const [x, ys] of xCols) {
+    const minY = Math.min(...ys) - 1;
+    const maxY = Math.max(...ys) + 1;
+    const isMain = ys.length >= 3;
+    roads.push({
+      fromX: x + 0.5,
+      fromY: minY,
+      toX: x + 0.5,
+      toY: maxY,
+      name: isMain ? 'Main Street' : 'Grid Avenue',
+      width: 0.5,
+      trafficDensity: isMain ? 0.6 : 0.3,
+    });
   }
 
   return { districts, roads, downtownCenter };
@@ -227,47 +235,47 @@ export function getBuildingProfile(entity: Entity): BuildingProfile {
   // Town Hall — the main entry
   if (name === 'app.tsx' || name === 'app.ts' || name === 'app.js' || name === 'app.jsx' ||
       name === 'index.html' || name === 'index.ts' || name === 'index.tsx') {
-    return { type: 'townhall', floors: Math.max(6, mass), footprint: 1.8, ornamentation: 0.9 };
+    return { type: 'townhall', floors: Math.max(6, mass), footprint: 1.0, ornamentation: 0.9 };
   }
 
   // Skyscrapers — other entry points or massive files
   if (isEntryPoint(entity) && isBig) {
-    return { type: 'skyscraper', floors: Math.max(5, mass), footprint: 1.4, ornamentation: 0.8 };
+    return { type: 'skyscraper', floors: Math.max(5, mass), footprint: 1.0, ornamentation: 0.8 };
   }
 
   // Shops — UI components
   if (ext === '.tsx' || ext === '.jsx' || name.includes('component') || path.includes('/components/')) {
-    return { type: 'shop', floors: Math.max(1.5, mass * 0.4), footprint: 0.9, ornamentation: 0.7 };
+    return { type: 'shop', floors: Math.max(1.5, mass * 0.4), footprint: 1.0, ornamentation: 0.7 };
   }
 
   // Warehouses — config/data
   if (isInfrastructure(entity)) {
-    return { type: 'warehouse', floors: Math.max(1, mass * 0.3), footprint: 1.6, ornamentation: 0.2 };
+    return { type: 'warehouse', floors: Math.max(1, mass * 0.3), footprint: 1.0, ornamentation: 0.2 };
   }
 
   // Factories — build tools
   if (name.includes('vite') || name.includes('webpack') || name.includes('rollup') || name.includes('build')) {
-    return { type: 'factory', floors: Math.max(2, mass * 0.5), footprint: 1.5, ornamentation: 0.3 };
+    return { type: 'factory', floors: Math.max(2, mass * 0.5), footprint: 1.0, ornamentation: 0.3 };
   }
 
   // Schools — docs
   if (ext === '.md' || ext === '.mdx') {
-    return { type: 'school', floors: 1.2, footprint: 1.2, ornamentation: 0.6 };
+    return { type: 'school', floors: 1.2, footprint: 1.0, ornamentation: 0.6 };
   }
 
   // Hospitals — tests
   if (name.includes('.test.') || name.includes('.spec.')) {
-    return { type: 'hospital', floors: 1.5, footprint: 1.1, ornamentation: 0.5 };
+    return { type: 'hospital', floors: 1.5, footprint: 1.0, ornamentation: 0.5 };
   }
 
   // Cafes — styles
   if (ext === '.css' || ext === '.scss' || ext === '.sass' || ext === '.less') {
-    return { type: 'cafe', floors: 1, footprint: 0.8, ornamentation: 0.8 };
+    return { type: 'cafe', floors: 1, footprint: 1.0, ornamentation: 0.8 };
   }
 
   // Houses — small utilities
   if (isUtility(entity) || (!isMedium && !isEntryPoint(entity))) {
-    return { type: 'house', floors: Math.max(0.8, mass * 0.3), footprint: 0.7, ornamentation: 0.4 };
+    return { type: 'house', floors: Math.max(0.8, mass * 0.3), footprint: 1.0, ornamentation: 0.4 };
   }
 
   // Offices — medium business logic
@@ -276,5 +284,26 @@ export function getBuildingProfile(entity: Entity): BuildingProfile {
   }
 
   // Default — apartment
-  return { type: 'apartment', floors: Math.max(1, mass * 0.4), footprint: 0.85, ornamentation: 0.4 };
+  return { type: 'apartment', floors: Math.max(1, mass * 0.4), footprint: 1.0, ornamentation: 0.4 };
+}
+
+export function getUnifiedFootprint(entity: Entity): { depth: number; width: number } {
+  const baseFootprint = getBaseFootprint(entity);
+  const profile = getBuildingProfile(entity);
+  const isDirectory = entity.type === 'directory';
+  
+  return {
+    width: baseFootprint.width * (isDirectory ? 1.0 : profile.footprint),
+    depth: baseFootprint.depth * (isDirectory ? 1.0 : profile.footprint)
+  };
+}
+
+export function getUnifiedHeight(entity: Entity): number {
+  if (entity.type === 'goal') return 0.2;
+  if (entity.type === 'wall') return 1.0;
+  
+  const profile = getBuildingProfile(entity);
+  const isDirectory = entity.type === 'directory';
+  
+  return isDirectory ? 0.6 : profile.floors * 0.8;
 }

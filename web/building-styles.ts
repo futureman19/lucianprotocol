@@ -24,130 +24,179 @@ export interface DroneStyle {
 // File extension → building district styles
 export function getBuildingStyle(entity: Entity): BuildingStyle {
   const path = entity.path ?? '';
-  const ext = path.split('.').pop()?.toLowerCase() ?? '';
+  const pathExt = path.split('.').pop()?.toLowerCase() ?? '';
+  const ext = pathExt || (entity.extension?.replace(/^\./, '').toLowerCase() ?? '');
   const name = entity.name?.toLowerCase() ?? '';
 
-  // Source code files - Industrial/Steel district
-  if (['ts', 'tsx', 'mts', 'cts'].includes(ext)) {
+  if (entity.type === 'directory') {
     return {
-      accent: '#56d9ff',
-      glow: 'rgba(86, 217, 255, 0.46)',
-      left: '#0a2a3a',
-      right: '#103d52',
-      top: '#1a5a75',
-      trim: '#2ecfff',
-      windowColor: 'rgba(86, 217, 255, 0.7)',
-      windowGlow: 'rgba(86, 217, 255, 0.3)',
+      accent: '#CBD5E1',
+      glow: 'rgba(203, 213, 225, 0.35)',
+      left: '#E2E8F0',
+      right: '#CBD5E1',
+      top: '#F8FAFC',
+      trim: '#94A3B8',
+      windowColor: 'rgba(191, 219, 254, 0.48)',
+      windowGlow: 'rgba(191, 219, 254, 0.18)',
+      roofStyle: 'dome',
+      architecture: 'temple',
+    };
+  }
+
+  // Test files - Research / clinical complexes
+  if (name.includes('.test.') || name.includes('.spec.') || ext === 'test') {
+    return {
+      accent: '#A855F7',
+      glow: 'rgba(168, 85, 247, 0.4)',
+      left: '#6B21A8',
+      right: '#581C87',
+      top: '#7E22CE',
+      trim: '#D8B4FE',
+      windowColor: 'rgba(233, 213, 255, 0.7)',
+      windowGlow: 'rgba(233, 213, 255, 0.3)',
+      roofStyle: 'dome',
+      architecture: 'modern',
+    };
+  }
+
+  // UI components - expressive retail facades
+  if (['tsx', 'jsx', 'vue', 'svelte', 'astro', 'html', 'htm'].includes(ext) || name.includes('component')) {
+    return {
+      accent: '#38BDF8',
+      glow: 'rgba(56, 189, 248, 0.4)',
+      left: '#475569',
+      right: '#334155',
+      top: '#CBD5E1',
+      trim: '#F8FAFC',
+      windowColor: 'rgba(254, 240, 138, 0.72)',
+      windowGlow: 'rgba(254, 240, 138, 0.32)',
+      roofStyle: 'peaked',
+      architecture: 'modern',
+    };
+  }
+
+  // Source code files - Commercial towers (Blue/Gray glass)
+  if (['ts', 'js', 'mts', 'cts', 'mjs', 'cjs'].includes(ext)) {
+    return {
+      accent: '#3B82F6',
+      glow: 'rgba(59, 130, 246, 0.4)',
+      left: '#4B5563',
+      right: '#374151',
+      top: '#9CA3AF',
+      trim: '#D1D5DB',
+      windowColor: 'rgba(253, 248, 225, 0.8)',
+      windowGlow: 'rgba(253, 248, 225, 0.4)',
       roofStyle: 'antenna',
-      architecture: 'industrial',
+      architecture: 'modern',
     };
   }
 
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) {
+  // Query and schema files - data domes
+  if (['sql', 'psql', 'prisma', 'graphql', 'gql'].includes(ext)) {
     return {
-      accent: '#ffe066',
-      glow: 'rgba(255, 224, 102, 0.42)',
-      left: '#3a300a',
-      right: '#524510',
-      top: '#75621a',
-      trim: '#ffd43b',
-      windowColor: 'rgba(255, 224, 102, 0.7)',
-      windowGlow: 'rgba(255, 224, 102, 0.3)',
-      roofStyle: 'flat',
-      architecture: 'industrial',
-    };
-  }
-
-  // Config/Data files - Data silos
-  if (['json', 'yml', 'yaml', 'toml', 'env', 'config'].includes(ext) || name.includes('config')) {
-    return {
-      accent: '#a78bfa',
-      glow: 'rgba(167, 139, 250, 0.42)',
-      left: '#1e1640',
-      right: '#2d2060',
-      top: '#3f2f85',
-      trim: '#c4b5fd',
-      windowColor: 'rgba(167, 139, 250, 0.6)',
-      windowGlow: 'rgba(167, 139, 250, 0.25)',
+      accent: '#38BDF8',
+      glow: 'rgba(56, 189, 248, 0.38)',
+      left: '#155E75',
+      right: '#164E63',
+      top: '#0EA5E9',
+      trim: '#BAE6FD',
+      windowColor: 'rgba(224, 242, 254, 0.7)',
+      windowGlow: 'rgba(224, 242, 254, 0.28)',
       roofStyle: 'dome',
       architecture: 'data',
     };
   }
 
-  // Documentation - Temple/monument style
+  // Config/Data files - Industrial (Brown/Yellow/Orange)
+  if (['json', 'yml', 'yaml', 'toml', 'env', 'ini', 'config'].includes(ext) || name.includes('config')) {
+    return {
+      accent: '#F59E0B',
+      glow: 'rgba(245, 158, 11, 0.4)',
+      left: '#92400E',
+      right: '#78350F',
+      top: '#B45309',
+      trim: '#FCD34D',
+      windowColor: 'rgba(254, 243, 199, 0.6)',
+      windowGlow: 'rgba(254, 243, 199, 0.25)',
+      roofStyle: 'flat',
+      architecture: 'industrial',
+    };
+  }
+
+  // Scripts / orchestration files - service yards
+  if (['sh', 'bash', 'zsh', 'fish', 'ps1', 'bat'].includes(ext)) {
+    return {
+      accent: '#14B8A6',
+      glow: 'rgba(20, 184, 166, 0.38)',
+      left: '#115E59',
+      right: '#134E4A',
+      top: '#0F766E',
+      trim: '#99F6E4',
+      windowColor: 'rgba(204, 251, 241, 0.58)',
+      windowGlow: 'rgba(204, 251, 241, 0.22)',
+      roofStyle: 'antenna',
+      architecture: 'utility',
+    };
+  }
+
+  // Documentation - Civic / Monument (White/Marble)
   if (['md', 'mdx', 'txt', 'rst'].includes(ext)) {
     return {
-      accent: '#e9ecef',
-      glow: 'rgba(233, 236, 239, 0.35)',
-      left: '#2a2a2a',
-      right: '#3a3a3a',
-      top: '#4a4a4a',
-      trim: '#f8f9fa',
-      windowColor: 'rgba(233, 236, 239, 0.5)',
-      windowGlow: 'rgba(233, 236, 239, 0.15)',
-      roofStyle: 'peaked',
+      accent: '#E5E7EB',
+      glow: 'rgba(229, 231, 235, 0.35)',
+      left: '#F3F4F6',
+      right: '#E5E7EB',
+      top: '#FFFFFF',
+      trim: '#9CA3AF',
+      windowColor: 'rgba(191, 219, 254, 0.5)',
+      windowGlow: 'rgba(191, 219, 254, 0.15)',
+      roofStyle: 'dome',
       architecture: 'temple',
     };
   }
 
-  // Styles - Garden/pavilion style
+  // Styles - Residential (Brick/Wood/Greenery)
   if (['css', 'scss', 'sass', 'less', 'styl'].includes(ext)) {
     return {
-      accent: '#f783ac',
-      glow: 'rgba(247, 131, 172, 0.42)',
-      left: '#3a0f22',
-      right: '#521731',
-      top: '#752244',
-      trim: '#fcc2d7',
-      windowColor: 'rgba(247, 131, 172, 0.6)',
-      windowGlow: 'rgba(247, 131, 172, 0.25)',
+      accent: '#EF4444',
+      glow: 'rgba(239, 68, 68, 0.4)',
+      left: '#B91C1C',
+      right: '#991B1B',
+      top: '#DC2626',
+      trim: '#FECACA',
+      windowColor: 'rgba(254, 240, 138, 0.7)',
+      windowGlow: 'rgba(254, 240, 138, 0.3)',
       roofStyle: 'peaked',
       architecture: 'garden',
     };
   }
 
-  // Assets/Media - Utility sheds
+  // Assets/Media - Parks / Utility (Green)
   if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp'].includes(ext)) {
     return {
-      accent: '#8ce99a',
-      glow: 'rgba(140, 233, 154, 0.38)',
-      left: '#0f3a18',
-      right: '#165224',
-      top: '#1f7535',
-      trim: '#b2f2bb',
-      windowColor: 'rgba(140, 233, 154, 0.5)',
-      windowGlow: 'rgba(140, 233, 154, 0.2)',
+      accent: '#22C55E',
+      glow: 'rgba(34, 197, 94, 0.4)',
+      left: '#166534',
+      right: '#14532D',
+      top: '#15803D',
+      trim: '#86EFAC',
+      windowColor: 'rgba(134, 239, 172, 0.5)',
+      windowGlow: 'rgba(134, 239, 172, 0.2)',
       roofStyle: 'none',
       architecture: 'utility',
     };
   }
 
-  // Test files
-  if (name.includes('.test.') || name.includes('.spec.') || ext === 'test') {
-    return {
-      accent: '#ff922b',
-      glow: 'rgba(255, 146, 43, 0.4)',
-      left: '#3a200a',
-      right: '#522d10',
-      top: '#75421a',
-      trim: '#ffc078',
-      windowColor: 'rgba(255, 146, 43, 0.7)',
-      windowGlow: 'rgba(255, 146, 43, 0.3)',
-      roofStyle: 'flat',
-      architecture: 'modern',
-    };
-  }
-
-  // Default - Generic modern building
+  // Default - Generic modern building (Light Gray/Concrete)
   return {
-    accent: '#74c0fc',
-    glow: 'rgba(116, 192, 252, 0.4)',
-    left: '#0f2a40',
-    right: '#163a5a',
-    top: '#1f4f75',
-    trim: '#a5d8ff',
-    windowColor: 'rgba(116, 192, 252, 0.6)',
-    windowGlow: 'rgba(116, 192, 252, 0.25)',
+    accent: '#9CA3AF',
+    glow: 'rgba(156, 163, 175, 0.4)',
+    left: '#D1D5DB',
+    right: '#9CA3AF',
+    top: '#F3F4F6',
+    trim: '#6B7280',
+    windowColor: 'rgba(253, 248, 225, 0.6)',
+    windowGlow: 'rgba(253, 248, 225, 0.25)',
     roofStyle: 'flat',
     architecture: 'modern',
   };

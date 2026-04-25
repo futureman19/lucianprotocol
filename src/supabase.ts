@@ -4,6 +4,18 @@ import type { Database, Entity } from './types';
 
 export type LuxSupabaseClient = SupabaseClient<Database>;
 
+interface BrowserSupabaseCache {
+  anonKey: string;
+  client: LuxSupabaseClient;
+  url: string;
+}
+
+declare global {
+  interface Window {
+    __luxSupabaseBrowserClient__?: BrowserSupabaseCache;
+  }
+}
+
 const OPTIONAL_ENTITY_SCHEMA_KEYS = [
   'z',
   'memory',
@@ -88,8 +100,15 @@ export function createBrowserSupabaseClient(
   url: string,
   anonKey: string,
 ): LuxSupabaseClient {
-  return createClient<Database>(url, anonKey, {
+  const cache = typeof window !== 'undefined' ? window.__luxSupabaseBrowserClient__ : undefined;
+  if (cache && cache.url === url && cache.anonKey === anonKey) {
+    return cache.client;
+  }
+
+  const client = createClient<Database>(url, anonKey, {
     auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
       persistSession: false,
     },
     realtime: {
@@ -98,6 +117,12 @@ export function createBrowserSupabaseClient(
       },
     },
   });
+
+  if (typeof window !== 'undefined') {
+    window.__luxSupabaseBrowserClient__ = { anonKey, client, url };
+  }
+
+  return client;
 }
 
 export async function upsertEntitiesWithSchemaFallback(

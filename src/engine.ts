@@ -48,7 +48,6 @@ import {
 import {
   createRepositoryOverlay,
   listSavedRepositoryOverlays,
-  loadNamedRepositoryOverlaySync,
   loadRepositoryOverlaySync,
   saveRepositoryOverlay,
 } from './git-parser';
@@ -635,19 +634,6 @@ export class LuxEngine {
   }
 
   private async importRepositoryOverlay(repositoryPath: string): Promise<void> {
-    const normalizedName = path.basename(repositoryPath).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
-
-    if (loadNamedRepositoryOverlaySync(normalizedName).length > 0) {
-      console.log(`[control] loading saved overlay name=${normalizedName}`);
-      const entities = loadNamedRepositoryOverlaySync(normalizedName);
-      this.pendingOverlay = {
-        entities,
-        repoName: normalizedName,
-        repoPath: repositoryPath,
-      };
-      return;
-    }
-
     console.log(`[control] importing repository path=${repositoryPath}`);
     const overlay = await createRepositoryOverlay(repositoryPath, { seed: this.seed });
     await saveRepositoryOverlay(overlay);

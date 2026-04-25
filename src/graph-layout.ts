@@ -38,11 +38,13 @@ const MARGIN = 2;
 const CENTER = (GRID_SIZE - 1) / 2; // 24.5
 
 // Force-directed parameters tuned for 50×50 grid
-const K_REPULSE = 3.2;
-const K_ATTRACT = 0.035;
-const K_CENTER = 0.012;
-const K_DIRECTORY = 0.06;
-const MAX_ITERATIONS = 45;
+const K_REPULSE = 2.0;
+const K_ATTRACT = 0.015;
+const K_CENTER = 0.25;
+const K_DIRECTORY = 0.02;
+const MAX_ITERATIONS = 120;
+const BOUNDARY_MARGIN = 4;
+const BOUNDARY_REPULSE = 0.4;
 
 // ─── Role Inference ───
 
@@ -219,7 +221,8 @@ function initFilePositions(files: LayoutNode[], rng: () => number): Map<string, 
 
   // Entry points distributed in a ring around center
   const entries = files.filter((n) => n.isEntryPoint);
-  const entryRadius = 9;
+  // Entry points: tight ring near center so tethered files cluster around the middle
+  const entryRadius = 3;
   entries.forEach((node, i) => {
     const angle = (i / Math.max(entries.length, 1)) * 2 * Math.PI + rng() * 0.2;
     positions.set(node.path, {
@@ -228,15 +231,15 @@ function initFilePositions(files: LayoutNode[], rng: () => number): Map<string, 
     });
   });
 
-  // Others: seeded random near center with some spread
+  // Others: wider initial spread so the city has room to breathe
   const others = files.filter((n) => !n.isEntryPoint);
   others.forEach((node) => {
     const hash = stringHash(node.path);
     const angle = (hash / 0x7fffffff) * 2 * Math.PI;
-    const radius = 3 + (hash % 1000) / 1000 * 7;
+    const radius = 10 + (hash % 1000) / 1000 * 14;
     positions.set(node.path, {
-      x: CENTER + Math.cos(angle) * radius + (rng() - 0.5) * 3,
-      y: CENTER + Math.sin(angle) * radius + (rng() - 0.5) * 3,
+      x: CENTER + Math.cos(angle) * radius + (rng() - 0.5) * 4,
+      y: CENTER + Math.sin(angle) * radius + (rng() - 0.5) * 4,
     });
   });
 
@@ -318,6 +321,17 @@ function runForceLayout(files: LayoutNode[], positions: Map<string, FloatPos>): 
       forces.set(node.path, { fx, fy });
     }
 
+    // 3b. Soft boundary repulsion — keep files away from edges so the city doesn't drift
+    for (const node of fileList) {
+      const p = pos(node.path);
+      let { fx, fy } = forces.get(node.path)!;
+      if (p.x < BOUNDARY_MARGIN) fx += BOUNDARY_REPULSE * (BOUNDARY_MARGIN - p.x);
+      if (p.x > GRID_SIZE - 1 - BOUNDARY_MARGIN) fx -= BOUNDARY_REPULSE * (p.x - (GRID_SIZE - 1 - BOUNDARY_MARGIN));
+      if (p.y < BOUNDARY_MARGIN) fy += BOUNDARY_REPULSE * (BOUNDARY_MARGIN - p.y);
+      if (p.y > GRID_SIZE - 1 - BOUNDARY_MARGIN) fy -= BOUNDARY_REPULSE * (p.y - (GRID_SIZE - 1 - BOUNDARY_MARGIN));
+      forces.set(node.path, { fx, fy });
+    }
+
     // 4. Directory cohesion — files in same dir weakly attract
     const dirGroups = new Map<string, LayoutNode[]>();
     for (const node of fileList) {
@@ -359,6 +373,26 @@ function runForceLayout(files: LayoutNode[], positions: Map<string, FloatPos>): 
       // Clamp with margin
       p.x = Math.max(MARGIN, Math.min(GRID_SIZE - 1 - MARGIN, p.x));
       p.y = Math.max(MARGIN, Math.min(GRID_SIZE - 1 - MARGIN, p.y));
+    }
+
+    // Center-of-mass correction — aggressively prevent the whole cluster from drifting
+    if (fileList.length > 0) {
+      let avgX = 0;
+      let avgY = 0;
+      for (const node of fileList) {
+        const p = pos(node.path);
+        avgX += p.x;
+        avgY += p.y;
+      }
+      avgX /= fileList.length;
+      avgY /= fileList.length;
+      const shiftX = CENTER - avgX;
+      const shiftY = CENTER - avgY;
+      for (const node of fileList) {
+        const p = pos(node.path);
+        p.x += shiftX * 0.5;
+        p.y += shiftY * 0.5;
+      }
     }
   }
 }
