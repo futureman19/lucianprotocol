@@ -75,6 +75,18 @@ function drawPipeSegment(
     context.beginPath();
     context.arc(fx, fy, width * 0.35, 0, Math.PI * 2);
     context.fill();
+
+    // Data packets (small dots)
+    const numPackets = 3;
+    context.fillStyle = '#ffffff';
+    for (let i = 0; i < numPackets; i++) {
+        const pt = ((phase * 2 + i * 20) % 60) / 60;
+        const px = from.sx + (to.sx - from.sx) * pt;
+        const py = from.sy + (to.sy - from.sy) * pt;
+        context.beginPath();
+        context.arc(px, py, width * 0.2, 0, Math.PI * 2);
+        context.fill();
+    }
   }
 
   context.restore();

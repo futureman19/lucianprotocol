@@ -7,11 +7,13 @@ export const GRID_WIDTH = 50;
 export const GRID_HEIGHT = 50;
 export const GRID_DEPTH = 8;
 export const CLOCK_PERIOD = 60;
-export const TICK_INTERVAL_MS = 100;
+export const TICK_INTERVAL_MS = 500;
 export const MAX_TICKS = 300;
 export const WALL_COUNT = 20;
 export const DEFAULT_SEED = 'lux-alpha-001';
 export const WORLD_STATE_ID = 'lux-world';
+export const DEFAULT_WEATHER = 'clear';
+export const WEATHER_CHANGE_INTERVAL_QUEEN_CYCLES = 3;
 
 export const START_POSITION: Position = { x: 0, y: 0, z: 0 };
 export const GOAL_POSITION: Position = { x: 25, y: 25, z: 0 };

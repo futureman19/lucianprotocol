@@ -9,7 +9,7 @@ export const DEFAULT_CAMERA: Camera = {
   panX: 0,
   panY: 0,
   rotation: 0,
-  zoom: 1,
+  zoom: 0.85,
 };
 
 export interface IsoLayout {

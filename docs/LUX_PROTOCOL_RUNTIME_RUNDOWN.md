@@ -25,7 +25,7 @@ On each tick, it does the following:
 2. Update node lifecycle state such as `task`, `stable`, `verified`, and `asymmetry`.
 3. Resolve locks and maintenance behavior for the Hivemind.
 4. Queue the next round of agent decisions without blocking the clock.
-5. Write the latest `entities` and `world_state` to Supabase.
+5. Flush dirty entity rows plus throttled `world_state` updates to Supabase.
 6. Increment the global tick and continue.
 
 The important architectural rule is that Gemini does not block the clock. Requests are issued asynchronously and applied on a later tick when they return.
@@ -205,7 +205,7 @@ The workforce operates on a three-state visibility model:
 
 - **1 — Active:** An agent has an objective (task, asymmetry, operator target) and is visible at full opacity. The Architect may call Gemini during this phase.
 - **9 — Idle:** No work exists. The agent stops moving. After 3 seconds of stillness, it begins to fade.
-- **0 — Dormant:** After 12 seconds of idle time, the agent is fully invisible. The engine tick loop continues for Supabase sync and control polling, but API usage is zero. Agents re-materialize instantly when a new prompt or task enters the lattice.
+- **0 — Dormant:** After 12 seconds of idle time, the agent is fully invisible. The engine tick loop continues for bounded Supabase sync and control polling, but API usage is zero. Agents re-materialize instantly when a new prompt or task enters the lattice.
 
 This replaces the previous "maintenance wandering" behavior where agents would rotate through every stable file to keep the lattice looking busy.
 
@@ -270,7 +270,7 @@ If the page looks busy, the most likely real sequence is:
 2. The engine is ticking every 100ms.
 3. At least one agent has a meaningful target (task, asymmetry, operator directive).
 4. The Architect is calling Gemini because navigational work is actually happening.
-5. Supabase is broadcasting updated entity positions and world telemetry.
+5. Supabase is broadcasting dirty entity updates and throttled world telemetry.
 6. The browser is projecting all of that as a cyberpunk repo explorer.
 
 If the page is **quiet and agents are invisible**, that is the correct dormant state. The engine is still alive, but there is no work to do and no API spend occurring.

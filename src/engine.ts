@@ -11,6 +11,32 @@ import { pathToFileURL } from 'node:url';
 import { simpleGit } from 'simple-git';
 
 import { GeminiNavigator } from './ai';
+import {
+  HEIGHT_ANIMATION_TICKS,
+  RUBBLE_FADE_TICKS,
+  WEATHER_FALL_STEP,
+  WEATHER_RISE_STEP,
+  advanceHeightTowardsTarget,
+  advanceNormalizedValue,
+  getBuildingArchetype,
+  getBuildingCondition,
+  getConstructionDurationTicks,
+  getConstructionPhase,
+  getDemolitionDurationTicks,
+  getDemolitionPhase,
+  getEntityTargetHeightUnits,
+  getImportanceTier,
+  getIvyTargetCoverage,
+  getLandmarkRole,
+  getPowerState,
+  getTargetActivityLevel,
+  getTargetNetworkLoad,
+  getTargetOccupancy,
+  getTargetTrafficLoad,
+  getWeatherForQueenCycle,
+  getWeatherAccumulationTargets,
+  getUpgradeLevel,
+} from './building-lifecycle';
 import { computeChiralMass, getAgentRole } from './hivemind';
 import { resolveOperatorDirective } from './operator-control';
 import {
@@ -38,6 +64,7 @@ import {
   MAX_TICKS,
   TICK_INTERVAL_MS,
   WORLD_STATE_ID,
+  DEFAULT_WEATHER,
   createInitialEntities,
   isSolidEntity,
   isWithinBounds,
@@ -84,10 +111,10 @@ import {
   type Position,
   type QueuedDecision,
   type TileObservation,
-  type WorldSnapshot,
   type WorldState,
   type WorldStatus,
   type Task,
+  type Weather,
 } from './types';
 
 interface PendingAiRequest {
@@ -113,6 +140,16 @@ interface ExplanationCacheEntry {
   updatedAtTick: number;
 }
 
+interface PendingEntitySync {
+  entity: Entity;
+  version: number;
+}
+
+interface PendingEntityDelete {
+  entityId: string;
+  version: number;
+}
+
 
 const CLOCKWISE_SHIFT: Record<Direction, Direction> = {
   north: 'east',
@@ -135,6 +172,8 @@ const PHEROMONE_TTL_TICKS = 30;
 const AI_DECISION_INTERVAL_TICKS = 30;
 const CONTROL_ROW_ID = 'lux-control';
 const CONTROL_POLL_INTERVAL_TICKS = 10;
+const SUPABASE_ENTITY_SYNC_INTERVAL_TICKS = 60;
+const SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS = 1;
 const EXPLANATION_STREAM_CHARS_PER_TICK = 220;
 
 function createEmptyExplanationState(): ExplanationState {
@@ -255,6 +294,8 @@ export class LuxEngine {
   private readonly aiNavigator = new GeminiNavigator();
   private readonly supabase = createServiceSupabaseClient();
   private readonly syncPipeline: Promise<void> = Promise.resolve();
+  private readonly dirtyEntityVersions = new Map<string, number>();
+  private readonly deletedEntityVersions = new Map<string, number>();
 
   private absoluteTick = 0;
   private structureEntitiesCache: Entity[] | null = null;
@@ -271,6 +312,10 @@ export class LuxEngine {
   private lastTickDurationMs: number | null = null;
   private lastAiLatencyMs: number | null = null;
   private maxAiLatencyMs: number | null = null;
+  private lastEntitySyncTick = -SUPABASE_ENTITY_SYNC_INTERVAL_TICKS;
+  private lastWorldStateSyncTick = -SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS;
+  private hasDoneInitialEntitySync = false;
+  private lastSyncedWorldStateSignature = ''; // hash of meaningful control fields
   private lastControlSignature = '';
   private lastControlPollTick = -CONTROL_POLL_INTERVAL_TICKS;
   private operatorPrompt = '';
@@ -299,16 +344,20 @@ export class LuxEngine {
   private savedOverlayNames: string[] = [];
   private activeTasks: Task[] = [];
   private queenState: QueenState = getDefaultQueenState();
+  private weather: Weather = DEFAULT_WEATHER;
+  private weatherOverride: Weather | null = null;
   private lastOperatorPromptForPlanning = '';
   private visionaryPlanningPromise: Promise<void> | null = null;
   private criticReviewPromise: Promise<void> | null = null;
   private visionaryFinalReviewPromise: Promise<void> | null = null;
   private autoCommitPromise: Promise<void> | null = null;
+  private soundEvents: string[] = [];
   private explanationPromise: Promise<void> | null = null;
   private explanationRequestId = 0;
   private explanationState: ExplanationState = createEmptyExplanationState();
   private readonly explanationCache = new Map<string, ExplanationCacheEntry>();
   private hasAutoCommittedForCurrentTasks = false;
+  private mutationVersion = 0;
 
   private readonly trailGrid = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH);
   private readonly trailTypeGrid = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH);
@@ -389,6 +438,7 @@ export class LuxEngine {
     this.positionIndex.clear();
     this.savedOverlayNames = listSavedRepositoryOverlays();
     this.activeTasks = [];
+    this.weather = this.weatherOverride ?? DEFAULT_WEATHER;
     this.lastOperatorPromptForPlanning = '';
     this.visionaryPlanningPromise = null;
     this.criticReviewPromise = null;
@@ -399,6 +449,13 @@ export class LuxEngine {
     this.explanationCache.clear();
     this.hasWarnedEntitySchemaMismatch = false;
     this.hasWarnedWorldStateSchemaMismatch = false;
+    this.dirtyEntityVersions.clear();
+    this.deletedEntityVersions.clear();
+    this.lastEntitySyncTick = -SUPABASE_ENTITY_SYNC_INTERVAL_TICKS;
+    this.lastWorldStateSyncTick = -SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS;
+    this.hasDoneInitialEntitySync = false;
+    this.lastSyncedWorldStateSignature = '';
+    this.idleSkipCount = 0;
 
     for (const entity of createInitialEntities(this.seed)) {
       this.registerEntity(entity);
@@ -502,10 +559,396 @@ export class LuxEngine {
     this.pendingOverlay = null;
     this.activeRepoPath = overlay.repoPath;
     this.activeRepoName = overlay.repoName;
-    this.pendingStructurePurge = true;
-    this.resetWorld(overlay.entities);
+    this.applyStructureOverlay(overlay.entities);
     this.syncOperatorIntent(overlay.entities);
     console.log(`[control] activated repository overlay repo=${overlay.repoName} path=${overlay.repoPath}`);
+  }
+
+  private applyStructureOverlay(overlayEntities: Entity[]): void {
+    const existingStructures = [...this.getStructureEntities()];
+    const existingById = new Map(existingStructures.map((entity) => [entity.id, entity]));
+    const nextIds = new Set<string>();
+
+    for (const incoming of overlayEntities) {
+      nextIds.add(incoming.id);
+      const existing = existingById.get(incoming.id);
+
+      if (!existing) {
+        this.registerEntity(this.createLifecycleEntity(incoming));
+        continue;
+      }
+
+      const contentChanged =
+        existing.content_hash !== incoming.content_hash
+        || existing.mass !== incoming.mass
+        || existing.content_preview !== incoming.content_preview
+        || existing.git_status !== incoming.git_status;
+
+      this.patchEntity(existing.id, {
+        x: incoming.x,
+        y: incoming.y,
+        z: incoming.z ?? 0,
+        mass: incoming.mass,
+        name: incoming.name ?? null,
+        path: incoming.path ?? null,
+        extension: incoming.extension ?? null,
+        descriptor: incoming.descriptor ?? null,
+        content: incoming.content ?? null,
+        content_preview: incoming.content_preview ?? null,
+        content_hash: incoming.content_hash ?? null,
+        git_status: incoming.git_status ?? null,
+        repo_root: incoming.repo_root ?? null,
+        is_binary: incoming.is_binary ?? null,
+        last_commit_sha: incoming.last_commit_sha ?? null,
+        last_commit_message: incoming.last_commit_message ?? null,
+        last_commit_author: incoming.last_commit_author ?? null,
+        last_commit_date: incoming.last_commit_date ?? null,
+        git_diff: incoming.git_diff ?? null,
+        tether_to: incoming.tether_to ?? null,
+        tether_from: incoming.tether_from ?? null,
+        tether_broken: incoming.tether_broken ?? null,
+        tick_updated: this.absoluteTick,
+      });
+      this.refreshStructureVisualMetrics(existing.id, { trackEdit: contentChanged });
+
+      if (existing.node_state === 'demolishing') {
+        this.patchEntity(existing.id, {
+          node_state: 'constructing',
+          state_tick: this.absoluteTick,
+          lock_owner: null,
+          lock_tick: null,
+        });
+      }
+    }
+
+    for (const existing of existingStructures) {
+      if (nextIds.has(existing.id)) {
+        continue;
+      }
+
+      this.beginDemolition(existing);
+    }
+  }
+
+  private createLifecycleEntity(entity: Entity): Entity {
+    if (!isStructureEntity(entity)) {
+      return entity;
+    }
+
+    return {
+      ...entity,
+      current_height: 0,
+      target_height: getEntityTargetHeightUnits(entity),
+      edit_count: entity.edit_count ?? 0,
+      last_edit_tick: entity.last_edit_tick ?? null,
+      ivy_coverage: entity.ivy_coverage ?? 0,
+      building_archetype: entity.building_archetype ?? getBuildingArchetype(entity),
+      importance_tier: entity.importance_tier ?? getImportanceTier(entity),
+      activity_level: entity.activity_level ?? 0,
+      occupancy: entity.occupancy ?? 0,
+      condition: entity.condition ?? 'maintained',
+      upgrade_level: entity.upgrade_level ?? getUpgradeLevel(entity, this.absoluteTick),
+      power_state: entity.power_state ?? 'normal',
+      network_load: entity.network_load ?? 0,
+      traffic_load: entity.traffic_load ?? 0,
+      construction_phase: entity.construction_phase ?? 'excavation',
+      demolition_phase: entity.demolition_phase ?? null,
+      weather_wetness: entity.weather_wetness ?? 0,
+      weather_snow_cover: entity.weather_snow_cover ?? 0,
+      weather_fog_factor: entity.weather_fog_factor ?? 0,
+      landmark_role: entity.landmark_role ?? getLandmarkRole(entity),
+      node_state: 'constructing',
+      state_tick: this.absoluteTick,
+      tick_updated: this.absoluteTick,
+    };
+  }
+
+  private refreshStructureVisualMetrics(
+    entityId: string,
+    options: { trackEdit?: boolean } = {},
+  ): Entity | null {
+    const entity = this.entities.get(entityId);
+    if (!entity || !isStructureEntity(entity)) {
+      return entity ?? null;
+    }
+
+    return this.patchEntity(entityId, {
+      target_height: getEntityTargetHeightUnits(entity),
+      current_height: entity.current_height ?? getEntityTargetHeightUnits(entity),
+      edit_count: options.trackEdit ? (entity.edit_count ?? 0) + 1 : (entity.edit_count ?? 0),
+      last_edit_tick: options.trackEdit ? this.absoluteTick : (entity.last_edit_tick ?? null),
+      ivy_coverage: options.trackEdit ? 0 : (entity.ivy_coverage ?? 0),
+    });
+  }
+
+  private synchronizeStructureSimulationSignals(entity: Entity): Entity {
+    const activityTarget = getTargetActivityLevel(entity, this.absoluteTick);
+    const occupancyTarget = getTargetOccupancy(entity, this.absoluteTick, activityTarget);
+    const networkTarget = getTargetNetworkLoad(entity, this.absoluteTick, activityTarget);
+    const trafficTarget = getTargetTrafficLoad(entity, this.absoluteTick, activityTarget, occupancyTarget);
+    const weatherTargets = getWeatherAccumulationTargets(entity, this.weather);
+
+    const nextActivityLevel = advanceNormalizedValue(entity.activity_level ?? 0, activityTarget);
+    const nextOccupancy = advanceNormalizedValue(entity.occupancy ?? 0, occupancyTarget);
+    const nextNetworkLoad = advanceNormalizedValue(entity.network_load ?? 0, networkTarget);
+    const nextTrafficLoad = advanceNormalizedValue(entity.traffic_load ?? 0, trafficTarget);
+    const nextWeatherWetness = advanceNormalizedValue(
+      entity.weather_wetness ?? 0,
+      weatherTargets.weather_wetness,
+      WEATHER_RISE_STEP,
+      WEATHER_FALL_STEP,
+    );
+    const nextWeatherSnowCover = advanceNormalizedValue(
+      entity.weather_snow_cover ?? 0,
+      weatherTargets.weather_snow_cover,
+      WEATHER_RISE_STEP,
+      WEATHER_FALL_STEP,
+    );
+    const nextWeatherFogFactor = advanceNormalizedValue(
+      entity.weather_fog_factor ?? 0,
+      weatherTargets.weather_fog_factor,
+      WEATHER_RISE_STEP,
+      WEATHER_FALL_STEP,
+    );
+
+    const condition = getBuildingCondition(entity, this.absoluteTick);
+    const candidatePatch: Partial<Entity> = {
+      building_archetype: getBuildingArchetype(entity),
+      importance_tier: getImportanceTier(entity),
+      activity_level: nextActivityLevel,
+      occupancy: nextOccupancy,
+      condition,
+      upgrade_level: getUpgradeLevel(entity, this.absoluteTick),
+      network_load: nextNetworkLoad,
+      traffic_load: nextTrafficLoad,
+      construction_phase: getConstructionPhase(entity, this.absoluteTick),
+      demolition_phase: getDemolitionPhase(entity, this.absoluteTick),
+      weather_wetness: nextWeatherWetness,
+      weather_snow_cover: nextWeatherSnowCover,
+      weather_fog_factor: nextWeatherFogFactor,
+      landmark_role: getLandmarkRole(entity),
+    };
+
+    candidatePatch.power_state = getPowerState(entity, this.weather, {
+      activityLevel: nextActivityLevel,
+      occupancy: nextOccupancy,
+      networkLoad: nextNetworkLoad,
+      trafficLoad: nextTrafficLoad,
+      condition,
+    });
+
+    const patch: Partial<Entity> = {};
+    for (const [key, value] of Object.entries(candidatePatch) as Array<[keyof Entity, unknown]>) {
+      if ((entity[key] ?? undefined) !== (value ?? undefined)) {
+        (patch as Record<string, unknown>)[key] = value;
+      }
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return entity;
+    }
+
+    return this.patchEntity(entity.id, patch) ?? entity;
+  }
+
+  private hasStructureSignalDrift(entity: Entity): boolean {
+    const activityTarget = getTargetActivityLevel(entity, this.absoluteTick);
+    const occupancyTarget = getTargetOccupancy(entity, this.absoluteTick, activityTarget);
+    const networkTarget = getTargetNetworkLoad(entity, this.absoluteTick, activityTarget);
+    const trafficTarget = getTargetTrafficLoad(entity, this.absoluteTick, activityTarget, occupancyTarget);
+    const weatherTargets = getWeatherAccumulationTargets(entity, this.weather);
+    const condition = getBuildingCondition(entity, this.absoluteTick);
+
+    return (
+      entity.building_archetype !== getBuildingArchetype(entity)
+      || (entity.importance_tier ?? -1) !== getImportanceTier(entity)
+      || Math.abs((entity.activity_level ?? 0) - activityTarget) >= 0.01
+      || Math.abs((entity.occupancy ?? 0) - occupancyTarget) >= 0.01
+      || entity.condition !== condition
+      || (entity.upgrade_level ?? -1) !== getUpgradeLevel(entity, this.absoluteTick)
+      || Math.abs((entity.network_load ?? 0) - networkTarget) >= 0.01
+      || Math.abs((entity.traffic_load ?? 0) - trafficTarget) >= 0.01
+      || entity.construction_phase !== getConstructionPhase(entity, this.absoluteTick)
+      || entity.demolition_phase !== getDemolitionPhase(entity, this.absoluteTick)
+      || Math.abs((entity.weather_wetness ?? 0) - weatherTargets.weather_wetness) >= 0.01
+      || Math.abs((entity.weather_snow_cover ?? 0) - weatherTargets.weather_snow_cover) >= 0.01
+      || Math.abs((entity.weather_fog_factor ?? 0) - weatherTargets.weather_fog_factor) >= 0.01
+      || entity.landmark_role !== getLandmarkRole(entity)
+      || entity.power_state !== getPowerState(entity, this.weather, {
+        activityLevel: activityTarget,
+        occupancy: occupancyTarget,
+        networkLoad: networkTarget,
+        trafficLoad: trafficTarget,
+        condition,
+      })
+    );
+  }
+
+  private beginDemolition(entity: Entity): void {
+    if (!isStructureEntity(entity) || entity.node_state === 'demolishing') {
+      return;
+    }
+
+    this.patchEntity(entity.id, {
+      git_status: 'deleted',
+      node_state: 'demolishing',
+      state_tick: this.absoluteTick,
+      lock_owner: null,
+      lock_tick: null,
+      target_height: 0,
+      edit_count: (entity.edit_count ?? 0) + 1,
+      last_edit_tick: this.absoluteTick,
+      ivy_coverage: 0,
+      condition: 'condemned',
+      demolition_phase: 'marked',
+    });
+    this.spawnDemolitionParticles(entity, 'dust');
+  }
+
+  private spawnDemolitionParticles(entity: Entity, descriptor: string): void {
+    for (let index = 0; index < 4; index += 1) {
+      this.registerEntity({
+        id: `particle:${entity.id}:${this.absoluteTick}:${index}`,
+        type: 'particle',
+        x: entity.x,
+        y: entity.y,
+        z: entity.z ?? 0,
+        mass: 1,
+        descriptor,
+        birth_tick: this.absoluteTick,
+        ttl_ticks: 12 + (index * 2),
+        current_height: entity.current_height ?? entity.target_height ?? getEntityTargetHeightUnits(entity),
+        target_height: Math.max(8, Math.floor((entity.current_height ?? entity.target_height ?? 24) * 0.35)),
+        state_register: index,
+        tick_updated: this.absoluteTick,
+      });
+    }
+  }
+
+  private spawnRubblePile(entity: Entity): void {
+    this.registerEntity({
+      id: `rubble:${entity.id}:${this.absoluteTick}`,
+      type: 'rubble',
+      x: entity.x,
+      y: entity.y,
+      z: entity.z ?? 0,
+      mass: 1,
+      name: entity.name ?? null,
+      path: entity.path ?? null,
+      descriptor: 'rubble-pile',
+      birth_tick: this.absoluteTick,
+      ttl_ticks: RUBBLE_FADE_TICKS,
+      current_height: 18,
+      target_height: 18,
+      tick_updated: this.absoluteTick,
+    });
+  }
+
+  private expireTransientEntities(): void {
+    const transientEntities = Array.from(this.entities.values()).filter((entity) =>
+      (entity.type === 'particle' || entity.type === 'rubble')
+      && entity.birth_tick != null
+      && entity.ttl_ticks != null,
+    );
+
+    for (const entity of transientEntities) {
+      if ((this.absoluteTick - entity.birth_tick!) >= entity.ttl_ticks!) {
+        this.deleteEntity(entity.id);
+      }
+    }
+  }
+
+  private advanceStructureLifecycle(): void {
+    for (const entity of this.getStructureEntities()) {
+      let liveEntity = this.entities.get(entity.id) ?? entity;
+      const currentHeight = entity.current_height ?? getEntityTargetHeightUnits(entity);
+      const targetHeight = entity.target_height ?? getEntityTargetHeightUnits(entity);
+
+      if (entity.node_state === 'constructing') {
+        const elapsed = this.absoluteTick - (entity.state_tick ?? this.absoluteTick);
+        const duration = getConstructionDurationTicks(entity);
+        const nextHeight = advanceHeightTowardsTarget(
+          currentHeight,
+          targetHeight,
+          Math.max(1, duration - elapsed),
+        );
+
+        if (nextHeight !== currentHeight) {
+          liveEntity = this.patchEntity(entity.id, { current_height: nextHeight }) ?? liveEntity;
+        }
+
+        if (elapsed >= duration) {
+          liveEntity = this.patchEntity(entity.id, {
+            current_height: targetHeight,
+            node_state: this.getDefaultNodeState(entity),
+            state_tick: this.absoluteTick,
+            construction_phase: 'complete',
+            demolition_phase: null,
+          }) ?? liveEntity;
+        }
+
+        this.synchronizeStructureSimulationSignals(liveEntity);
+        continue;
+      }
+
+      if (entity.node_state === 'demolishing') {
+        const elapsed = this.absoluteTick - (entity.state_tick ?? this.absoluteTick);
+        const duration = getDemolitionDurationTicks(entity);
+        const nextHeight = advanceHeightTowardsTarget(
+          currentHeight,
+          0,
+          Math.max(1, duration - elapsed),
+        );
+
+        if (nextHeight !== currentHeight) {
+          liveEntity = this.patchEntity(entity.id, { current_height: nextHeight }) ?? liveEntity;
+        }
+
+        if ((this.absoluteTick + entity.id.length) % 3 === 0) {
+          this.spawnDemolitionParticles(entity, 'rubble');
+        }
+
+        if (elapsed >= duration || nextHeight <= 0) {
+          this.spawnRubblePile(entity);
+          this.deleteEntity(entity.id);
+        }
+
+        if (this.entities.has(entity.id)) {
+          this.synchronizeStructureSimulationSignals(liveEntity);
+        }
+        continue;
+      }
+
+      if (currentHeight !== targetHeight) {
+        const nextHeight = advanceHeightTowardsTarget(
+          currentHeight,
+          targetHeight,
+          HEIGHT_ANIMATION_TICKS,
+        );
+
+        if (nextHeight !== currentHeight) {
+          liveEntity = this.patchEntity(entity.id, { current_height: nextHeight }) ?? liveEntity;
+        }
+
+        if (targetHeight < currentHeight && (this.absoluteTick + entity.id.length) % 4 === 0) {
+          this.spawnDemolitionParticles(entity, 'rubble');
+        }
+      }
+
+      const ivyTarget = getIvyTargetCoverage(entity, this.absoluteTick);
+      const ivyCoverage = entity.ivy_coverage ?? 0;
+      if (Math.abs(ivyTarget - ivyCoverage) >= 0.01) {
+        const nextCoverage =
+          ivyTarget > ivyCoverage
+            ? Math.min(ivyTarget, ivyCoverage + 0.01)
+            : Math.max(ivyTarget, ivyCoverage - 0.03);
+        liveEntity = this.patchEntity(entity.id, { ivy_coverage: Number(nextCoverage.toFixed(2)) }) ?? liveEntity;
+      }
+
+      this.synchronizeStructureSimulationSignals(liveEntity);
+    }
+
+    this.expireTransientEntities();
   }
 
   private pollOperatorControlsIfNeeded(): void {
@@ -555,6 +998,7 @@ export class LuxEngine {
       this.lastControlSignature = JSON.stringify({
         repoPath: nextRepoPath,
         operatorPrompt: control.operator_prompt.trim(),
+        weatherOverride: control.weather_override ?? null,
         paused: control.paused ?? false,
         automate: control.automate ?? false,
         visionaryPrompt: control.visionary_prompt?.trim() ?? '',
@@ -569,11 +1013,13 @@ export class LuxEngine {
     const nextVisionaryPrompt = control.visionary_prompt?.trim() ?? '';
     const nextArchitectPrompt = control.architect_prompt?.trim() ?? '';
     const nextCriticPrompt = control.critic_prompt?.trim() ?? '';
+    const nextWeatherOverride = control.weather_override ?? null;
     const nextPaused = control.paused ?? false;
     const nextAutomate = control.automate ?? false;
     const signature = JSON.stringify({
       repoPath: normalizedRepoPath,
       operatorPrompt: nextPrompt,
+      weatherOverride: nextWeatherOverride,
       paused: nextPaused,
       automate: nextAutomate,
       visionaryPrompt: nextVisionaryPrompt,
@@ -592,6 +1038,9 @@ export class LuxEngine {
     this.visionaryPrompt = nextVisionaryPrompt;
     this.architectPrompt = nextArchitectPrompt;
     this.criticPrompt = nextCriticPrompt;
+    this.weatherOverride = nextWeatherOverride;
+    this.weather = this.weatherOverride
+      ?? (this.queenState.cycle > 0 ? getWeatherForQueenCycle(this.queenState.cycle) : DEFAULT_WEATHER);
     this.operatorPrompt = nextPrompt;
 
     await this.processPendingEdits(control);
@@ -647,6 +1096,102 @@ export class LuxEngine {
     };
   }
 
+  private nextMutationVersion(): number {
+    this.mutationVersion += 1;
+    return this.mutationVersion;
+  }
+
+  private markEntityDirty(entity: Entity): void {
+    if (entity.type === 'pheromone') {
+      return;
+    }
+
+    const version = this.nextMutationVersion();
+    this.deletedEntityVersions.delete(entity.id);
+    this.dirtyEntityVersions.set(entity.id, version);
+  }
+
+  private markEntityDeleted(entity: Entity): void {
+    if (entity.type === 'pheromone') {
+      return;
+    }
+
+    const version = this.nextMutationVersion();
+    this.dirtyEntityVersions.delete(entity.id);
+    this.deletedEntityVersions.set(entity.id, version);
+  }
+
+  private getPendingEntitySyncEntries(): PendingEntitySync[] {
+    const pending: PendingEntitySync[] = [];
+
+    for (const [entityId, version] of this.dirtyEntityVersions) {
+      const entity = this.entities.get(entityId);
+      if (!entity || entity.type === 'pheromone') {
+        continue;
+      }
+
+      pending.push({ entity, version });
+    }
+
+    pending.sort((left, right) => left.entity.id.localeCompare(right.entity.id));
+    return pending;
+  }
+
+  private getPendingEntityDeleteEntries(): PendingEntityDelete[] {
+    return Array.from(this.deletedEntityVersions.entries())
+      .map(([entityId, version]) => ({ entityId, version }))
+      .sort((left, right) => left.entityId.localeCompare(right.entityId));
+  }
+
+  private getOccupiedTiles(entity: Entity): Array<{ x: number; y: number; z: number }> {
+    const w = entity.occupancy_width ?? 1;
+    const d = entity.occupancy_depth ?? 1;
+    const halfW = Math.floor((w - 1) / 2);
+    const halfD = Math.floor((d - 1) / 2);
+    const z = getPositionZ(entity);
+    const tiles: Array<{ x: number; y: number; z: number }> = [];
+    for (let dy = entity.y - halfD; dy <= entity.y + halfD; dy++) {
+      for (let dx = entity.x - halfW; dx <= entity.x + halfW; dx++) {
+        tiles.push({ x: dx, y: dy, z });
+      }
+    }
+    return tiles;
+  }
+
+  private markEntityTiles(entity: Entity): void {
+    const markSolid = isSolidEntity(entity);
+    for (const tile of this.getOccupiedTiles(entity)) {
+      const key = `${tile.x},${tile.y},${tile.z}`;
+      const list = this.positionIndex.get(key) ?? [];
+      if (!list.includes(entity.id)) {
+        list.push(entity.id);
+        this.positionIndex.set(key, list);
+      }
+      if (markSolid) {
+        this.solidGrid[toIndex(tile.x, tile.y, tile.z)] = entity.id;
+      }
+    }
+  }
+
+  private clearEntityTiles(entity: Entity): void {
+    const clearSolid = isSolidEntity(entity);
+    for (const tile of this.getOccupiedTiles(entity)) {
+      const key = `${tile.x},${tile.y},${tile.z}`;
+      const list = this.positionIndex.get(key);
+      if (list) {
+        const filtered = list.filter((id) => id !== entity.id);
+        if (filtered.length === 0) {
+          this.positionIndex.delete(key);
+        } else {
+          this.positionIndex.set(key, filtered);
+        }
+      }
+      if (clearSolid) {
+        this.solidGrid[toIndex(tile.x, tile.y, tile.z)] = null;
+      }
+    }
+  }
+
   private registerEntity(entity: Entity): void {
     let normalizedEntity: Entity =
       entity.z == null
@@ -655,6 +1200,36 @@ export class LuxEngine {
 
     if (normalizedEntity.type === 'agent' && normalizedEntity.memory == null) {
       normalizedEntity = { ...normalizedEntity, memory: createDefaultAgentMemory() };
+    }
+
+    if (isStructureEntity(normalizedEntity)) {
+      const fallbackHeight = getEntityTargetHeightUnits(normalizedEntity);
+      normalizedEntity =
+        normalizedEntity.current_height == null && normalizedEntity.target_height == null
+          ? this.createLifecycleEntity(normalizedEntity)
+          : {
+            ...normalizedEntity,
+            current_height: normalizedEntity.current_height ?? normalizedEntity.target_height ?? fallbackHeight,
+            target_height: normalizedEntity.target_height ?? fallbackHeight,
+            edit_count: normalizedEntity.edit_count ?? 0,
+            last_edit_tick: normalizedEntity.last_edit_tick ?? null,
+            ivy_coverage: normalizedEntity.ivy_coverage ?? 0,
+            building_archetype: normalizedEntity.building_archetype ?? getBuildingArchetype(normalizedEntity),
+            importance_tier: normalizedEntity.importance_tier ?? getImportanceTier(normalizedEntity),
+            activity_level: normalizedEntity.activity_level ?? 0,
+            occupancy: normalizedEntity.occupancy ?? 0,
+            condition: normalizedEntity.condition ?? 'maintained',
+            upgrade_level: normalizedEntity.upgrade_level ?? getUpgradeLevel(normalizedEntity, this.absoluteTick),
+            power_state: normalizedEntity.power_state ?? 'normal',
+            network_load: normalizedEntity.network_load ?? 0,
+            traffic_load: normalizedEntity.traffic_load ?? 0,
+            construction_phase: normalizedEntity.construction_phase ?? 'complete',
+            demolition_phase: normalizedEntity.demolition_phase ?? null,
+            weather_wetness: normalizedEntity.weather_wetness ?? 0,
+            weather_snow_cover: normalizedEntity.weather_snow_cover ?? 0,
+            weather_fog_factor: normalizedEntity.weather_fog_factor ?? 0,
+            landmark_role: normalizedEntity.landmark_role ?? getLandmarkRole(normalizedEntity),
+          };
     }
 
     this.entities.set(normalizedEntity.id, normalizedEntity);
@@ -668,14 +1243,8 @@ export class LuxEngine {
       this.goalId = normalizedEntity.id;
     }
 
-    if (isSolidEntity(normalizedEntity)) {
-      this.solidGrid[toIndex(normalizedEntity.x, normalizedEntity.y, getPositionZ(normalizedEntity))] = normalizedEntity.id;
-    }
-
-    const key = getPositionKey(normalizedEntity);
-    const list = this.positionIndex.get(key) ?? [];
-    list.push(normalizedEntity.id);
-    this.positionIndex.set(key, list);
+    this.markEntityTiles(normalizedEntity);
+    this.markEntityDirty(normalizedEntity);
   }
 
   private deleteEntity(entityId: string): void {
@@ -700,23 +1269,8 @@ export class LuxEngine {
       this.goalId = '';
     }
 
-    if (isSolidEntity(entity)) {
-      this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
-    }
-
-    const key = getPositionKey(entity);
-    const list = this.positionIndex.get(key);
-    if (!list) {
-      return;
-    }
-
-    const filtered = list.filter((id) => id !== entityId);
-    if (filtered.length === 0) {
-      this.positionIndex.delete(key);
-      return;
-    }
-
-    this.positionIndex.set(key, filtered);
+    this.clearEntityTiles(entity);
+    this.markEntityDeleted(entity);
   }
 
   private patchEntity(entityId: string, patch: Partial<Entity>): Entity | null {
@@ -734,33 +1288,35 @@ export class LuxEngine {
     this.entities.set(entityId, updatedEntity);
     this.invalidateStructureCache();
 
-    if (
+    const positionChanged =
       (patch.x !== undefined && patch.x !== entity.x) ||
       (patch.y !== undefined && patch.y !== entity.y) ||
-      (patch.z !== undefined && patch.z !== getPositionZ(entity))
-    ) {
-      if (isSolidEntity(entity)) {
-        this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
-      }
+      (patch.z !== undefined && patch.z !== getPositionZ(entity));
 
-      const oldKey = getPositionKey(entity);
-      const newKey = getPositionKey(updatedEntity);
-      const oldList = this.positionIndex.get(oldKey);
-      if (oldList) {
-        const filtered = oldList.filter((id) => id !== entityId);
-        if (filtered.length === 0) {
-          this.positionIndex.delete(oldKey);
-        } else {
-          this.positionIndex.set(oldKey, filtered);
-        }
-      }
-      const newList = this.positionIndex.get(newKey) ?? [];
-      newList.push(entityId);
-      this.positionIndex.set(newKey, newList);
+    if (positionChanged) {
+      this.clearEntityTiles(entity);
+      this.markEntityTiles(updatedEntity);
+    }
 
-      if (isSolidEntity(updatedEntity)) {
-        this.solidGrid[toIndex(updatedEntity.x, updatedEntity.y, getPositionZ(updatedEntity))] = updatedEntity.id;
-      }
+    // Only mark dirty if something sync-relevant changed.
+    // tick_updated, state_tick, created_at churn alone should not trigger DB writes.
+    const meaningfulFields: Array<keyof Entity> = [
+      'x', 'y', 'z', 'node_state', 'mass', 'name', 'path',
+      'agent_role', 'memory', 'lmm_rule', 'content_preview', 'extension',
+      'lock_owner', 'descriptor', 'git_status', 'content_hash', 'tether_to',
+      'tether_from', 'tether_broken', 'ttl_ticks', 'target_height', 'current_height',
+      'edit_count', 'last_edit_tick', 'ivy_coverage', 'building_archetype',
+      'importance_tier', 'activity_level', 'occupancy', 'condition', 'upgrade_level',
+      'power_state', 'network_load', 'traffic_load', 'construction_phase',
+      'demolition_phase', 'weather_wetness', 'weather_snow_cover',
+      'weather_fog_factor', 'landmark_role', 'occupancy_width', 'occupancy_depth',
+    ];
+    const hasMeaningfulChange = meaningfulFields.some(
+      (field) => field in patch && (patch[field] ?? undefined) !== (entity[field] ?? undefined),
+    );
+
+    if (hasMeaningfulChange || positionChanged) {
+      this.markEntityDirty(updatedEntity);
     }
 
     return updatedEntity;
@@ -963,6 +1519,60 @@ export class LuxEngine {
     return 'stable';
   }
 
+  private idleSkipCount = 0;
+
+  private hasActiveLifecycleWork(): boolean {
+    for (const entity of this.entities.values()) {
+      if (entity.type === 'particle' || entity.type === 'rubble') {
+        return true;
+      }
+
+      if (!isStructureEntity(entity)) {
+        continue;
+      }
+
+      if (entity.node_state === 'constructing' || entity.node_state === 'demolishing') {
+        return true;
+      }
+
+      if ((entity.current_height ?? 0) !== (entity.target_height ?? 0)) {
+        return true;
+      }
+
+      const ivyTarget = getIvyTargetCoverage(entity, this.absoluteTick);
+      if (Math.abs((entity.ivy_coverage ?? 0) - ivyTarget) >= 0.01) {
+        return true;
+      }
+
+      if (this.hasStructureSignalDrift(entity)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isEngineIdle(): boolean {
+    // Idle = no simulation work is queued or in-flight.
+    if (this.pendingOverlay) return false;
+    if (this.pendingStructurePurge) return false;
+    if (this.decisionQueue.size > 0) return false;
+    if (this.pendingAiAgents.size > 0) return false;
+    if (this.pendingEditAgents.size > 0) return false;
+    if (this.visionaryPlanningPromise !== null) return false;
+    if (this.explanationState.status === 'streaming') return false;
+    if (this.activeTasks.some((t) => t.status === 'in_progress')) return false;
+    if (this.hasActiveLifecycleWork()) return false;
+
+    // If every agent lacks an objective, there's nothing to simulate.
+    for (const agentId of this.agentIds) {
+      const agent = this.entities.get(agentId);
+      if (agent?.objective_path) return false;
+    }
+
+    return true;
+  }
+
   private tickLoop(): void {
     const tickStartedAtMs = performance.now();
 
@@ -975,11 +1585,28 @@ export class LuxEngine {
         return;
       }
 
+      // Tick-on-demand: skip all simulation work when the engine is truly idle.
+      // Controls are still polled and Supabase sync still fires (throttled),
+      // but agents, pheromones, AI decisions, and the task pipeline sleep.
+      if (this.isEngineIdle()) {
+        this.idleSkipCount += 1;
+        if (this.idleSkipCount === 1 || this.idleSkipCount % 600 === 0) {
+          console.log(`[idle] simulation sleeping (skipped ${this.idleSkipCount} ticks)`);
+        }
+        return;
+      }
+
+      if (this.idleSkipCount > 0) {
+        console.log(`[idle] simulation resuming after ${this.idleSkipCount} skipped ticks`);
+        this.idleSkipCount = 0;
+      }
+
       this.applyPendingOverlayIfReady();
       if (this.absoluteTick > 0 && this.absoluteTick % CLOCK_PERIOD === 0) {
         this.runQueenCycle();
       }
       this.expirePheromones();
+      this.advanceStructureLifecycle();
       this.decayTrails();
       this.applyLMMDecisions();
       this.applyTrophallaxis();
@@ -1012,9 +1639,10 @@ export class LuxEngine {
     this.queenState.pheromoneUrgency = computeUrgency(this.activeTasks);
     this.queenState.lastTick = this.absoluteTick;
     this.queenState.updatedAt = new Date().toISOString();
+    this.weather = this.weatherOverride ?? getWeatherForQueenCycle(this.queenState.cycle);
     void saveQueenState(this.queenState);
     console.log(
-      `[queen] cycle=${this.queenState.cycle} alarm=${this.queenState.pheromoneAlarm} urgency=${this.queenState.pheromoneUrgency}`,
+      `[queen] cycle=${this.queenState.cycle} alarm=${this.queenState.pheromoneAlarm} urgency=${this.queenState.pheromoneUrgency} weather=${this.weather}`,
     );
   }
 
@@ -1229,18 +1857,27 @@ export class LuxEngine {
     if (result.approved) {
       task.status = 'approved';
       task.review_feedback = result.feedback;
+      this.soundEvents.push('test_pass');
     } else {
       task.status = 'revision_needed';
       task.review_feedback = result.feedback;
+      this.soundEvents.push('build_error');
 
       if (task.assigned_agent_id) {
-        this.updateAgentMemory(task.assigned_agent_id, (memory) => ({
-          ...memory,
-          lessons: [...memory.lessons, result.feedback],
-        }));
+        const assignedAgent = this.entities.get(task.assigned_agent_id);
+        if (assignedAgent?.type === 'agent' && assignedAgent.memory) {
+          this.patchEntity(assignedAgent.id, {
+            memory: {
+              ...assignedAgent.memory,
+              lessons: [...assignedAgent.memory.lessons, result.feedback],
+            },
+          });
+        }
       }
     }
-    task.updated_at_tick = this.absoluteTick;
+    if (task.assigned_agent_id) {
+      task.updated_at_tick = this.absoluteTick;
+    }
 
     console.log(`[critic] task ${task.id} ${result.approved ? 'approved' : 'rejected'}: ${result.feedback}`);
   }
@@ -1483,6 +2120,10 @@ export class LuxEngine {
     return this.isAsymmetryCandidate(entity) ? 'asymmetry' : 'verified';
   }
 
+  private isActionableStructure(entity: Entity): boolean {
+    return entity.node_state !== 'constructing' && entity.node_state !== 'demolishing';
+  }
+
   private selectVisionaryTarget(agent: Entity): Entity | null {
     // Task pipeline: final review of approved tasks
     const approvedTask = this.activeTasks.find((t) => t.status === 'approved');
@@ -1493,7 +2134,9 @@ export class LuxEngine {
       }
     }
 
-    const structureNodes = this.getStructureEntities().filter((entity) => entity.lock_owner == null);
+    const structureNodes = this.getStructureEntities().filter(
+      (entity) => entity.lock_owner == null && this.isActionableStructure(entity),
+    );
     const criticalMassNodes = structureNodes.filter((entity) => computeChiralMass(entity) >= 8);
     if (criticalMassNodes.length > 0) {
       return this.selectClosestStructure(agent, criticalMassNodes);
@@ -1537,7 +2180,7 @@ export class LuxEngine {
       return operatorTarget;
     }
 
-    const structureNodes = this.getStructureEntities();
+    const structureNodes = this.getStructureEntities().filter((entity) => this.isActionableStructure(entity));
     const activeTasks = structureNodes.filter((entity) =>
       (entity.node_state === 'task' || entity.node_state === 'asymmetry') &&
       (entity.lock_owner == null || entity.lock_owner === agent.id),
@@ -1564,7 +2207,7 @@ export class LuxEngine {
       }
     }
 
-    const structureNodes = this.getStructureEntities();
+    const structureNodes = this.getStructureEntities().filter((entity) => this.isActionableStructure(entity));
 
     // Tether patrol: broken imports are highest-priority asymmetry
     const brokenTethers = structureNodes.filter((entity) =>
@@ -2096,6 +2739,7 @@ export class LuxEngine {
           git_status: 'modified',
           tick_updated: this.absoluteTick,
         });
+        this.refreshStructureVisualMetrics(entityId, { trackEdit: true });
       }
 
       await this.supabase!
@@ -2187,6 +2831,7 @@ export class LuxEngine {
     }
 
     this.pendingEditAgents.add(agent.id);
+    this.soundEvents.push('construction_start');
     void (async () => {
       try {
         const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
@@ -2201,6 +2846,7 @@ export class LuxEngine {
           git_status: 'modified',
           tick_updated: this.absoluteTick,
         });
+        this.refreshStructureVisualMetrics(target.id, { trackEdit: true });
 
         console.log(`[edit] ${agent.id} wrote ${filePath} at tick ${this.absoluteTick}`);
       } catch (error) {
@@ -2268,6 +2914,7 @@ export class LuxEngine {
     }
 
     this.pendingEditAgents.add(agent.id);
+    this.soundEvents.push('construction_start');
     void (async () => {
       try {
         const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
@@ -2282,6 +2929,7 @@ export class LuxEngine {
           git_status: 'modified',
           tick_updated: this.absoluteTick,
         });
+        this.refreshStructureVisualMetrics(target.id, { trackEdit: true });
 
         console.log(`[patch] ${agent.id} patched ${filePath} at tick ${this.absoluteTick}`);
       } catch (error) {
@@ -2342,6 +2990,7 @@ export class LuxEngine {
     }
 
     this.pendingEditAgents.add(agent.id);
+    this.soundEvents.push('construction_start');
     void (async () => {
       try {
         const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
@@ -2356,6 +3005,7 @@ export class LuxEngine {
           git_status: 'modified',
           tick_updated: this.absoluteTick,
         });
+        this.refreshStructureVisualMetrics(target.id, { trackEdit: true });
 
         console.log(`[insert] ${agent.id} inserted into ${filePath} at tick ${this.absoluteTick}`);
       } catch (error) {
@@ -2422,6 +3072,7 @@ export class LuxEngine {
     }
 
     this.pendingEditAgents.add(agent.id);
+    this.soundEvents.push('file_deleted');
     void (async () => {
       try {
         const { absolutePath, repoRelativePath } = this.resolveWritableRepoFile(repoRoot, filePath);
@@ -2436,6 +3087,7 @@ export class LuxEngine {
           git_status: 'modified',
           tick_updated: this.absoluteTick,
         });
+        this.refreshStructureVisualMetrics(target.id, { trackEdit: true });
 
         console.log(`[delete] ${agent.id} deleted lines ${decision.start_line}-${decision.end_line} from ${filePath} at tick ${this.absoluteTick}`);
       } catch (error) {
@@ -2518,20 +3170,7 @@ export class LuxEngine {
   }
 
   private moveEntity(entity: Entity, nextPosition: Position): void {
-    if (isSolidEntity(entity)) {
-      this.solidGrid[toIndex(entity.x, entity.y, getPositionZ(entity))] = null;
-    }
-
-    const oldKey = getPositionKey(entity);
-    const oldList = this.positionIndex.get(oldKey);
-    if (oldList) {
-      const filtered = oldList.filter((id) => id !== entity.id);
-      if (filtered.length === 0) {
-        this.positionIndex.delete(oldKey);
-      } else {
-        this.positionIndex.set(oldKey, filtered);
-      }
-    }
+    this.clearEntityTiles(entity);
 
     const updatedEntity: Entity = {
       ...entity,
@@ -2544,14 +3183,8 @@ export class LuxEngine {
     this.entities.set(entity.id, updatedEntity);
     this.invalidateStructureCache();
 
-    const newKey = getPositionKey(updatedEntity);
-    const newList = this.positionIndex.get(newKey) ?? [];
-    newList.push(entity.id);
-    this.positionIndex.set(newKey, newList);
-
-    if (isSolidEntity(updatedEntity)) {
-      this.solidGrid[toIndex(updatedEntity.x, updatedEntity.y, getPositionZ(updatedEntity))] = updatedEntity.id;
-    }
+    this.markEntityTiles(updatedEntity);
+    this.markEntityDirty(updatedEntity);
   }
 
   private queueAiDecisions(): void {
@@ -2868,7 +3501,10 @@ export class LuxEngine {
   }
 
   private toTileObservation(entity: Entity): TileObservation {
-    const occupant = entity.type === 'pheromone' ? 'empty' : entity.type;
+    const occupant =
+      entity.type === 'pheromone' || entity.type === 'particle' || entity.type === 'rubble'
+        ? 'empty'
+        : entity.type;
 
     return {
       occupant,
@@ -2919,10 +3555,43 @@ export class LuxEngine {
       return;
     }
 
-    const snapshot = this.createSnapshot();
-    const syncedEntities = snapshot.entities.filter((entity) => entity.type !== 'pheromone');
     const shouldPurgeStructures = this.pendingStructurePurge;
+    const pendingEntitySyncs = this.getPendingEntitySyncEntries();
+    const pendingEntityDeletes = this.getPendingEntityDeleteEntries();
+    const entitySyncInterval = this.hasActiveLifecycleWork()
+      ? SUPABASE_ENTITY_SYNC_INTERVAL_TICKS
+      : SUPABASE_ENTITY_SYNC_INTERVAL_TICKS;
+    const shouldSyncEntities =
+      (shouldPurgeStructures || pendingEntitySyncs.length > 0 || pendingEntityDeletes.length > 0)
+      && (
+        shouldPurgeStructures
+        || (this.absoluteTick - this.lastEntitySyncTick) >= entitySyncInterval
+      );
+    const worldStateSignature = this.computeWorldStateSignature();
+    const worldStateChanged = worldStateSignature !== this.lastSyncedWorldStateSignature;
+    const shouldSyncWorldState =
+      worldStateChanged &&
+      (this.absoluteTick - this.lastWorldStateSyncTick) >= SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS;
+
+    if (!shouldSyncEntities && !shouldSyncWorldState) {
+      return;
+    }
+
+    if (shouldSyncEntities) {
+      this.lastEntitySyncTick = this.absoluteTick;
+    }
+
+    if (shouldSyncWorldState) {
+      this.lastWorldStateSyncTick = this.absoluteTick;
+      this.lastSyncedWorldStateSignature = worldStateSignature;
+    }
+
     this.pendingStructurePurge = false;
+    const worldState = shouldSyncWorldState ? this.createWorldState() : null;
+
+    if (shouldSyncWorldState) {
+        this.soundEvents = [];
+    }
 
     this.syncQueue = this.syncQueue
       .then(async () => {
@@ -2937,8 +3606,37 @@ export class LuxEngine {
           }
         }
 
-        await this.safeUpsertEntities(supabase, syncedEntities);
-        await this.safeUpsertWorldState(supabase, snapshot.worldState);
+        if (pendingEntityDeletes.length > 0) {
+          await this.deleteSyncedEntities(
+            supabase,
+            pendingEntityDeletes.map(({ entityId }) => entityId),
+          );
+
+          for (const { entityId, version } of pendingEntityDeletes) {
+            if (this.deletedEntityVersions.get(entityId) === version) {
+              this.deletedEntityVersions.delete(entityId);
+            }
+          }
+        }
+
+        if (pendingEntitySyncs.length > 0) {
+          await this.safeUpsertEntities(
+            supabase,
+            pendingEntitySyncs.map(({ entity }) => entity),
+          );
+
+          for (const { entity, version } of pendingEntitySyncs) {
+            if (this.dirtyEntityVersions.get(entity.id) === version) {
+              this.dirtyEntityVersions.delete(entity.id);
+            }
+          }
+
+          this.hasDoneInitialEntitySync = true;
+        }
+
+        if (worldState) {
+          await this.safeUpsertWorldState(supabase, worldState);
+        }
       })
       .catch((error: unknown) => {
         if (error && typeof error === 'object') {
@@ -2966,6 +3664,17 @@ export class LuxEngine {
     }
   }
 
+  private async deleteSyncedEntities(
+    supabase: LuxSupabaseClient,
+    entityIds: string[],
+  ): Promise<void> {
+    const { error } = await supabase.from('entities').delete().in('id', entityIds);
+
+    if (error) {
+      throw error;
+    }
+  }
+
   private async safeUpsertWorldState(
     supabase: LuxSupabaseClient,
     worldState: WorldState,
@@ -2989,6 +3698,7 @@ export class LuxEngine {
     }
 
     const {
+      weather: _weather,
       paused: _paused,
       saved_overlay_names: _savedOverlayNames,
       automate: _automate,
@@ -3021,18 +3731,6 @@ export class LuxEngine {
     if (retryError) {
       throw retryError;
     }
-  }
-
-  private createSnapshot(): WorldSnapshot {
-    const worldState = this.createWorldState();
-    const entities = Array.from(this.entities.values()).sort((left, right) =>
-      left.id.localeCompare(right.id),
-    );
-
-    return {
-      entities,
-      worldState,
-    };
   }
 
   private computeAgentActivities(): AgentActivity[] {
@@ -3111,6 +3809,7 @@ export class LuxEngine {
       tick: this.absoluteTick,
       phase: this.getCurrentPhase(),
       status: this.getWorldStatus(),
+      weather: this.weather,
       active_repo_path: this.activeRepoPath,
       active_repo_name: this.activeRepoName,
       operator_prompt: this.operatorPrompt.length > 0 ? this.operatorPrompt : null,
@@ -3149,6 +3848,29 @@ export class LuxEngine {
       active_tasks: this.activeTasks.length > 0 ? this.activeTasks : null,
       agent_activities: agentActivities.length > 0 ? agentActivities : null,
     };
+  }
+
+  private computeWorldStateSignature(): string {
+    // Only hash fields that affect the UI or control state.
+    // tick/phase/duration metrics churn every frame and the frontend
+    // is now self-driving, so they are excluded.
+    const meaningful = [
+      this.controlStatus,
+      this.controlError,
+      this.operatorAction,
+      this.operatorTargetPath,
+      this.paused,
+      this.automate,
+      this.getWorldStatus(),
+      this.weather,
+      this.activeRepoName,
+      this.explanationState.status,
+      this.explanationState.text,
+      this.explanationState.error,
+      this.queenState.cycle,
+      this.activeTasks.length,
+    ].join('|');
+    return meaningful;
   }
 
   private getWorldStatus(): WorldStatus {
@@ -3423,6 +4145,7 @@ export class LuxEngine {
 
         if (extractable) {
           this.patchEntity(extractable.id, { mass: (extractable.mass ?? 1) - 1 });
+          this.refreshStructureVisualMetrics(extractable.id);
           this.patchEntity(agent.id, { cargo: (agent.cargo ?? 0) + 1 });
           break;
         }
@@ -3456,6 +4179,7 @@ export class LuxEngine {
 
         if (target) {
           this.patchEntity(target.id, { mass: (target.mass ?? 1) + 1 });
+          this.refreshStructureVisualMetrics(target.id);
           this.patchEntity(agent.id, { cargo: (agent.cargo ?? 0) - 1 });
           break;
         }

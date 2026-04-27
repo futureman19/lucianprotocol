@@ -13,7 +13,7 @@ import { createServiceSupabaseClient, upsertEntitiesWithSchemaFallback } from '.
 import { describeStructureNode, getExtension, isBinaryExtension, mapMassToPath } from './mass-mapper';
 import { EntitySchema, type Entity, type GitStatus, type Position } from './types';
 import { buildTetherMap } from './import-graph';
-import { computeGraphLayout } from './graph-layout';
+import { computeGraphLayout, type GraphPosition } from './graph-layout';
 
 const OVERLAY_DIRECTORY = path.join(process.cwd(), '.lux-state');
 const OVERLAY_FILE = path.join(OVERLAY_DIRECTORY, 'repository-overlay.json');
@@ -369,7 +369,7 @@ export function findOpenPosition(
   );
 }
 
-function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, Position> {
+function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, GraphPosition> {
   const reserved = collectReservedPositions(seed);
   const layoutInputs = nodes.map((node) => ({
     path: node.path,
@@ -384,18 +384,37 @@ function assignCoordinates(nodes: RepositoryNode[], seed: string): Map<string, P
   const coordinates = computeGraphLayout(layoutInputs, seed);
 
   // Ensure reserved positions are not overwritten (shouldn't happen due to margins,
-  // but guard just in case)
+  // but guard just in case). For multi-tile blocks we check every tile in the block.
   for (const [path, pos] of coordinates) {
-    if (reserved.has(`${pos.x},${pos.y},${pos.z ?? 0}`)) {
+    const halfW = Math.floor((pos.occupancyWidth - 1) / 2);
+    const halfD = Math.floor((pos.occupancyDepth - 1) / 2);
+    let clashes = false;
+    for (let dy = pos.y - halfD; dy <= pos.y + halfD; dy++) {
+      for (let dx = pos.x - halfW; dx <= pos.x + halfW; dx++) {
+        if (reserved.has(`${dx},${dy},${pos.z ?? 0}`)) {
+          clashes = true;
+          break;
+        }
+      }
+      if (clashes) break;
+    }
+
+    if (clashes) {
       // Re-resolve with occupied set including reserved
       const occupied = new Set<string>();
       for (const [, otherPos] of coordinates) {
         if (otherPos !== pos) {
-          occupied.add(`${otherPos.x},${otherPos.y},${otherPos.z ?? 0}`);
+          const ohW = Math.floor((otherPos.occupancyWidth - 1) / 2);
+          const ohD = Math.floor((otherPos.occupancyDepth - 1) / 2);
+          for (let dy = otherPos.y - ohD; dy <= otherPos.y + ohD; dy++) {
+            for (let dx = otherPos.x - ohW; dx <= otherPos.x + ohW; dx++) {
+              occupied.add(`${dx},${dy},${otherPos.z ?? 0}`);
+            }
+          }
         }
       }
       const resolved = findOpenPosition(pos.x, pos.y, pos.z ?? 0, occupied, reserved);
-      coordinates.set(path, resolved);
+      coordinates.set(path, { ...resolved, occupancyWidth: 1, occupancyDepth: 1 });
     }
   }
 
@@ -543,7 +562,7 @@ async function buildRepositoryNodes(
   });
 }
 
-function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repoRoot: string): Entity {
+function toEntity(node: RepositoryNode, coordinates: Map<string, GraphPosition>, repoRoot: string): Entity {
   const position = coordinates.get(node.path);
   if (!position) {
     throw new Error(`Missing coordinate assignment for ${node.path}`);
@@ -575,6 +594,8 @@ function toEntity(node: RepositoryNode, coordinates: Map<string, Position>, repo
     tether_to: node.tetherTo,
     tether_from: node.tetherFrom,
     tether_broken: node.tetherBroken,
+    occupancy_width: position.occupancyWidth,
+    occupancy_depth: position.occupancyDepth,
   });
 }
 

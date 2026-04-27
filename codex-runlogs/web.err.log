@@ -1,0 +1,1756 @@
+[2m12:05:48 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1144 |    if (district?.type === 'design') {
+1145 |      // Brighter colors and art deco details
+1146 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1147 |      rightColor = adjustLightness(rightColor, 20);
+1148 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:48 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1145 |      // Brighter colors and art deco details
+1146 |      leftColor = adjustLightness(leftColor, 20);
+1147 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1148 |      topColor = adjustLightness(topColor, 20);
+1149 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:48 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1146 |      leftColor = adjustLightness(leftColor, 20);
+1147 |      rightColor = adjustLightness(rightColor, 20);
+1148 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1149 |      trim = '#facc15'; // Gold trim for art deco
+1150 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:48 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1147 |      rightColor = adjustLightness(rightColor, 20);
+1148 |      topColor = adjustLightness(topColor, 20);
+1149 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1150 |    }
+1151 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:54 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1401 |    if (district?.type === 'design') {
+1402 |      // Brighter colors and art deco details
+1403 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1404 |      rightColor = adjustLightness(rightColor, 20);
+1405 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:54 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1402 |      // Brighter colors and art deco details
+1403 |      leftColor = adjustLightness(leftColor, 20);
+1404 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1405 |      topColor = adjustLightness(topColor, 20);
+1406 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:54 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1403 |      leftColor = adjustLightness(leftColor, 20);
+1404 |      rightColor = adjustLightness(rightColor, 20);
+1405 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1406 |      trim = '#facc15'; // Gold trim for art deco
+1407 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:05:54 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1404 |      rightColor = adjustLightness(rightColor, 20);
+1405 |      topColor = adjustLightness(topColor, 20);
+1406 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1407 |    }
+1408 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:09 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:09 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:09 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:09 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:19 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:19 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:19 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:06:19 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:27 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:27 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:27 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:27 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:44 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:44 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:44 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:44 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:08:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:12 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:12 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:12 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:12 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:35 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1413 |    if (district?.type === 'design') {
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:35 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1414 |      // Brighter colors and art deco details
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:35 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1415 |      leftColor = adjustLightness(leftColor, 20);
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1418 |      trim = '#facc15'; // Gold trim for art deco
+1419 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:35 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1416 |      rightColor = adjustLightness(rightColor, 20);
+1417 |      topColor = adjustLightness(topColor, 20);
+1418 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1419 |    }
+1420 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:52 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1511 |    if (district?.type === 'design') {
+1512 |      // Brighter colors and art deco details
+1513 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1514 |      rightColor = adjustLightness(rightColor, 20);
+1515 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:52 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1512 |      // Brighter colors and art deco details
+1513 |      leftColor = adjustLightness(leftColor, 20);
+1514 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1515 |      topColor = adjustLightness(topColor, 20);
+1516 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:52 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1513 |      leftColor = adjustLightness(leftColor, 20);
+1514 |      rightColor = adjustLightness(rightColor, 20);
+1515 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1516 |      trim = '#facc15'; // Gold trim for art deco
+1517 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:09:52 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1514 |      rightColor = adjustLightness(rightColor, 20);
+1515 |      topColor = adjustLightness(topColor, 20);
+1516 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1517 |    }
+1518 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:11:12 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:657:8: ERROR: Expected ";" but found "intersections"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:657:8
+[33m  
+  [33mExpected ";" but found "intersections"[33m
+  655 |    if (layout.tileWidth > 16) {
+  656 |      for (let i = 0; i < intersections.length && i < roads.length; i++) {
+  657 |        c intersections[i];
+      |          ^
+  658 |        const road = roads[i];
+  659 |        if (road && pt) {
+  [39m
+[2m12:11:12 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:657:8: ERROR: Expected ";" but found "intersections"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:657:8
+[33m  
+  [33mExpected ";" but found "intersections"[33m
+  655 |    if (layout.tileWidth > 16) {
+  656 |      for (let i = 0; i < intersections.length && i < roads.length; i++) {
+  657 |        c intersections[i];
+      |          ^
+  658 |        const road = roads[i];
+  659 |        if (road && pt) {
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:11:19 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:657:8: ERROR: Expected ";" but found "intersections"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:657:8
+[33m  
+  [33mExpected ";" but found "intersections"[33m
+  655 |    if (layout.tileWidth > 16) {
+  656 |      for (let i = 0; i < intersections.length && i < roads.length; i++) {
+  657 |        c intersections[i];
+      |          ^
+  658 |        const road = roads[i];
+  659 |        if (road && pt) {
+  [39m
+[2m12:11:28 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:657:8: ERROR: Expected ";" but found "intersections"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:657:8
+[33m  
+  [33mExpected ";" but found "intersections"[33m
+  655 |    if (layout.tileWidth > 16) {
+  656 |      for (let i = 0; i < intersections.length && i < roads.length; i++) {
+  657 |        c intersections[i];
+      |          ^
+  658 |        const road = roads[i];
+  659 |        if (road && pt) {
+  [39m
+[2m12:11:28 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1079:0: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:1079:0
+[33m  
+  [33mUnexpected "}"[33m
+  1077 |    }
+  1078 |    context.restore();
+  1079 |  }
+       |  ^
+  1080 |  
+  1081 |  function drawFacadeIcon(
+  [39m
+[2m12:11:28 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1079:0: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:1079:0
+[33m  
+  [33mUnexpected "}"[33m
+  1077 |    }
+  1078 |    context.restore();
+  1079 |  }
+       |  ^
+  1080 |  
+  1081 |  function drawFacadeIcon(
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:11:37 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:657:8: ERROR: Expected ";" but found "intersections"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:657:8
+[33m  
+  [33mExpected ";" but found "intersections"[33m
+  655 |    if (layout.tileWidth > 16) {
+  656 |      for (let i = 0; i < intersections.length && i < roads.length; i++) {
+  657 |        c intersections[i];
+      |          ^
+  658 |        const road = roads[i];
+  659 |        if (road && pt) {
+  [39m
+[2m12:11:37 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1427 |    if (district?.type === 'design') {
+1428 |      // Brighter colors and art deco details
+1429 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1430 |      rightColor = adjustLightness(rightColor, 20);
+1431 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:11:37 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1428 |      // Brighter colors and art deco details
+1429 |      leftColor = adjustLightness(leftColor, 20);
+1430 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1431 |      topColor = adjustLightness(topColor, 20);
+1432 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:11:37 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1429 |      leftColor = adjustLightness(leftColor, 20);
+1430 |      rightColor = adjustLightness(rightColor, 20);
+1431 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1432 |      trim = '#facc15'; // Gold trim for art deco
+1433 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:11:37 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1430 |      rightColor = adjustLightness(rightColor, 20);
+1431 |      topColor = adjustLightness(topColor, 20);
+1432 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1433 |    }
+1434 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:11:53 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:1043:2: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:1043:2
+[33m  
+  [33mUnexpected "}"[33m
+  1041 |  }
+  1042 |  
+  1043 |    }
+       |    ^
+  1044 |  }
+  1045 |  entRoad && seed > 0.45 && seed < 0.6) {
+  [39m
+[2m12:11:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:1043:2: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:1043:2
+[33m  
+  [33mUnexpected "}"[33m
+  1041 |  }
+  1042 |  
+  1043 |    }
+       |    ^
+  1044 |  }
+  1045 |  entRoad && seed > 0.45 && seed < 0.6) {
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:12:27 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:1043:2: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:1043:2
+[33m  
+  [33mUnexpected "}"[33m
+  1041 |  }
+  1042 |  
+  1043 |    }
+       |    ^
+  1044 |  }
+  1045 |  entRoad && seed > 0.45 && seed < 0.6) {
+  [39m
+[2m12:12:27 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/traffic.ts:1043:2: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/traffic.ts[39m:1043:2
+[33m  
+  [33mUnexpected "}"[33m
+  1041 |  }
+  1042 |  
+  1043 |    }
+       |    ^
+  1044 |  }
+  1045 |  entRoad && seed > 0.45 && seed < 0.6) {
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:14:24 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1430 |    if (district?.type === 'design') {
+1431 |      // Brighter colors and art deco details
+1432 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:14:24 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1431 |      // Brighter colors and art deco details
+1432 |      leftColor = adjustLightness(leftColor, 20);
+1433 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1434 |      topColor = adjustLightness(topColor, 20);
+1435 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:14:24 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1432 |      leftColor = adjustLightness(leftColor, 20);
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1435 |      trim = '#facc15'; // Gold trim for art deco
+1436 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:14:24 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+1435 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1436 |    }
+1437 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:14:42 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:14:57 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3943:2)
+
+[0m [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+ [90m 3942 |[31m main[33m>[31m
+[31m[1m>[22m[31m[90m 3943 |[31m   )[33m;[31m
+ [90m      |[31m   [31m[1m^[22m[31m
+ [90m 3944 |[31m }
+ [90m 3945 |[31m
+ [90m 3946 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3943:2
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11442:22)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:287:14)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+[2m12:15:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3942:11)
+
+[0m [90m 3940 |[31m
+ [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+[31m[1m>[22m[31m[90m 3942 |[31m           [33m<[31m[33m/[31m[33mSidebarSection[31m[33m>[31m
+ [90m      |[31m            [31m[1m^[22m[31m
+ [90m 3943 |[31m           [33m<[31m[33m/[31m[33mdiv[31m[33m>[31m
+ [90m 3944 |[31m         ) [33m:[31m [36mnull[31m}
+ [90m 3945 |[31m       [33m<[31m[33m/[31m[33maside[31m[33m>[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3942:11
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4569:12)
+      at TypeScriptParserMixin.jsxParseNamespacedName (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4576:23)
+      at TypeScriptParserMixin.jsxParseElementName (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4585:21)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4661:22)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4686:33)
+      at TypeScriptParserMixin.jsxParseElement (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9775:39
+      at TypeScriptParserMixin.tryParse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9775:18)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+[2m12:15:53 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\futur\Desktop\lucianprotocol\web\App.tsx: Unexpected token (3942:11)
+
+[0m [90m 3940 |[31m
+ [90m 3941 |[31m [36mexport[31m [36mdefault[31m [33mApp[31m[33m;[31m
+[31m[1m>[22m[31m[90m 3942 |[31m           [33m<[31m[33m/[31m[33mSidebarSection[31m[33m>[31m
+ [90m      |[31m            [31m[1m^[22m[31m
+ [90m 3943 |[31m           [33m<[31m[33m/[31m[33mdiv[31m[33m>[31m
+ [90m 3944 |[31m         ) [33m:[31m [36mnull[31m}
+ [90m 3945 |[31m       [33m<[31m[33m/[31m[33maside[31m[33m>[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/App.tsx[39m:3942:11
+      at constructor (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6599:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6619:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4569:12)
+      at TypeScriptParserMixin.jsxParseNamespacedName (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4576:23)
+      at TypeScriptParserMixin.jsxParseElementName (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4585:21)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4661:22)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4686:33)
+      at TypeScriptParserMixin.jsxParseElement (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10831:21)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9775:39
+      at TypeScriptParserMixin.tryParse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9775:18)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10784:23)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12421:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10780:17)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12895:23)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:9508:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12767:17)
+      at TypeScriptParserMixin.parseModuleItem (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12744:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13316:36)
+      at TypeScriptParserMixin.parseBlockBody (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:13309:10)
+      at TypeScriptParserMixin.parseProgram (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12622:10)
+      at TypeScriptParserMixin.parseTopLevel (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:12612:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14488:25)
+      at TypeScriptParserMixin.parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:10126:18)
+      at parse (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\parser\lib\index.js:14522:38)
+      at parser (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\parser\index.js:41:34)
+      at parser.next (<anonymous>)
+      at normalizeFile (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\normalize-file.js:64:37)
+      at normalizeFile.next (<anonymous>)
+      at run (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transformation\index.js:22:50)
+      at run.next (<anonymous>)
+      at transform (C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\transform.js:22:33)
+      at transform.next (<anonymous>)
+      at step (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:261:32)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:273:13
+      at async.call.result.err.err (C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:223:11)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:189:28
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\@babel\core\lib\gensync-utils\async.js:67:7
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\gensync\index.js:113:33
+[2m12:18:45 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1430 |    if (district?.type === 'design') {
+1431 |      // Brighter colors and art deco details
+1432 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:45 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1431 |      // Brighter colors and art deco details
+1432 |      leftColor = adjustLightness(leftColor, 20);
+1433 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1434 |      topColor = adjustLightness(topColor, 20);
+1435 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:45 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1432 |      leftColor = adjustLightness(leftColor, 20);
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1435 |      trim = '#facc15'; // Gold trim for art deco
+1436 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:45 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1433 |      rightColor = adjustLightness(rightColor, 20);
+1434 |      topColor = adjustLightness(topColor, 20);
+1435 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1436 |    }
+1437 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:53 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1431 |    if (district?.type === 'design') {
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:53 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:53 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1436 |      trim = '#facc15'; // Gold trim for art deco
+1437 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:53 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1437 |    }
+1438 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1431 |    if (district?.type === 'design') {
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1436 |      trim = '#facc15'; // Gold trim for art deco
+1437 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:56 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1437 |    }
+1438 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:59 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1431 |    if (district?.type === 'design') {
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:59 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:59 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1436 |      trim = '#facc15'; // Gold trim for art deco
+1437 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:18:59 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1437 |    }
+1438 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:19:02 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "leftColor" is a constant[33m
+1431 |    if (district?.type === 'design') {
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+     |      ^
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:19:02 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "rightColor" is a constant[33m
+1432 |      // Brighter colors and art deco details
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+     |      ^
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:19:02 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "topColor" is a constant[33m
+1433 |      leftColor = adjustLightness(leftColor, 20);
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+     |      ^
+1436 |      trim = '#facc15'; // Gold trim for art deco
+1437 |    }
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:19:02 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mThis assignment will throw because "trim" is a constant[33m
+1434 |      rightColor = adjustLightness(rightColor, 20);
+1435 |      topColor = adjustLightness(topColor, 20);
+1436 |      trim = '#facc15'; // Gold trim for art deco
+     |      ^
+1437 |    }
+1438 |  
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m
+[2m12:19:12 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 3 errors:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1492:8: ERROR: The symbol "leftColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1493:8: ERROR: The symbol "rightColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1494:8: ERROR: The symbol "topColor" has already been declared[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:1492:8
+[33m  
+  [33mThe symbol "leftColor" has already been declared[33m
+  1490 |    };
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+       |          ^
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  
+  [33mThe symbol "rightColor" has already been declared[33m
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+       |          ^
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  1495 |    
+  
+  [33mThe symbol "topColor" has already been declared[33m
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+       |          ^
+  1495 |    
+  1496 |    // Build main projection
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:19:12 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 3 errors:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1492:8: ERROR: The symbol "leftColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1493:8: ERROR: The symbol "rightColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1494:8: ERROR: The symbol "topColor" has already been declared
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:1492:8
+[33m  
+  [33mThe symbol "leftColor" has already been declared[33m
+  1490 |    };
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+       |          ^
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  
+  [33mThe symbol "rightColor" has already been declared[33m
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+       |          ^
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  1495 |    
+  
+  [33mThe symbol "topColor" has already been declared[33m
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+       |          ^
+  1495 |    
+  1496 |    // Build main projection
+  [39m
+[2m12:19:12 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 3 errors:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1492:8: ERROR: The symbol "leftColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1493:8: ERROR: The symbol "rightColor" has already been declared
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:1494:8: ERROR: The symbol "topColor" has already been declared
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:1492:8
+[33m  
+  [33mThe symbol "leftColor" has already been declared[33m
+  1490 |    };
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+       |          ^
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  
+  [33mThe symbol "rightColor" has already been declared[33m
+  1491 |  
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+       |          ^
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+  1495 |    
+  
+  [33mThe symbol "topColor" has already been declared[33m
+  1492 |    const leftColor = withAlpha(style.left, 0.7 + (daylight * 0.25));
+  1493 |    const rightColor = withAlpha(style.right, 0.72 + (daylight * 0.25));
+  1494 |    const topColor = withAlpha(style.top, 0.78 + (daylight * 0.2));
+       |          ^
+  1495 |    
+  1496 |    // Build main projection
+  [39m
+[2m12:25:25 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2254:4: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2254:4
+[33m  
+  [33mUnexpected "}"[33m
+  2252 |  }
+  2253 |  break;
+  2254 |      }
+       |      ^
+  2255 |    }
+  2256 |  
+  [39m
+[2m12:25:25 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2254:4: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2254:4
+[33m  
+  [33mUnexpected "}"[33m
+  2252 |  }
+  2253 |  break;
+  2254 |      }
+       |      ^
+  2255 |    }
+  2256 |  
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:25:26 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2259:4: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2259:4
+[33m  
+  [33mUnexpected "}"[33m
+  2257 |  }
+  2258 |  break;
+  2259 |      }
+       |      ^
+  2260 |    }
+  2261 |  
+  [39m
+[2m12:25:26 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2259:4: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2259:4
+[33m  
+  [33mUnexpected "}"[33m
+  2257 |  }
+  2258 |  break;
+  2259 |      }
+       |      ^
+  2260 |    }
+  2261 |  
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:25:46 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2273:4: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2273:4
+[33m  
+  [33mUnexpected "}"[33m
+  2271 |  }
+  2272 |  break;
+  2273 |      }
+       |      ^
+  2274 |    }
+  2275 |  
+  [39m
+[2m12:25:46 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2273:4: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2273:4
+[33m  
+  [33mUnexpected "}"[33m
+  2271 |  }
+  2272 |  break;
+  2273 |      }
+       |      ^
+  2274 |    }
+  2275 |  
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:26:24 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2265:2: ERROR: Unexpected "}"
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2265:2
+[33m  
+  [33mUnexpected "}"[33m
+  2263 |      context.fillText(entity.name || '', 0.5, 0.5);
+  2264 |      context.restore();
+  2265 |    }
+       |    ^
+  2266 |  
+  2267 |    // Reactive git-status feedback overlay
+  [39m
+[2m12:26:24 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2265:2: ERROR: Unexpected "}"[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2265:2
+[33m  
+  [33mUnexpected "}"[33m
+  2263 |      context.fillText(entity.name || '', 0.5, 0.5);
+  2264 |      context.restore();
+  2265 |    }
+       |    ^
+  2266 |  
+  2267 |    // Reactive git-status feedback overlay
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+[2m12:31:25 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2388:5: ERROR: Unterminated string literal
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2388:5
+[33m  
+  [33mUnterminated string literal[33m
+  2386 |    drawReactiveFeedback(context, entity, projection, layout, phase);
+  2387 |  }
+  2388 |  rif';
+       |       ^
+  2389 |      context.textBaseline = 'middle';
+  2390 |      context.textAlign = 'center';
+  [39m
+[2m12:31:25 PM[22m [31m[1m[vite][22m[39m [31mInternal server error: Transform failed with 1 error:
+C:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts:2388:5: ERROR: Unterminated string literal[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/web/simcity-building-render.ts[39m:2388:5
+[33m  
+  [33mUnterminated string literal[33m
+  2386 |    drawReactiveFeedback(context, entity, projection, layout, phase);
+  2387 |  }
+  2388 |  rif';
+       |       ^
+  2389 |      context.textBaseline = 'middle';
+  2390 |      context.textAlign = 'center';
+  [39m
+      at failureErrorWithLog (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1748:15)
+      at C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (C:\Users\futur\Desktop\lucianprotocol\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)

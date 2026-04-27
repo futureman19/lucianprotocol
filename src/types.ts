@@ -10,7 +10,17 @@ export const PositionSchema = z.object({
 
 export type Position = z.input<typeof PositionSchema>;
 
-export const EntityTypeSchema = z.enum(['agent', 'wall', 'goal', 'file', 'directory', 'pheromone', 'command_center']);
+export const EntityTypeSchema = z.enum([
+  'agent',
+  'wall',
+  'goal',
+  'file',
+  'directory',
+  'pheromone',
+  'command_center',
+  'particle',
+  'rubble',
+]);
 export type EntityType = z.infer<typeof EntityTypeSchema>;
 
 export const DirectionSchema = z.enum(['north', 'east', 'south', 'west']);
@@ -19,8 +29,63 @@ export type Direction = z.infer<typeof DirectionSchema>;
 export const AgentRoleSchema = z.enum(['visionary', 'architect', 'critic']);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
-export const NodeStateSchema = z.enum(['task', 'in-progress', 'asymmetry', 'stable', 'verified']);
+export const NodeStateSchema = z.enum([
+  'task',
+  'in-progress',
+  'asymmetry',
+  'stable',
+  'verified',
+  'constructing',
+  'demolishing',
+]);
 export type NodeState = z.infer<typeof NodeStateSchema>;
+
+export const WeatherSchema = z.enum(['clear', 'rain', 'snow', 'fog']);
+export type Weather = z.infer<typeof WeatherSchema>;
+
+export const BuildingArchetypeSchema = z.enum([
+  'tower',
+  'warehouse',
+  'shopfront',
+  'campus',
+  'factory',
+  'civic',
+  'substation',
+  'landmark',
+]);
+export type BuildingArchetype = z.infer<typeof BuildingArchetypeSchema>;
+
+export const BuildingConditionSchema = z.enum([
+  'pristine',
+  'maintained',
+  'worn',
+  'decaying',
+  'condemned',
+]);
+export type BuildingCondition = z.infer<typeof BuildingConditionSchema>;
+
+export const PowerStateSchema = z.enum(['normal', 'strained', 'overloaded', 'offline']);
+export type PowerState = z.infer<typeof PowerStateSchema>;
+
+export const LandmarkRoleSchema = z.enum(['none', 'entry', 'critical', 'hub', 'control']);
+export type LandmarkRole = z.infer<typeof LandmarkRoleSchema>;
+
+export const ConstructionPhaseSchema = z.enum([
+  'excavation',
+  'frame',
+  'facade',
+  'fitout',
+  'complete',
+]);
+export type ConstructionPhase = z.infer<typeof ConstructionPhaseSchema>;
+
+export const DemolitionPhaseSchema = z.enum([
+  'marked',
+  'stripping',
+  'collapse',
+  'cleared',
+]);
+export type DemolitionPhase = z.infer<typeof DemolitionPhaseSchema>;
 
 export const ControlStatusSchema = z.enum(['idle', 'importing', 'active', 'error']);
 export type ControlStatus = z.infer<typeof ControlStatusSchema>;
@@ -50,6 +115,8 @@ export const TileOccupantSchema = z.enum([
   'file',
   'directory',
   'command_center',
+  'particle',
+  'rubble',
 ]);
 export type TileOccupant = z.infer<typeof TileOccupantSchema>;
 
@@ -94,6 +161,28 @@ export const EntitySchema = z.object({
   author_id: z.string().min(1).nullable().optional(),
   message: z.string().min(1).nullable().optional(),
   ttl_ticks: z.number().int().nonnegative().nullable().optional(),
+  target_height: z.number().int().nonnegative().nullable().optional(),
+  current_height: z.number().int().nonnegative().nullable().optional(),
+  edit_count: z.number().int().nonnegative().nullable().optional(),
+  last_edit_tick: z.number().int().nonnegative().nullable().optional(),
+  ivy_coverage: z.number().min(0).max(1).nullable().optional(),
+  building_archetype: BuildingArchetypeSchema.nullable().optional(),
+  importance_tier: z.number().int().min(0).max(3).nullable().optional(),
+  activity_level: z.number().min(0).max(1).nullable().optional(),
+  occupancy: z.number().min(0).max(1).nullable().optional(),
+  condition: BuildingConditionSchema.nullable().optional(),
+  upgrade_level: z.number().int().min(0).max(3).nullable().optional(),
+  power_state: PowerStateSchema.nullable().optional(),
+  network_load: z.number().min(0).max(1).nullable().optional(),
+  traffic_load: z.number().min(0).max(1).nullable().optional(),
+  construction_phase: ConstructionPhaseSchema.nullable().optional(),
+  demolition_phase: DemolitionPhaseSchema.nullable().optional(),
+  weather_wetness: z.number().min(0).max(1).nullable().optional(),
+  weather_snow_cover: z.number().min(0).max(1).nullable().optional(),
+  weather_fog_factor: z.number().min(0).max(1).nullable().optional(),
+  landmark_role: LandmarkRoleSchema.nullable().optional(),
+  occupancy_width: z.number().int().min(1).max(3).nullable().optional(),
+  occupancy_depth: z.number().int().min(1).max(3).nullable().optional(),
   name: z.string().min(1).nullable().optional(),
   path: z.string().min(0).nullable().optional(),
   extension: z.string().min(1).nullable().optional(),
@@ -179,12 +268,23 @@ export type AgentActivity = z.infer<typeof AgentActivitySchema>;
 export const ExplainStatusSchema = z.enum(['idle', 'pending', 'streaming', 'complete', 'error']);
 export type ExplainStatus = z.infer<typeof ExplainStatusSchema>;
 
+export const SoundEventSchema = z.enum([
+  'construction_start',
+  'demolition_start',
+  'weather_change',
+  'test_pass',
+  'build_error',
+  'file_deleted',
+]);
+export type SoundEvent = z.infer<typeof SoundEventSchema>;
+
 export const WorldStateSchema = z.object({
   id: z.string().min(1),
   seed: z.string().min(1),
   tick: z.number().int().nonnegative(),
   phase: z.number().int().min(0).max(59),
   status: WorldStatusSchema,
+  weather: WeatherSchema.nullable().optional(),
   active_repo_path: z.string().min(1).nullable().optional(),
   active_repo_name: z.string().min(1).nullable().optional(),
   operator_prompt: z.string().nullable().optional(),
@@ -222,6 +322,7 @@ export const WorldStateSchema = z.object({
   queen_urgency: z.number().int().min(0).max(255).nullable().optional(),
   active_tasks: z.array(TaskSchema).nullable().optional(),
   agent_activities: z.array(AgentActivitySchema).nullable().optional(),
+  sound_events: z.array(z.string()).nullable().optional(),
 });
 
 export type WorldState = z.infer<typeof WorldStateSchema>;
@@ -230,6 +331,7 @@ export const OperatorControlSchema = z.object({
   id: z.string().min(1),
   repo_path: z.string(),
   operator_prompt: z.string(),
+  weather_override: WeatherSchema.nullable().optional(),
   paused: z.boolean().nullable().optional(),
   automate: z.boolean().nullable().optional(),
   visionary_prompt: z.string().nullable().optional(),

@@ -397,6 +397,11 @@ function runForceLayout(files: LayoutNode[], positions: Map<string, FloatPos>): 
   }
 }
 
+export interface GraphPosition extends Position {
+  occupancyWidth: number;
+  occupancyDepth: number;
+}
+
 // ─── Grid Snapping ───
 
 function findOpenGridPosition(
@@ -420,11 +425,81 @@ function findOpenGridPosition(
   return { x: px, y: py, z: 0 };
 }
 
+function findOpenGridBlock(
+  px: number,
+  py: number,
+  width: number,
+  depth: number,
+  occupied: Set<string>,
+): Position {
+  const halfW = Math.floor((width - 1) / 2);
+  const halfD = Math.floor((depth - 1) / 2);
+
+  for (let radius = 0; radius < GRID_SIZE * 2; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) !== radius) continue;
+        const cx = px + dx;
+        const cy = py + dy;
+        const minX = cx - halfW;
+        const maxX = cx + halfW;
+        const minY = cy - halfD;
+        const maxY = cy + halfD;
+
+        if (minX < 0 || maxX >= GRID_SIZE || minY < 0 || maxY >= GRID_SIZE) {
+          continue;
+        }
+
+        let free = true;
+        for (let by = minY; by <= maxY; by++) {
+          for (let bx = minX; bx <= maxX; bx++) {
+            if (occupied.has(`${bx},${by}`)) {
+              free = false;
+              break;
+            }
+          }
+          if (!free) break;
+        }
+
+        if (free) {
+          return { x: cx, y: cy, z: 0 };
+        }
+      }
+    }
+  }
+
+  // Fallback: clamp to nearest valid center
+  return {
+    x: Math.max(halfW, Math.min(GRID_SIZE - 1 - halfW, px)),
+    y: Math.max(halfD, Math.min(GRID_SIZE - 1 - halfD, py)),
+    z: 0,
+  };
+}
+
+function computeOccupancy(nodes: LayoutNode[]): Map<string, { width: number; depth: number }> {
+  const result = new Map<string, { width: number; depth: number }>();
+  const sorted = [...nodes].sort((a, b) => b.centrality - a.centrality);
+  let largeLotCount = 0;
+  const MAX_LARGE_LOTS = 5;
+
+  for (const node of sorted) {
+    if (node.isEntryPoint && largeLotCount < MAX_LARGE_LOTS) {
+      result.set(node.path, { width: 3, depth: 3 });
+      largeLotCount += 1;
+    } else {
+      result.set(node.path, { width: 1, depth: 1 });
+    }
+  }
+
+  return result;
+}
+
 function snapFilesToGrid(
   positions: Map<string, FloatPos>,
   occupied: Set<string>,
-): Map<string, Position> {
-  const grid = new Map<string, Position>();
+  occupancyMap: Map<string, { width: number; depth: number }>,
+): Map<string, GraphPosition> {
+  const grid = new Map<string, GraphPosition>();
 
   // Sort by closeness to center so central/high-centrality nodes claim prime spots
   const sorted = Array.from(positions.entries()).sort((a, b) => {
@@ -436,9 +511,25 @@ function snapFilesToGrid(
   for (const [path, floatPos] of sorted) {
     const gx = Math.round(floatPos.x);
     const gy = Math.round(floatPos.y);
-    const found = findOpenGridPosition(gx, gy, occupied);
-    grid.set(path, found);
-    occupied.add(`${found.x},${found.y}`);
+    const occ = occupancyMap.get(path) ?? { width: 1, depth: 1 };
+
+    let found: Position;
+    if (occ.width > 1 || occ.depth > 1) {
+      found = findOpenGridBlock(gx, gy, occ.width, occ.depth, occupied);
+    } else {
+      found = findOpenGridPosition(gx, gy, occupied);
+    }
+
+    grid.set(path, { x: found.x, y: found.y, z: 0, occupancyWidth: occ.width, occupancyDepth: occ.depth });
+
+    // Mark all tiles in the block as occupied
+    const halfW = Math.floor((occ.width - 1) / 2);
+    const halfD = Math.floor((occ.depth - 1) / 2);
+    for (let by = found.y - halfD; by <= found.y + halfD; by++) {
+      for (let bx = found.x - halfW; bx <= found.x + halfW; bx++) {
+        occupied.add(`${bx},${by}`);
+      }
+    }
   }
 
   return grid;
@@ -448,7 +539,7 @@ function snapFilesToGrid(
 
 function placeDirectories(
   dirInputs: LayoutNodeInput[],
-  fileGrid: Map<string, Position>,
+  fileGrid: Map<string, GraphPosition>,
   occupied: Set<string>,
 ): Map<string, Position> {
   const dirGrid = new Map<string, Position>();
@@ -510,7 +601,7 @@ function placeDirectories(
 export function computeGraphLayout(
   inputs: LayoutNodeInput[],
   seed: string,
-): Map<string, Position> {
+): Map<string, GraphPosition> {
   const rng = seedrandom(seed);
   const allNodes = buildLayoutNodes(inputs);
 
@@ -521,17 +612,20 @@ export function computeGraphLayout(
   const floatPositions = initFilePositions(fileNodes, rng);
   runForceLayout(fileNodes, floatPositions);
 
-  // 2. Snap files to integer grid
-  const occupied = new Set<string>();
-  const fileGrid = snapFilesToGrid(floatPositions, occupied);
+  // 2. Compute multi-tile occupancy for high-centrality entry points
+  const occupancyMap = computeOccupancy(fileNodes);
 
-  // 3. Place directories at centroids of their children
+  // 3. Snap files to integer grid, reserving blocks for large lots
+  const occupied = new Set<string>();
+  const fileGrid = snapFilesToGrid(floatPositions, occupied, occupancyMap);
+
+  // 4. Place directories at centroids of their children
   const dirGrid = placeDirectories(dirNodes, fileGrid, occupied);
 
   // Merge
-  const result = new Map<string, Position>(fileGrid);
+  const result = new Map<string, GraphPosition>(fileGrid);
   for (const [path, pos] of dirGrid) {
-    result.set(path, pos);
+    result.set(path, { ...pos, occupancyWidth: 1, occupancyDepth: 1 });
   }
 
   return result;

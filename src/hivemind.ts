@@ -148,5 +148,13 @@ export function getNodeStateLabel(state: NodeState): string {
     return 'Verified';
   }
 
+  if (state === 'constructing') {
+    return 'Constructing';
+  }
+
+  if (state === 'demolishing') {
+    return 'Demolishing';
+  }
+
   return 'Stable';
 }

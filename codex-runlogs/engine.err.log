@@ -1,0 +1,5 @@
+[ai] Gemini provider returned 429; agent will back off for 60s.
+[supabase] TypeError: fetch failed (code: )
+[supabase] TypeError: fetch failed (code: )
+[supabase] TypeError: fetch failed (code: )
+[ai] Gemini provider returned 429; agent will back off for 60s.

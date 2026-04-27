@@ -14,6 +14,7 @@ import {
 import { createInitialEntities, DEFAULT_SEED, WORLD_STATE_ID, manhattanDistance } from '../src/seed';
 import { isStructureEntity } from '../src/mass-mapper';
 import { createBrowserSupabaseClient } from '../src/supabase';
+import { heightUnitsToWorldHeight } from '../src/building-lifecycle';
 import {
   EntitySchema,
   OperatorControlSchema,
@@ -22,6 +23,7 @@ import {
   type Entity,
   type OperatorControl,
   type TaskValidationResult,
+  type Weather,
   type WorldState,
   type Task,
 } from '../src/types';
@@ -30,7 +32,7 @@ import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
 import { QueenHUD } from './QueenHUD';
 import { drawBuilding } from './simcity-building-render';
-import { getUnifiedFootprint as getFileFootprint, getUnifiedHeight as getPrismHeight } from './city-layout';
+import { getEntityFootprint as getFileFootprint, getEntityHeight as getPrismHeight } from './building-geometry';
 import { drawTethers } from './tether-render';
 import {
   createIsoLayout,
@@ -90,12 +92,14 @@ const PREVIEW_WORLD_STATE: WorldState = {
   tick: 0,
   phase: 0,
   status: 'booting',
+  weather: 'clear',
 };
 
 const DEFAULT_OPERATOR_CONTROL: OperatorControl = {
   id: 'lux-control',
   repo_path: '',
   operator_prompt: '',
+  weather_override: null,
   updated_at: null,
 };
 
@@ -140,7 +144,7 @@ function _withAlpha(hexColor: string, alpha: number): string {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-// getFileFootprint now imported from ./file-colors
+// getFileFootprint and getPrismHeight are imported from ./building-geometry
 
 function shouldAutoHidePath(path: string): boolean {
   return AUTO_HIDDEN_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
@@ -160,13 +164,21 @@ function arraysEqual(left: readonly string[], right: readonly string[]): boolean
   return true;
 }
 
-function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport, phase: number): void {
+function drawBackdrop(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  phase: number,
+  weather: Weather,
+): void {
   const daylight = 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
   const night = 1 - daylight;
+  const rainTint = weather === 'rain' ? 0.16 : 0;
+  const snowTint = weather === 'snow' ? 0.12 : 0;
+  const fogTint = weather === 'fog' ? 0.18 : 0;
   const background = context.createLinearGradient(0, 0, 0, viewport.height);
-  background.addColorStop(0, `rgba(${Math.round(22 + (76 * daylight))}, ${Math.round(34 + (116 * daylight))}, ${Math.round(64 + (129 * daylight))}, 1)`);
-  background.addColorStop(0.55, `rgba(${Math.round(18 + (87 * daylight))}, ${Math.round(28 + (112 * daylight))}, ${Math.round(46 + (96 * daylight))}, 1)`);
-  background.addColorStop(1, `rgba(${Math.round(10 + (58 * daylight))}, ${Math.round(16 + (73 * daylight))}, ${Math.round(24 + (51 * daylight))}, 1)`);
+  background.addColorStop(0, `rgba(${Math.round(22 + (76 * daylight) - (rainTint * 80) + (snowTint * 35) + (fogTint * 25))}, ${Math.round(34 + (116 * daylight) - (rainTint * 55) + (snowTint * 30) + (fogTint * 20))}, ${Math.round(64 + (129 * daylight) - (rainTint * 35) + (snowTint * 18) + (fogTint * 10))}, 1)`);
+  background.addColorStop(0.55, `rgba(${Math.round(18 + (87 * daylight) - (rainTint * 70) + (snowTint * 40) + (fogTint * 35))}, ${Math.round(28 + (112 * daylight) - (rainTint * 50) + (snowTint * 34) + (fogTint * 30))}, ${Math.round(46 + (96 * daylight) - (rainTint * 35) + (snowTint * 25) + (fogTint * 20))}, 1)`);
+  background.addColorStop(1, `rgba(${Math.round(10 + (58 * daylight) - (rainTint * 55) + (snowTint * 30) + (fogTint * 30))}, ${Math.round(16 + (73 * daylight) - (rainTint * 40) + (snowTint * 26) + (fogTint * 28))}, ${Math.round(24 + (51 * daylight) - (rainTint * 30) + (snowTint * 18) + (fogTint * 18))}, 1)`);
   context.fillStyle = background;
   context.fillRect(0, 0, viewport.width, viewport.height);
 
@@ -192,6 +204,60 @@ function drawBackdrop(context: CanvasRenderingContext2D, viewport: Viewport, pha
       const x = (viewport.width * (((index * 37) % 100) / 100));
       const y = 20 + (((index * 53) % 120));
       context.fillRect(x, y, 1.5, 1.5);
+    }
+    context.restore();
+  }
+
+  // Clouds — soft drifting ellipses
+  if (daylight > 0.15 && weather !== 'fog') {
+    context.save();
+    const cloudAlpha = 0.12 + (daylight * 0.14);
+    const cloudSpeed = phase * 0.15;
+    const cloudData = [
+      { x: 0.12, y: 0.08, w: 0.18, h: 0.04, speed: 0.8 },
+      { x: 0.38, y: 0.14, w: 0.22, h: 0.05, speed: 0.5 },
+      { x: 0.68, y: 0.06, w: 0.15, h: 0.035, speed: 1.1 },
+      { x: 0.85, y: 0.18, w: 0.12, h: 0.03, speed: 0.7 },
+      { x: 0.55, y: 0.1, w: 0.1, h: 0.025, speed: 0.9 },
+    ];
+    for (const cloud of cloudData) {
+      const cx = ((cloud.x + (cloudSpeed * cloud.speed * 0.0005)) % 1.2) - 0.1;
+      const cy = viewport.height * cloud.y;
+      const cw = viewport.width * cloud.w;
+      const ch = viewport.height * cloud.h;
+
+      const grad = context.createRadialGradient(cx * viewport.width, cy, 0, cx * viewport.width, cy, cw);
+      grad.addColorStop(0, `rgba(255, 255, 255, ${cloudAlpha})`);
+      grad.addColorStop(0.5, `rgba(255, 255, 255, ${cloudAlpha * 0.6})`);
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+      context.fillStyle = grad;
+      context.beginPath();
+      context.ellipse(cx * viewport.width, cy, cw, ch, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
+  }
+
+  // Birds — small V flocks drifting during day
+  if (daylight > 0.3 && weather !== 'rain' && weather !== 'snow' && weather !== 'fog') {
+    context.save();
+    context.strokeStyle = `rgba(30, 30, 35, ${0.35 + (daylight * 0.25)})`;
+    context.lineWidth = 1;
+    context.lineCap = 'round';
+    for (let flock = 0; flock < 3; flock++) {
+      const flockX = ((0.15 + (flock * 0.32) + ((phase * 0.0002) * (1 + flock * 0.3))) % 1.3) - 0.15;
+      const flockY = 0.05 + (flock * 0.06) + (Math.sin(phase * 0.01 + flock) * 0.02);
+      for (let b = 0; b < 4; b++) {
+        const bx = (flockX * viewport.width) + (b * 12) + (Math.sin(phase * 0.05 + b + flock) * 3);
+        const by = (flockY * viewport.height) + (Math.cos(phase * 0.03 + b) * 2);
+        const wingSpan = 3 + Math.sin(phase * 0.08 + b + flock) * 1.5;
+        context.beginPath();
+        context.moveTo(bx - wingSpan, by - 1);
+        context.lineTo(bx, by + 1);
+        context.lineTo(bx + wingSpan, by - 1);
+        context.stroke();
+      }
     }
     context.restore();
   }
@@ -250,7 +316,7 @@ function getFootprintPolygon(
   depth: number,
   z: number,
   layout: IsoLayout,
-): Array<{ sx: number; sy: number }> {
+): [{ sx: number; sy: number }, { sx: number; sy: number }, { sx: number; sy: number }, { sx: number; sy: number }] {
   return [
     toScreen(x, y, z, layout),
     toScreen(x + width, y, z, layout),
@@ -261,7 +327,7 @@ function getFootprintPolygon(
 
 function tracePolygonPath(
   context: CanvasRenderingContext2D,
-  points: Array<{ sx: number; sy: number }>,
+  points: Array<{ sx: number; sy: number }> | [{ sx: number; sy: number }, { sx: number; sy: number }, { sx: number; sy: number }, { sx: number; sy: number }],
 ): void {
   const first = points[0];
   if (!first) {
@@ -410,8 +476,19 @@ function drawHoverHighlight(
     layout,
   );
   const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.14, z, layout);
+  const centerGround = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z, layout);
 
   context.save();
+  // Subtle ground spotlight
+  const glowRadius = layout.tileWidth * 0.55;
+  const groundGlow = context.createRadialGradient(centerGround.sx, centerGround.sy, 0, centerGround.sx, centerGround.sy, glowRadius);
+  groundGlow.addColorStop(0, 'rgba(92, 171, 219, 0.1)');
+  groundGlow.addColorStop(1, 'rgba(92, 171, 219, 0)');
+  context.fillStyle = groundGlow;
+  context.beginPath();
+  context.ellipse(centerGround.sx, centerGround.sy, glowRadius, glowRadius * 0.55, 0, 0, Math.PI * 2);
+  context.fill();
+
   tracePolygonPath(context, parcel);
   context.fillStyle = 'rgba(92, 171, 219, 0.12)';
   context.fill();
@@ -455,8 +532,42 @@ function drawSelectionRing(
     layout,
   );
   const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.18, z, layout);
+  const centerGround = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z, layout);
+  const lightSource = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z + 3.5, layout);
 
   context.save();
+
+  // Downward spotlight cone
+  context.save();
+  context.strokeStyle = `rgba(132, 234, 255, ${0.06 + pulse * 0.05})`;
+  context.lineWidth = 1;
+  for (const point of parcel) {
+    context.beginPath();
+    context.moveTo(lightSource.sx, lightSource.sy);
+    context.lineTo(point.sx, point.sy);
+    context.stroke();
+  }
+  context.restore();
+
+  // Ground spotlight glow
+  const glowRadius = layout.tileWidth * (0.6 + pulse * 0.15);
+  const groundGlow = context.createRadialGradient(centerGround.sx, centerGround.sy, 0, centerGround.sx, centerGround.sy, glowRadius);
+  groundGlow.addColorStop(0, `rgba(132, 234, 255, ${0.14 * pulse})`);
+  groundGlow.addColorStop(1, 'rgba(132, 234, 255, 0)');
+  context.fillStyle = groundGlow;
+  context.beginPath();
+  context.ellipse(centerGround.sx, centerGround.sy, glowRadius, glowRadius * 0.55, 0, 0, Math.PI * 2);
+  context.fill();
+
+  // Ground ring pulse
+  const ringPulse = (phase % 36) / 36;
+  const ringRadius = layout.tileWidth * (0.35 + ringPulse * 0.45);
+  context.strokeStyle = `rgba(132, 234, 255, ${0.35 * (1 - ringPulse)})`;
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.ellipse(centerGround.sx, centerGround.sy, ringRadius, ringRadius * 0.55, 0, 0, Math.PI * 2);
+  context.stroke();
+
   tracePolygonPath(context, parcel);
   context.fillStyle = `rgba(57, 132, 183, ${pulse * 0.16})`;
   context.fill();
@@ -802,6 +913,286 @@ function drawAgent(
   context.restore();
 }
 
+function drawFireflies(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  phase: number,
+): void {
+  const night = 1 - (0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2)));
+  if (night < 0.4) return;
+
+  context.save();
+  const flyCount = 18;
+  for (let i = 0; i < flyCount; i++) {
+    const baseX = (viewport.width * (((i * 47 + 13) % 100) / 100));
+    const baseY = (viewport.height * (0.3 + (((i * 31 + 7) % 50) / 100)));
+    const driftX = Math.sin(phase * 0.02 + i * 1.7) * 20;
+    const driftY = Math.cos(phase * 0.015 + i * 2.3) * 12;
+    const blink = 0.3 + (Math.sin(phase * 0.08 + i * 4.1) * 0.25);
+
+    context.fillStyle = `rgba(180, 255, 120, ${blink * night})`;
+    context.shadowBlur = 6 * night;
+    context.shadowColor = `rgba(160, 255, 80, ${blink * night * 0.8})`;
+    context.beginPath();
+    context.arc(baseX + driftX, baseY + driftY, 1.5, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+function drawAtmosphericOverlay(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  weather: Weather,
+): void {
+  // Subtle blue radial haze around screen edges
+  const gradient = context.createRadialGradient(
+    viewport.width / 2, viewport.height / 2, viewport.height * 0.2,
+    viewport.width / 2, viewport.height / 2, viewport.height * 0.85,
+  );
+  gradient.addColorStop(0, 'rgba(200, 220, 245, 0)');
+  gradient.addColorStop(0.65, 'rgba(180, 205, 235, 0)');
+  gradient.addColorStop(1, 'rgba(160, 190, 220, 0.22)');
+
+  context.save();
+  context.globalAlpha = 1;
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, viewport.width, viewport.height);
+
+  if (weather === 'fog') {
+    context.fillStyle = 'rgba(210, 218, 224, 0.2)';
+    context.fillRect(0, 0, viewport.width, viewport.height);
+  }
+
+  context.restore();
+}
+
+function drawWeatherScreenEffects(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  phase: number,
+  weather: Weather,
+): void {
+  if (weather === 'rain') {
+    context.save();
+    context.strokeStyle = 'rgba(180, 215, 255, 0.35)';
+    context.lineWidth = 1.1;
+    for (let index = 0; index < 90; index += 1) {
+      const x = ((index * 23) + (phase * 18)) % (viewport.width + 30);
+      const y = ((index * 37) + (phase * 48)) % (viewport.height + 40);
+      context.beginPath();
+      context.moveTo(x, y);
+      context.lineTo(x - 10, y + 20);
+      context.stroke();
+    }
+    context.restore();
+    return;
+  }
+
+  if (weather === 'snow') {
+    context.save();
+    context.fillStyle = 'rgba(245, 248, 255, 0.8)';
+    for (let index = 0; index < 70; index += 1) {
+      const x = ((index * 31) + (phase * 6)) % viewport.width;
+      const y = ((index * 43) + (phase * 12)) % (viewport.height + 20);
+      const radius = 1 + ((index % 3) * 0.6);
+      context.beginPath();
+      context.arc(x, y, radius, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
+  }
+}
+
+function drawGroundWeatherEffects(
+  context: CanvasRenderingContext2D,
+  layout: IsoLayout,
+  roads: Array<{ fromX: number; fromY: number; toX: number; toY: number }>,
+  phase: number,
+  tick: number,
+  weather: Weather,
+): void {
+  if (weather !== 'rain' && weather !== 'snow') {
+    return;
+  }
+
+  context.save();
+
+  const sampleRoads = roads.slice(0, 18);
+  for (let index = 0; index < sampleRoads.length; index += 1) {
+    const road = sampleRoads[index]!;
+    const t = ((index * 0.17) + (phase * 0.004)) % 1;
+    const x = road.fromX + ((road.toX - road.fromX) * t);
+    const y = road.fromY + ((road.toY - road.fromY) * t);
+    const point = toScreen(x, y, 0, layout);
+
+    if (weather === 'rain') {
+      context.fillStyle = 'rgba(135, 180, 220, 0.16)';
+      context.beginPath();
+      context.ellipse(point.sx, point.sy + 3, 10, 4, 0, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = 'rgba(210, 235, 255, 0.12)';
+      context.beginPath();
+      context.ellipse(point.sx, point.sy + 3, 10, 4, 0, 0, Math.PI * 2);
+      context.stroke();
+      continue;
+    }
+
+    const stride = (tick + (index * 5)) % 20;
+    const leftX = point.sx - 3;
+    const rightX = point.sx + 3;
+    const footY = point.sy + (stride * 0.08);
+    context.fillStyle = 'rgba(210, 218, 230, 0.42)';
+    context.beginPath();
+    context.ellipse(leftX, footY, 2.8, 1.2, -0.25, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.ellipse(rightX, footY + 1.6, 2.8, 1.2, 0.25, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.restore();
+}
+
+function drawParticleEntity(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  tick: number,
+): void {
+  if (entity.birth_tick == null || entity.ttl_ticks == null) {
+    return;
+  }
+
+  const age = Math.max(0, tick - entity.birth_tick);
+  const progress = Math.min(1, age / entity.ttl_ticks);
+  const startHeight = heightUnitsToWorldHeight(entity.current_height ?? entity.target_height ?? 24);
+  const endHeight = heightUnitsToWorldHeight(entity.target_height ?? 12);
+  const drift = (entity.state_register ?? 0) - 1.5;
+  const z = startHeight + ((endHeight - startHeight) * progress);
+  const center = toScreen(display.x + 0.5 + (drift * 0.04 * progress), display.y + 0.5, z, layout);
+  const alpha = Math.max(0, 0.75 - progress);
+  const color =
+    entity.descriptor === 'dust'
+      ? `rgba(203, 213, 225, ${alpha})`
+      : `rgba(148, 163, 184, ${alpha})`;
+
+  context.save();
+  context.fillStyle = color;
+  context.shadowBlur = 4;
+  context.shadowColor = color;
+  context.beginPath();
+  context.arc(center.sx, center.sy - (progress * 8), 2 + ((entity.state_register ?? 0) % 2), 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function drawRubbleEntity(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  tick: number,
+): void {
+  const age = entity.birth_tick == null || entity.ttl_ticks == null ? 0 : Math.max(0, tick - entity.birth_tick);
+  const progress = entity.ttl_ticks == null ? 0 : Math.min(1, age / entity.ttl_ticks);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0, layout);
+  const alpha = 0.85 * (1 - progress);
+
+  context.save();
+  context.fillStyle = `rgba(71, 85, 105, ${alpha})`;
+  context.beginPath();
+  context.ellipse(center.sx, center.sy + 4, 16, 6, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = `rgba(148, 163, 184, ${alpha * 0.9})`;
+  for (let index = 0; index < 5; index += 1) {
+    context.beginPath();
+    context.arc(center.sx - 10 + (index * 5), center.sy + 1 + ((index % 2) * 2), 2.2, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+
+
+function drawAmbientOcclusion(
+  context: CanvasRenderingContext2D,
+  entities: Entity[],
+  layout: IsoLayout,
+  displayPoints: Record<string, DisplayPoint>,
+): void {
+  // Build a spatial grid for fast neighbor lookups
+  const grid = new Map<string, Entity>();
+  const structures: Entity[] = [];
+  for (const entity of entities) {
+    if (!isStructureEntity(entity) || entity.type === 'directory') continue;
+    structures.push(entity);
+    grid.set(`${Math.round(entity.x)},${Math.round(entity.y)}`, entity);
+  }
+
+  context.save();
+
+  for (const entity of structures) {
+    const display = getInterpolatedPoint(entity, displayPoints);
+    const footprint = getFileFootprint(entity);
+    const width = footprint.width;
+    const depth = footprint.depth;
+    const z = entity.z ?? 0;
+
+    const baseX = display.x + ((1 - width) / 2);
+    const baseY = display.y + ((1 - depth) / 2);
+    const corners = getFootprintPolygon(baseX, baseY, width, depth, z, layout);
+
+    // 1. Ground-contact ambient occlusion
+    // Darken the area immediately surrounding the building base
+    const cx = (corners[0].sx + corners[2].sx) / 2;
+    const cy = (corners[0].sy + corners[2].sy) / 2;
+    const rx = Math.abs(corners[1].sx - corners[3].sx) * 0.55;
+    const ry = Math.abs(corners[2].sy - corners[0].sy) * 0.35;
+
+    const baseGrad = context.createRadialGradient(cx, cy, rx * 0.25, cx, cy, rx * 0.9);
+    baseGrad.addColorStop(0, 'rgba(6, 13, 20, 0)');
+    baseGrad.addColorStop(0.75, 'rgba(6, 13, 20, 0.05)');
+    baseGrad.addColorStop(1, 'rgba(6, 13, 20, 0.14)');
+
+    context.globalAlpha = 1;
+    context.fillStyle = baseGrad;
+    context.beginPath();
+    context.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    context.fill();
+
+    // 2. Building-to-building contact AO
+    // Check the 8 surrounding grid cells for neighbors
+    for (let ddx = -1; ddx <= 1; ddx++) {
+      for (let ddy = -1; ddy <= 1; ddy++) {
+        if (ddx === 0 && ddy === 0) continue;
+        const neighbor = grid.get(`${Math.round(entity.x) + ddx},${Math.round(entity.y) + ddy}`);
+        if (!neighbor) continue;
+
+        const nd = getInterpolatedPoint(neighbor, displayPoints);
+        const mx = (display.x + nd.x) / 2;
+        const my = (display.y + nd.y) / 2;
+        const mScreen = toScreen(mx, my, z, layout);
+
+        const contactGrad = context.createRadialGradient(
+          mScreen.sx, mScreen.sy, 0,
+          mScreen.sx, mScreen.sy, layout.tileWidth * 0.22,
+        );
+        contactGrad.addColorStop(0, 'rgba(6, 13, 20, 0.22)');
+        contactGrad.addColorStop(1, 'rgba(6, 13, 20, 0)');
+
+        context.fillStyle = contactGrad;
+        context.beginPath();
+        context.arc(mScreen.sx, mScreen.sy, layout.tileWidth * 0.22, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+  }
+
+  context.restore();
+}
+
 function drawBuildingShadow(
   context: CanvasRenderingContext2D,
   entity: Entity,
@@ -812,32 +1203,57 @@ function drawBuildingShadow(
   const footprint = getFileFootprint(entity);
   const width = footprint.width;
   const depth = footprint.depth;
-  
+  const height = getPrismHeight(entity);
+
+  // Skip shadow for very flat structures (plazas, goals)
+  if (height < 0.15) return;
+
   const daylight = 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
   const night = 1 - daylight;
-  
-  const shadowLength = 0.4 + night * 1.5;
-  const shadowOffsetIsoX = -shadowLength * 0.3;
-  const shadowOffsetIsoY = -shadowLength * 0.3;
-  
-  const x = display.x + ((1 - width) / 2) + shadowOffsetIsoX;
-  const y = display.y + ((1 - depth) / 2) + shadowOffsetIsoY;
+
+  const baseX = display.x + ((1 - width) / 2);
+  const baseY = display.y + ((1 - depth) / 2);
   const z = entity.z ?? 0;
-  
-  const polygon = getFootprintPolygon(x, y, width, depth, z, layout);
+
+  const ground = getFootprintPolygon(baseX, baseY, width, depth, z, layout);
+
+  // Shadow length scales with building height (taller = longer shadow)
+  // and time of day (lower sun/moon angle at night = longer shadows)
+  const shadowLen = (0.15 + height * 0.28) * (1 + night * 0.6);
+  const sdx = -shadowLen * 0.3;
+  const sdy = -shadowLen * 0.3;
+
+  const proj = getFootprintPolygon(baseX + sdx, baseY + sdy, width, depth, z, layout);
 
   context.save();
-  context.globalAlpha = 0.25;
+
+  // 1. Contact shadow (dark area directly under the building footprint)
+  context.globalAlpha = 0.14 + (night * 0.06);
   context.fillStyle = '#0a1520';
-  context.beginPath();
-  if (polygon[0] && polygon[1] && polygon[2] && polygon[3]) {
-    context.moveTo(polygon[0].sx, polygon[0].sy);
-    context.lineTo(polygon[1].sx, polygon[1].sy);
-    context.lineTo(polygon[2].sx, polygon[2].sy);
-    context.lineTo(polygon[3].sx, polygon[3].sy);
-  }
-  context.closePath();
+  tracePolygonPath(context, ground);
   context.fill();
+
+  // 2. Cast shadow (gradient polygon extending behind the building)
+  // Hexagon: front → right → projected-right → projected-back → projected-left → left
+  const castShadow = [
+    ground[2], ground[1], proj[1], proj[0], proj[3], ground[3],
+  ];
+
+  const cx = (ground[0].sx + ground[2].sx) / 2;
+  const cy = (ground[0].sy + ground[2].sy) / 2;
+  const pcx = (proj[0].sx + proj[2].sx) / 2;
+  const pcy = (proj[0].sy + proj[2].sy) / 2;
+
+  const grad = context.createLinearGradient(cx, cy, pcx, pcy);
+  grad.addColorStop(0, `rgba(8, 16, 28, ${0.22 + night * 0.08})`);
+  grad.addColorStop(0.5, `rgba(8, 16, 28, ${0.1 + night * 0.04})`);
+  grad.addColorStop(1, 'rgba(8, 16, 28, 0)');
+
+  context.globalAlpha = 1;
+  context.fillStyle = grad;
+  tracePolygonPath(context, castShadow);
+  context.fill();
+
   context.restore();
 }
 
@@ -849,6 +1265,9 @@ function drawEntities(
   phase: number,
   tick: number,
   displayPoints: Record<string, DisplayPoint>,
+  cityLayout: import('./city-layout').CityLayout,
+  selectedEntityId: string | null,
+  weather: Weather,
 ): void {
   const activeIds = new Set(entities.map((entity) => entity.id));
   for (const id of Object.keys(displayPoints)) {
@@ -887,13 +1306,24 @@ function drawEntities(
       continue;
     }
 
+    if (entity.type === 'particle') {
+      drawParticleEntity(context, entity, display, layout, tick);
+      continue;
+    }
+
+    if (entity.type === 'rubble') {
+      drawRubbleEntity(context, entity, display, layout, tick);
+      continue;
+    }
+
     const screenPt = toScreen(display.x, display.y, entity.z ?? 0, layout);
     const dist = Math.hypot(screenPt.sx - viewport.width / 2, screenPt.sy - viewport.height / 2);
     const maxDist = Math.hypot(viewport.width, viewport.height) / 2;
     const haze = Math.min(1, Math.max(0, dist / maxDist));
+    const fogMultiplier = weather === 'fog' ? 0.75 : 0.5;
 
     context.save();
-    context.globalAlpha = 1 - (haze * 0.3);
+    context.globalAlpha = 1 - (haze * fogMultiplier);
 
     if (isStructureEntity(entity)) {
       drawBuildingShadow(context, entity, display, layout, phase);
@@ -903,7 +1333,9 @@ function drawEntities(
         display,
         layout,
         phase,
-        nodeState: entity.node_state ?? 'stable',
+        cityLayout,
+        allEntities: entities,
+        isSelected: selectedEntityId === entity.id,
       });
       context.restore();
       continue;
@@ -916,7 +1348,9 @@ function drawEntities(
       display,
       layout,
       phase,
-      nodeState: 'stable',
+      cityLayout,
+      allEntities: entities,
+      isSelected: selectedEntityId === entity.id,
     });
     context.restore();
   }
@@ -1353,6 +1787,16 @@ function App() {
   const inspectPanelRef = useRef<HTMLDivElement | null>(null);
   const zoomAnimationRef = useRef<{ frame: number | null; target: Camera | null }>({ frame: null, target: null });
   const autoHiddenRepoRef = useRef<string | null>(null);
+
+  // Handle sound events
+  useEffect(() => {
+    if (worldState?.sound_events) {
+      for (const event of worldState.sound_events) {
+         console.log(`[sound] Playing sound event: ${event}`);
+         // Dev will hook up actual audio files here
+      }
+    }
+  }, [worldState?.sound_events, worldState?.tick]);
 
   const agents = entities.filter((entity) => entity.type === 'agent');
   const primaryAgent = agents[0] ?? null;
@@ -1916,9 +2360,11 @@ function App() {
     worldState.operator_target_path,
   ]);
 
+  // Visual phase/tick are now self-driven in the requestAnimationFrame loop
+  // (see render() in the canvas useEffect). We only sync entity data from
+  // Supabase, not the visual clock, to eliminate DB usage from animations.
   useEffect(() => {
-    phaseRef.current = worldState.phase;
-    tickRef.current = worldState.tick;
+    // Intentionally no-op: phaseRef/tickRef are client-side only now.
   }, [worldState.phase, worldState.tick]);
 
   useEffect(() => {
@@ -2321,6 +2767,13 @@ function App() {
       const nearest = findNearestVisibleStructure(sx, sy, layout, 1.4);
       
       if (!nearest) return;
+
+      // If already zoomed in on this entity, zoom out
+      if (cameraRef.current.zoom > 2.0 && selectedEntityRef.current?.id === nearest.id) {
+         setSelectedEntity(null);
+         startCameraAnimation(DEFAULT_CAMERA, 330); // ~20 frames at 60fps
+         return;
+      }
       
       // Select the entity
       setSelectedEntity(nearest);
@@ -2340,15 +2793,20 @@ function App() {
         zoom: targetZoom,
       };
       
-      // Start smooth zoom animation
+      startCameraAnimation(targetCamera, 330); // ~20 frames at 60fps
+      
+      // Auto-open left panel and focus on inspect section
+      setLeftPanelOpen(true);
+      setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
+    };
+
+    const startCameraAnimation = (targetCamera: Camera, duration: number) => {
       const startCamera = { ...cameraRef.current };
       const startTime = performance.now();
-      const duration = 600;
       
       const animate = (time: number): void => {
         const elapsed = time - startTime;
         const t = Math.min(1, elapsed / duration);
-        // Ease-out cubic
         const ease = 1 - Math.pow(1 - t, 3);
         
         const nextCamera: Camera = {
@@ -2368,16 +2826,16 @@ function App() {
         }
       };
       
-      // Cancel any existing animation
-      if (zoomAnimationRef.current.frame) {
-        cancelAnimationFrame(zoomAnimationRef.current.frame);
-      }
+      if (zoomAnimationRef.current.frame) cancelAnimationFrame(zoomAnimationRef.current.frame);
       zoomAnimationRef.current.target = targetCamera;
       zoomAnimationRef.current.frame = requestAnimationFrame(animate);
-      
-      // Auto-open left panel and focus on inspect section
-      setLeftPanelOpen(true);
-      setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && cameraRef.current.zoom > 2.0) {
+         setSelectedEntity(null);
+         startCameraAnimation(DEFAULT_CAMERA, 330);
+      }
     };
 
     canvas.addEventListener('wheel', handleWheel, { passive: false });
@@ -2385,6 +2843,7 @@ function App() {
     canvas.addEventListener('dblclick', handleDoubleClick);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('keydown', handleKeyDown);
     const zoomAnimation = zoomAnimationRef.current;
 
     return () => {
@@ -2418,6 +2877,12 @@ function App() {
     canvas.style.height = `${viewport.height}px`;
 
     const render = (): void => {
+      // Self-drive the visual phase/tick at 60fps independent of Supabase sync rate.
+      // Original engine: 10 ticks/sec (100ms interval), phase period = 60 ticks = 6 sec.
+      // At 60fps we scale by 10/60 = 1/6 per frame to preserve the same cycle timing.
+      phaseRef.current += 10 / 60;
+      tickRef.current += 10 / 60;
+
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
       context.clearRect(0, 0, viewport.width, viewport.height);
 
@@ -2425,10 +2890,11 @@ function App() {
       const currentEntities = visibleEntityListRef.current;
       const phase = phaseRef.current;
       const tick = tickRef.current;
+      const weather = worldState.weather ?? 'clear';
       const layoutData = computeCityLayout(currentEntities);
       cityLayoutRef.current = layoutData;
 
-      drawBackdrop(context, viewport, phase);
+      drawBackdrop(context, viewport, phase, weather);
 
       // Underground plumbing — import dependency conduits (toggleable)
       if (showPlumbingRef.current) {
@@ -2440,9 +2906,10 @@ function App() {
       // Render the SimCity-style road network from the computed city layout.
       const roadCount = layoutData.roads.length;
       const totalTraffic = layoutData.roads.reduce((s, r) => s + r.trafficDensity, 0);
-      spawnCars(trafficRef.current, roadCount, totalTraffic, tick);
-      updateCars(trafficRef.current, 1);
+      spawnCars(trafficRef.current, roadCount, totalTraffic, tick, layoutData.roads, currentEntities);
+      updateCars(trafficRef.current, 10 / 60);
       drawRoadsAndTraffic(context, layoutData.roads, trafficRef.current, layout, phase, currentEntities);
+      drawGroundWeatherEffects(context, layout, layoutData.roads, phase, tick, weather);
 
       drawTetherRoute(context, routeNodesRef.current, layout, phase);
       drawAgentTethers(
@@ -2460,7 +2927,12 @@ function App() {
         phase,
         tick,
         displayPointsRef.current,
+        layoutData,
+        selectedEntityRef.current?.id ?? null,
+        weather,
       );
+
+      drawAmbientOcclusion(context, currentEntities, layout, displayPointsRef.current);
 
       if (hoveredEntityId) {
         const hovered = currentEntities.find((e) => e.id === hoveredEntityId);
@@ -2474,6 +2946,10 @@ function App() {
         drawSelectionRing(context, selected, layout, displayPointsRef.current, phase);
       }
 
+      drawFireflies(context, viewport, phase);
+      drawWeatherScreenEffects(context, viewport, phase, weather);
+      drawAtmosphericOverlay(context, viewport, weather);
+
       frameRef.current = window.requestAnimationFrame(render);
     };
 
@@ -2485,7 +2961,7 @@ function App() {
         frameRef.current = null;
       }
     };
-  }, [viewport, camera, hoveredEntityId, agents]);
+  }, [viewport, camera, hoveredEntityId, agents, worldState.weather]);
 
   useEffect(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
@@ -2612,7 +3088,14 @@ function App() {
         throw error;
       } finally {
         snapshotInFlight = false;
-        scheduleSnapshot(channelHealthy ? 30000 : 5000);
+        if (channelHealthy) {
+          if (pollHandle !== null) {
+            window.clearTimeout(pollHandle);
+            pollHandle = null;
+          }
+        } else {
+          scheduleSnapshot(5000);
+        }
       }
     };
 
@@ -2672,7 +3155,10 @@ function App() {
         if (status === 'SUBSCRIBED') {
           channelHealthy = true;
           setMode('live');
-          scheduleSnapshot(30000);
+          if (pollHandle !== null) {
+            window.clearTimeout(pollHandle);
+            pollHandle = null;
+          }
         }
 
         if (status === 'CHANNEL_ERROR') {
