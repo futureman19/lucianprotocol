@@ -6,6 +6,8 @@ import { createPrismProjection, toScreen, traceFace, type IsoLayout, type Screen
 import type { CityLayout } from './city-layout';
 import { getFaceColors } from './sc2k-palette';
 import { drawRooftopIdentity } from './rooftop-identity';
+import { drawConditionOverlays, drawIvy } from './condition-renderer';
+import { drawLotProps } from './lot-props';
 
 export interface DrawBuildingContext {
   context: CanvasRenderingContext2D;
@@ -17,6 +19,8 @@ export interface DrawBuildingContext {
   allEntities: Entity[];
   isSelected?: boolean;
 }
+
+type QuadFace = [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
 
 
 function snap(n: number): number {
@@ -98,6 +102,312 @@ function fillFace(
   context.stroke();
 }
 
+function interpolateFacePoint(face: QuadFace, u: number, v: number): ScreenPoint {
+  const top = {
+    sx: face[0].sx + ((face[1].sx - face[0].sx) * u),
+    sy: face[0].sy + ((face[1].sy - face[0].sy) * u),
+  };
+  const bottom = {
+    sx: face[3].sx + ((face[2].sx - face[3].sx) * u),
+    sy: face[3].sy + ((face[2].sy - face[3].sy) * u),
+  };
+
+  return {
+    sx: top.sx + ((bottom.sx - top.sx) * v),
+    sy: top.sy + ((bottom.sy - top.sy) * v),
+  };
+}
+
+function getFacePanel(face: QuadFace, u1: number, v1: number, u2: number, v2: number): QuadFace {
+  return [
+    interpolateFacePoint(face, u1, v1),
+    interpolateFacePoint(face, u2, v1),
+    interpolateFacePoint(face, u2, v2),
+    interpolateFacePoint(face, u1, v2),
+  ];
+}
+
+function drawFaceLine(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  startU: number,
+  startV: number,
+  endU: number,
+  endV: number,
+): void {
+  const start = interpolateFacePoint(face, startU, startV);
+  const end = interpolateFacePoint(face, endU, endV);
+  context.beginPath();
+  context.moveTo(start.sx, start.sy);
+  context.lineTo(end.sx, end.sy);
+  context.stroke();
+}
+
+function drawSurfacePanel(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  u1: number,
+  v1: number,
+  u2: number,
+  v2: number,
+  fill: string,
+  stroke: string,
+  lineWidth = 0.7,
+): void {
+  const panel = getFacePanel(face, u1, v1, u2, v2);
+  fillFace(context, panel, fill, stroke, lineWidth);
+}
+
+function drawFacadeRibs(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  rows: number,
+  cols: number,
+  trim: string,
+  strength = 0.18,
+): void {
+  context.save();
+  context.lineWidth = 0.65;
+  context.strokeStyle = withAlpha(trim, strength);
+
+  for (let row = 1; row < rows; row += 1) {
+    const v = row / rows;
+    drawFaceLine(context, face, 0.04, v, 0.96, v);
+  }
+
+  for (let col = 1; col < cols; col += 1) {
+    const u = col / cols;
+    drawFaceLine(context, face, u, 0.04, u, 0.96);
+  }
+
+  context.strokeStyle = withAlpha(trim, strength + 0.12);
+  context.lineWidth = 0.9;
+  drawFaceLine(context, face, 0.02, 0.02, 0.02, 0.98);
+  drawFaceLine(context, face, 0.98, 0.02, 0.98, 0.98);
+  context.restore();
+}
+
+function drawRoofDeckDetails(
+  context: CanvasRenderingContext2D,
+  top: QuadFace,
+  layout: IsoLayout,
+  trim: string,
+  accent: string,
+  seed: number,
+  density: number,
+): void {
+  context.save();
+
+  context.strokeStyle = withAlpha(trim, 0.32 + (density * 0.16));
+  context.lineWidth = 0.85;
+  traceFace(context, top);
+  context.stroke();
+
+  const inner = getFacePanel(top, 0.08, 0.08, 0.92, 0.92);
+  context.strokeStyle = withAlpha(trim, 0.18 + (density * 0.12));
+  context.lineWidth = 0.7;
+  traceFace(context, inner);
+  context.stroke();
+
+  const ribCount = Math.max(2, Math.min(6, Math.round(2 + density * 5)));
+  context.strokeStyle = withAlpha(trim, 0.12 + (density * 0.1));
+  for (let index = 1; index < ribCount; index += 1) {
+    const t = index / ribCount;
+    drawFaceLine(context, top, 0.12, t, 0.88, t);
+  }
+
+  const hatchU = 0.18 + ((seed % 5) * 0.08);
+  const hatchV = 0.16 + ((seed % 7) * 0.06);
+  drawSurfacePanel(
+    context,
+    top,
+    Math.min(0.7, hatchU),
+    Math.min(0.68, hatchV),
+    Math.min(0.88, hatchU + 0.16),
+    Math.min(0.86, hatchV + 0.12),
+    withAlpha(adjustLightness(trim, -24), 0.66),
+    withAlpha(trim, 0.45),
+    0.75,
+  );
+
+  const ventCount = Math.max(1, Math.min(4, Math.round(1 + density * 3)));
+  for (let index = 0; index < ventCount; index += 1) {
+    const u = 0.2 + (((seed + index * 17) % 50) / 100);
+    const v = 0.18 + (((seed + index * 23) % 48) / 100);
+    const anchor = interpolateFacePoint(top, Math.min(0.78, u), Math.min(0.78, v));
+    const radius = Math.max(1.6, layout.tileWidth * (0.018 + density * 0.008));
+    context.fillStyle = withAlpha(adjustLightness(trim, -36), 0.74);
+    context.beginPath();
+    context.ellipse(anchor.sx, anchor.sy, radius * 1.7, radius, 0.15, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = withAlpha(accent, 0.28);
+    context.lineWidth = 0.55;
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function drawWallFaceDetails(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  trim: string,
+  seed: number,
+  intensity: number,
+): void {
+  context.save();
+  const markCount = Math.max(1, Math.min(5, Math.round(1 + intensity * 5)));
+  context.strokeStyle = withAlpha(trim, 0.12 + (intensity * 0.14));
+  context.lineWidth = 0.65;
+
+  for (let index = 0; index < markCount; index += 1) {
+    const u = 0.16 + (((seed + index * 29) % 68) / 100);
+    const v = 0.14 + (((seed + index * 31) % 70) / 100);
+    const length = 0.06 + (((seed + index * 11) % 12) / 100);
+    drawFaceLine(context, face, Math.min(0.9, u), v, Math.min(0.94, u + length), Math.min(0.96, v + length * 0.45));
+  }
+
+  context.restore();
+}
+
+function drawColonnade(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  columns: number,
+  trim: string,
+): void {
+  context.save();
+  context.strokeStyle = withAlpha(trim, 0.58);
+  context.lineWidth = 1.2;
+
+  for (let index = 0; index < columns; index += 1) {
+    const u = (index + 0.5) / columns;
+    drawFaceLine(context, face, u, 0.14, u, 0.92);
+  }
+
+  context.strokeStyle = withAlpha(trim, 0.34);
+  context.lineWidth = 0.8;
+  drawFaceLine(context, face, 0.08, 0.22, 0.92, 0.22);
+  drawFaceLine(context, face, 0.08, 0.86, 0.92, 0.86);
+  context.restore();
+}
+
+function drawStripedAwning(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  accent: string,
+  trim: string,
+): void {
+  const awning = getFacePanel(face, 0.12, 0.52, 0.9, 0.72);
+  context.save();
+  fillFace(context, awning, withAlpha(accent, 0.9), withAlpha(trim, 0.58), 0.8);
+
+  context.strokeStyle = withAlpha('#ffffff', 0.34);
+  context.lineWidth = 1;
+  for (let index = 1; index < 5; index += 1) {
+    const u = index / 5;
+    drawFaceLine(context, awning, u, 0.06, u, 0.94);
+  }
+
+  context.restore();
+}
+
+function drawIndustrialRoofline(
+  context: CanvasRenderingContext2D,
+  top: QuadFace,
+  trim: string,
+  seed: number,
+): void {
+  context.save();
+  context.strokeStyle = withAlpha(trim, 0.42);
+  context.lineWidth = 1;
+
+  const rows = 2 + (seed % 2);
+  for (let row = 0; row < rows; row += 1) {
+    const v = 0.25 + row * 0.22;
+    drawFaceLine(context, top, 0.1, v, 0.9, v);
+    drawFaceLine(context, top, 0.1, v + 0.05, 0.9, v + 0.05);
+  }
+
+  context.restore();
+}
+
+function drawHazardStripes(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  trim: string,
+): void {
+  context.save();
+  const band = getFacePanel(face, 0.08, 0.78, 0.92, 0.92);
+  fillFace(context, band, withAlpha('#1f2937', 0.62), withAlpha(trim, 0.35), 0.6);
+  context.strokeStyle = 'rgba(251, 191, 36, 0.72)';
+  context.lineWidth = 1;
+
+  for (let index = 0; index < 7; index += 1) {
+    const u = index / 7;
+    drawFaceLine(context, band, u, 0.95, Math.min(1, u + 0.18), 0.05);
+  }
+
+  context.restore();
+}
+
+function drawLotMarkings(
+  context: CanvasRenderingContext2D,
+  top: QuadFace,
+  kind: string,
+  accent: string,
+): void {
+  context.save();
+  context.strokeStyle = withAlpha('#f8fafc', 0.18);
+  context.lineWidth = 0.75;
+
+  drawFaceLine(context, top, 0.08, 0.12, 0.92, 0.12);
+  drawFaceLine(context, top, 0.08, 0.88, 0.92, 0.88);
+  drawFaceLine(context, top, 0.12, 0.08, 0.12, 0.92);
+  drawFaceLine(context, top, 0.88, 0.08, 0.88, 0.92);
+
+  if (kind === 'factory' || kind === 'warehouse' || kind === 'substation') {
+    context.strokeStyle = withAlpha('#fbbf24', 0.28);
+    for (let index = 1; index < 4; index += 1) {
+      const u = index / 4;
+      drawFaceLine(context, top, u, 0.18, u, 0.82);
+    }
+  } else if (kind === 'shopfront') {
+    context.strokeStyle = withAlpha(accent, 0.28);
+    drawFaceLine(context, top, 0.18, 0.74, 0.82, 0.74);
+    drawFaceLine(context, top, 0.3, 0.82, 0.7, 0.82);
+  } else {
+    context.strokeStyle = withAlpha(accent, 0.2);
+    drawFaceLine(context, top, 0.5, 0.14, 0.5, 0.86);
+    drawFaceLine(context, top, 0.14, 0.5, 0.86, 0.5);
+  }
+
+  context.restore();
+}
+
+function getLotPropMix(kind: string): Record<string, number> {
+  switch (kind) {
+    case 'factory':
+      return { loading: 0.8, pallet: 0.65, utility: 0.4, fence: 0.45 };
+    case 'warehouse':
+      return { loading: 0.7, pallet: 0.75, parking: 0.45, dumpster: 0.35 };
+    case 'shopfront':
+      return { awning: 0.75, planter: 0.45, bench: 0.35, bike: 0.28 };
+    case 'campus':
+      return { bush: 0.7, bench: 0.5, planter: 0.45 };
+    case 'civic':
+      return { art: 0.6, planter: 0.5, bench: 0.45 };
+    case 'substation':
+      return { fence: 0.65, utility: 0.75, hvac: 0.45 };
+    case 'landmark':
+      return { art: 0.65, planter: 0.5, parking: 0.3 };
+    case 'tower':
+      return { parking: 0.45, planter: 0.35, mailbox: 0.25 };
+    default:
+      return {};
+  }
+}
+
 function getDaylight(phase: number): number {
   return 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
 }
@@ -153,7 +463,7 @@ function drawGroundLot(
   width: number,
   depth: number,
   accent: string,
-  _kind: string,
+  kind: string,
 ): void {
   const margin = 0.1;
   const lotProjection = createPrism(
@@ -174,11 +484,12 @@ function drawGroundLot(
   fillFace(context, lotProjection.left, leftColor, 'rgba(60, 65, 70, 0.7)');
   fillFace(context, lotProjection.right, rightColor, 'rgba(60, 65, 70, 0.7)');
   fillFace(context, lotProjection.top, topColor, withAlpha(accent, 0.18), 1.0);
+  drawLotMarkings(context, lotProjection.top, kind, accent);
 }
 
 function drawDetailedWindows(
   context: CanvasRenderingContext2D,
-  face: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint],
+  face: QuadFace,
   rows: number,
   cols: number,
   windowColor: string,
@@ -194,6 +505,8 @@ function drawDetailedWindows(
     ? withAlpha('#ffcc80', 0.82 + (nightFactor * 0.18))
     : withAlpha('#ffe599', 0.8 + (nightFactor * 0.2));
   const faceDarkColor = withAlpha(windowColor, 0.4 + (nightFactor * 0.4));
+  const frameColor = withAlpha('#dbeafe', 0.18 + (nightFactor * 0.16));
+  const sillColor = withAlpha('#020617', 0.22 + (nightFactor * 0.18));
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -210,34 +523,42 @@ function drawDetailedWindows(
       const tBottom = (r + 1 - (1 - windowHeightRatio) / 2) / rows;
       const tLeft = (c + (1 - windowWidthRatio) / 2) / cols;
       const tRight = (c + 1 - (1 - windowWidthRatio) / 2) / cols;
+      const panel = getFacePanel(face, tLeft, tTop, tRight, tBottom);
 
-      const y1 = face[0].sy + ((face[3].sy - face[0].sy) * tLeft);
-      const y2 = face[1].sy + ((face[2].sy - face[1].sy) * tLeft);
-      const x1 = face[0].sx + ((face[3].sx - face[0].sx) * tLeft);
-      const x2 = face[1].sx + ((face[2].sx - face[1].sx) * tLeft);
-
-      const y3 = face[0].sy + ((face[3].sy - face[0].sy) * tRight);
-      const y4 = face[1].sy + ((face[2].sy - face[1].sy) * tRight);
-      const x3 = face[0].sx + ((face[3].sx - face[0].sx) * tRight);
-      const x4 = face[1].sx + ((face[2].sx - face[1].sx) * tRight);
-
-      const p1 = { sx: x1 + (x2 - x1) * tTop, sy: y1 + (y2 - y1) * tTop };
-      const p2 = { sx: x3 + (x4 - x3) * tTop, sy: y3 + (y4 - y3) * tTop };
-      const p3 = { sx: x3 + (x4 - x3) * tBottom, sy: y3 + (y4 - y3) * tBottom };
-      const p4 = { sx: x1 + (x2 - x1) * tBottom, sy: y1 + (y2 - y1) * tBottom };
-
-      context.beginPath();
-      context.moveTo(p1.sx, p1.sy);
-      context.lineTo(p2.sx, p2.sy);
-      context.lineTo(p3.sx, p3.sy);
-      context.lineTo(p4.sx, p4.sy);
-      context.closePath();
+      traceFace(context, panel);
       context.fill();
+
+      context.shadowBlur = 0;
+      context.strokeStyle = frameColor;
+      context.lineWidth = 0.55;
+      context.stroke();
+
+      if (windowWidthRatio >= 0.55) {
+        context.strokeStyle = withAlpha('#0f172a', isLit ? 0.18 : 0.34);
+        context.lineWidth = 0.45;
+        drawFaceLine(context, panel, 0.5, 0.12, 0.5, 0.88);
+      }
+
+      if (((r + c + randomSeed) % 3) === 0 && windowHeightRatio >= 0.55) {
+        context.strokeStyle = withAlpha('#0f172a', isLit ? 0.12 : 0.28);
+        context.lineWidth = 0.4;
+        drawFaceLine(context, panel, 0.12, 0.52, 0.88, 0.52);
+      }
+
+      const highlight = getFacePanel(panel, 0.1, 0.08, 0.9, 0.2);
+      traceFace(context, highlight);
+      context.fillStyle = withAlpha('#ffffff', isLit ? 0.18 : 0.08);
+      context.fill();
+
+      context.strokeStyle = sillColor;
+      context.lineWidth = 0.65;
+      drawFaceLine(context, face, tLeft, Math.min(0.98, tBottom + 0.015), tRight, Math.min(0.98, tBottom + 0.015));
 
       const shouldBleed = warmNightWindows && isLit && Math.sin((randomSeed * 0.17) + (r * 19) + (c * 23)) > 0.6;
       if (shouldBleed) {
-        const bleedCenterX = (p1.sx + p2.sx) / 2;
-        const bleedTopY = Math.min(p1.sy, p2.sy);
+        const bleedCenter = interpolateFacePoint(panel, 0.5, 0.08);
+        const bleedCenterX = bleedCenter.sx;
+        const bleedTopY = bleedCenter.sy;
         const bleedLength = 3 + Math.round(nightFactor * 2);
         const bleed = context.createLinearGradient(bleedCenterX, bleedTopY - bleedLength, bleedCenterX, bleedTopY);
         bleed.addColorStop(0, 'rgba(255, 204, 128, 0)');
@@ -443,6 +764,65 @@ function drawNeighborhoodPlaza(ctx: DrawBuildingContext): void {
   fillFace(context, lotProjection.left, 'rgba(130, 170, 130, 0.9)', 'rgba(74, 85, 104, 0.45)');
   fillFace(context, lotProjection.right, 'rgba(110, 150, 110, 0.9)', 'rgba(74, 85, 104, 0.45)');
   fillFace(context, lotProjection.top, 'rgba(150, 190, 150, 0.82)', withAlpha(accent, 0.25), 1.2);
+  drawSurfacePanel(
+    context,
+    lotProjection.top,
+    0.43,
+    0.08,
+    0.57,
+    0.92,
+    'rgba(205, 213, 186, 0.52)',
+    'rgba(90, 118, 92, 0.32)',
+    0.7,
+  );
+  drawSurfacePanel(
+    context,
+    lotProjection.top,
+    0.08,
+    0.43,
+    0.92,
+    0.57,
+    'rgba(205, 213, 186, 0.48)',
+    'rgba(90, 118, 92, 0.3)',
+    0.7,
+  );
+
+  context.save();
+  const plazaTrees = [
+    interpolateFacePoint(lotProjection.top, 0.2, 0.22),
+    interpolateFacePoint(lotProjection.top, 0.8, 0.24),
+    interpolateFacePoint(lotProjection.top, 0.22, 0.78),
+    interpolateFacePoint(lotProjection.top, 0.78, 0.78),
+  ];
+
+  for (let index = 0; index < plazaTrees.length; index += 1) {
+    const tree = plazaTrees[index];
+    if (!tree) {
+      continue;
+    }
+
+    context.fillStyle = 'rgba(101, 67, 33, 0.78)';
+    context.fillRect(tree.sx - 1, tree.sy - layout.tileHeight * 0.18, 2, layout.tileHeight * 0.18);
+    context.fillStyle = index % 2 === 0 ? 'rgba(34, 139, 68, 0.82)' : 'rgba(73, 156, 84, 0.82)';
+    context.beginPath();
+    context.arc(tree.sx, tree.sy - layout.tileHeight * 0.22, Math.max(3, layout.tileWidth * 0.055), 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const lamp = interpolateFacePoint(lotProjection.top, 0.5, 0.18);
+  context.strokeStyle = 'rgba(71, 85, 105, 0.78)';
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(lamp.sx, lamp.sy);
+  context.lineTo(lamp.sx, lamp.sy - layout.tileHeight * 0.34);
+  context.stroke();
+  context.fillStyle = withAlpha(accent, 0.9);
+  context.shadowBlur = 8;
+  context.shadowColor = accent;
+  context.beginPath();
+  context.arc(lamp.sx, lamp.sy - layout.tileHeight * 0.35, 2.4, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
 
   const wallProjection = createPrism(
     display.x + ((1 - lotWidth) / 2),
@@ -515,6 +895,9 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
     height,
     layout,
   );
+  let roofFace: QuadFace = projection.top;
+
+  drawLotProps(context, entity, display.x, display.y, layout, randomSeed, getLotPropMix(kind), geometry.importanceTier);
 
   context.save();
   context.shadowBlur = 10 + (nightFactor * 10);
@@ -544,6 +927,8 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
       fillFace(context, podiumProj.top, topColor, withAlpha(trim, 0.3), 1);
       drawDetailedWindows(context, podiumProj.left, 1, cols, windowColor, nightFactor, () => true, 0.8, 0.7, randomSeed);
       drawDetailedWindows(context, podiumProj.right, 1, cols, windowColor, nightFactor, () => true, 0.8, 0.7, randomSeed);
+      drawFacadeRibs(context, podiumProj.left, 2, cols, trim, 0.2);
+      drawFacadeRibs(context, podiumProj.right, 2, cols, trim, 0.2);
 
       if (isHuge) {
         const midScale = 0.8;
@@ -600,6 +985,8 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
           0.6,
           randomSeed,
         );
+        drawFacadeRibs(context, midProj.left, Math.max(4, Math.floor(floors * 0.5)), cols, trim, 0.16);
+        drawFacadeRibs(context, midProj.right, Math.max(4, Math.floor(floors * 0.5)), cols, trim, 0.16);
 
         fillFace(context, topProj.left, adjustLightness(leftColor, 10), withAlpha(trim, 0.32), 1);
         fillFace(context, topProj.right, adjustLightness(rightColor, 10), withAlpha(trim, 0.32), 1);
@@ -628,6 +1015,9 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
           0.58,
           randomSeed,
         );
+        drawFacadeRibs(context, topProj.left, Math.max(3, Math.floor(floors * 0.35)), Math.max(3, cols - 1), trim, 0.18);
+        drawFacadeRibs(context, topProj.right, Math.max(3, Math.floor(floors * 0.35)), Math.max(3, cols - 1), trim, 0.18);
+        roofFace = topProj.top;
       } else {
         const towerScale = 0.88;
         const towerProj = createPrism(
@@ -645,6 +1035,9 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
         fillFace(context, towerProj.top, topColor, withAlpha(trim, 0.2), 1);
         drawDetailedWindows(context, towerProj.left, floors, cols, windowColor, nightFactor, isLitPattern, 0.6, 0.62, randomSeed);
         drawDetailedWindows(context, towerProj.right, floors, cols, windowColor, nightFactor, isLitPattern, 0.6, 0.62, randomSeed);
+        drawFacadeRibs(context, towerProj.left, floors, cols, trim, 0.16);
+        drawFacadeRibs(context, towerProj.right, floors, cols, trim, 0.16);
+        roofFace = towerProj.top;
       }
       break;
     }
@@ -658,6 +1051,11 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
       drawDetailedWindows(context, projection.left, 2, 4, windowColor, nightFactor, isLitPattern, 0.5, 0.4, randomSeed);
       drawDetailedWindows(context, projection.right, 2, 4, windowColor, nightFactor, isLitPattern, 0.5, 0.4, randomSeed);
+      drawFacadeRibs(context, projection.left, 3, 5, trim, 0.15);
+      drawFacadeRibs(context, projection.right, 3, 5, trim, 0.15);
+      drawWallFaceDetails(context, projection.left, trim, randomSeed, geometry.conditionFactor + 0.35);
+      drawWallFaceDetails(context, projection.right, trim, randomSeed + 5, geometry.conditionFactor + 0.35);
+      drawIndustrialRoofline(context, projection.top, trim, randomSeed);
 
       // Loading dock / bay door on right face (subtle dark grey, not black)
       const dockWidth = Math.min(0.35, footprint.depth * 0.25);
@@ -666,6 +1064,15 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
       const py1 = projection.right[3].sy + (projection.right[2].sy - projection.right[3].sy) * 0.35;
       context.fillStyle = '#334155';
       context.fillRect(px1, py1 - (layout.tileHeight * dockHeight), layout.tileWidth * dockWidth, layout.tileHeight * dockHeight);
+      context.strokeStyle = withAlpha(trim, 0.28);
+      context.lineWidth = 0.7;
+      for (let line = 1; line < 4; line += 1) {
+        const y = py1 - (layout.tileHeight * dockHeight * (line / 4));
+        context.beginPath();
+        context.moveTo(px1, y);
+        context.lineTo(px1 + (layout.tileWidth * dockWidth), y);
+        context.stroke();
+      }
 
       if (kind === 'factory') {
         // Smokestack
@@ -685,6 +1092,7 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
         context.arc(xStack + 5 + (Math.sin(phase / 7) * 5), yStack - layout.tileHeight * 1.8, 8 + (phase % 10) / 2, 0, Math.PI * 2);
         context.fill();
       }
+      roofFace = projection.top;
       break;
     }
 
@@ -709,6 +1117,8 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
       fillFace(context, civicPodium.left, adjustLightness(leftColor, -20), withAlpha(trim, 0.4), 1);
       fillFace(context, civicPodium.right, adjustLightness(rightColor, -20), withAlpha(trim, 0.4), 1);
       fillFace(context, civicPodium.top, adjustLightness(topColor, -15), withAlpha(trim, 0.3), 1);
+      drawColonnade(context, civicPodium.left, kind === 'civic' ? 5 : 4, trim);
+      drawColonnade(context, civicPodium.right, kind === 'civic' ? 5 : 4, trim);
 
       const civicBlock = createPrism(
         baseX + ((footprint.width * (1 - civicScale)) / 2),
@@ -737,6 +1147,11 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
       drawDetailedWindows(context, civicBlock.left, 2, 4, windowColor, nightFactor, isLitPattern, 0.5, 0.5, randomSeed);
       drawDetailedWindows(context, civicBlock.right, 2, 4, windowColor, nightFactor, isLitPattern, 0.5, 0.5, randomSeed);
+      drawFacadeRibs(context, civicBlock.left, 3, 4, trim, 0.16);
+      drawFacadeRibs(context, civicBlock.right, 3, 4, trim, 0.16);
+      drawWallFaceDetails(context, civicBlock.left, trim, randomSeed, geometry.conditionFactor + 0.15);
+      drawWallFaceDetails(context, civicBlock.right, trim, randomSeed + 9, geometry.conditionFactor + 0.15);
+      roofFace = civicBlock.top;
       break;
     }
 
@@ -776,9 +1191,23 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
       drawDetailedWindows(context, shopProj.left, 2, 3, windowColor, nightFactor, isLitPattern, 0.6, 0.6, randomSeed);
       drawDetailedWindows(context, shopProj.right, 1, 1, windowColor, nightFactor, () => true, 0.9, 0.6, randomSeed);
+      drawFacadeRibs(context, shopProj.left, 2, 3, trim, 0.16);
+      drawWallFaceDetails(context, shopProj.left, trim, randomSeed, geometry.conditionFactor + 0.18);
 
       // Awning on right face
       const awningColor = geometry.palette.accent;
+      drawSurfacePanel(
+        context,
+        shopProj.right,
+        0.16,
+        0.26,
+        0.86,
+        0.4,
+        withAlpha(adjustLightness(trim, -18), 0.66),
+        withAlpha(trim, 0.46),
+        0.8,
+      );
+      drawStripedAwning(context, shopProj.right, awningColor, trim);
       context.fillStyle = awningColor;
       context.beginPath();
       const hX1 = shopProj.right[0].sx + (shopProj.right[1].sx - shopProj.right[0].sx) * 0.2;
@@ -794,6 +1223,7 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
       context.strokeStyle = withAlpha(trim, 0.5);
       context.lineWidth = 0.8;
       context.stroke();
+      roofFace = shopProj.top;
       break;
     }
 
@@ -834,18 +1264,42 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
       drawDetailedWindows(context, utilProj.left, 2, 2, windowColor, nightFactor, isLitPattern, 0.4, 0.5, randomSeed);
       drawDetailedWindows(context, utilProj.right, 2, 2, windowColor, nightFactor, isLitPattern, 0.4, 0.5, randomSeed);
+      drawFacadeRibs(context, utilProj.left, 2, 3, trim, 0.18);
+      drawFacadeRibs(context, utilProj.right, 2, 3, trim, 0.18);
+      drawWallFaceDetails(context, utilProj.left, trim, randomSeed, geometry.conditionFactor + 0.2);
+      drawWallFaceDetails(context, utilProj.right, trim, randomSeed + 7, geometry.conditionFactor + 0.2);
+      drawHazardStripes(context, utilProj.right, trim);
 
       // Service door on right face (subtle)
       context.fillStyle = '#475569';
       const dx = utilProj.right[3].sx + (utilProj.right[2].sx - utilProj.right[3].sx) * 0.5;
       const dy = utilProj.right[3].sy + (utilProj.right[2].sy - utilProj.right[3].sy) * 0.5;
       context.fillRect(dx - 2, dy - 8, 4, 8);
+      roofFace = utilProj.top;
       break;
     }
   }
 
+  drawRoofDeckDetails(
+    context,
+    roofFace,
+    layout,
+    trim,
+    accent,
+    randomSeed,
+    Math.min(1, 0.18 + geometry.ornamentation + geometry.activityLevel * 0.28),
+  );
+  drawConditionOverlays(context, entity, projection, layout, geometry.condition, randomSeed);
+  drawIvy(
+    context,
+    projection,
+    layout,
+    kind === 'campus' ? 0.14 + (geometry.activityLevel * 0.12) : Math.max(0, (geometry.conditionFactor - 0.45) * 0.36),
+    randomSeed,
+  );
+
   // Rooftop identity details (antennas, HVAC, flags, etc.)
-  drawRooftopIdentity(context, projection.top, layout, {
+  drawRooftopIdentity(context, roofFace, layout, {
     archetype: kind,
     importanceTier: geometry.importanceTier,
     upgradeLevel: geometry.upgradeLevel,
@@ -858,7 +1312,7 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
   if (nodeState !== 'stable') {
     const topCenter = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + height, layout);
-    drawStateAccent(context, topCenter, layout, nodeState, phase);
+    drawStateAccent(context, topCenter, layout, nodeState, phase, height, projection, nightFactor);
   }
 
   if (isCriticalMass(entity)) {

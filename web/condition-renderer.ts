@@ -21,6 +21,11 @@ export function getConditionFactor(condition: ConditionGrade): number {
   }
 }
 
+function seededFraction(seed: number, offset: number): number {
+  const value = Math.sin(seed * 12.9898 + offset * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+}
+
 export function drawConditionOverlays(
   context: CanvasRenderingContext2D,
   entity: Entity,
@@ -56,8 +61,8 @@ export function drawConditionOverlays(
     context.lineWidth = 0.6;
     for (const face of [projection.left, projection.right]) {
       for (let i = 0; i < crackCount; i++) {
-        const t1 = (seed + i * 17) % 1;
-        const t2 = (seed + i * 31 + 0.2) % 1;
+        const t1 = 0.08 + seededFraction(seed, i * 17) * 0.84;
+        const t2 = 0.08 + seededFraction(seed, i * 31 + 0.2) * 0.84;
         const x1 = face[0].sx + (face[3].sx - face[0].sx) * t1;
         const y1 = face[0].sy + (face[3].sy - face[0].sy) * t1;
         const x2 = face[1].sx + (face[2].sx - face[1].sx) * t2;
@@ -76,7 +81,7 @@ export function drawConditionOverlays(
     context.fillStyle = withAlpha('#5c3a21', 0.85);
     for (const face of [projection.left, projection.right]) {
       for (let i = 0; i < boardCount; i++) {
-        const t = (seed + i * 23 + 0.3) % 0.8 + 0.1;
+        const t = 0.1 + seededFraction(seed, i * 23 + 0.3) * 0.8;
         const x = face[0].sx + (face[3].sx - face[0].sx) * t;
         const y = face[0].sy + (face[3].sy - face[0].sy) * t;
         context.fillRect(x - 3, y - 6, 6, 12);
@@ -130,7 +135,7 @@ export function drawIvy(
   for (const face of [projection.left, projection.right]) {
     const vineCount = Math.floor(coverage * 8);
     for (let i = 0; i < vineCount; i++) {
-      const t = (seed + i * 19) % 1;
+      const t = 0.05 + seededFraction(seed, i * 19) * 0.9;
       const x = face[0].sx + (face[3].sx - face[0].sx) * t;
       const y = face[0].sy + (face[3].sy - face[0].sy) * t;
       const color = colors[i % colors.length] ?? '#166534';

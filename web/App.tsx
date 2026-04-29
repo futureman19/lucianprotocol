@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, PanelRight, X } from 'lucide-react';
 
 import {
@@ -1655,9 +1655,12 @@ function GitTreeItem({ activePathSet, depth, loadedPath, node, nodeStatesByPath 
 }
 
 function SidebarSection({ children, meta, onToggle, open, title }: SidebarSectionProps) {
+  const contentId = useId();
+
   return (
     <section className={`sidebar-section ${open ? 'is-open' : 'is-collapsed'}`}>
       <button
+        aria-controls={contentId}
         aria-expanded={open}
         className="sidebar-section-toggle"
         onClick={onToggle}
@@ -1673,7 +1676,7 @@ function SidebarSection({ children, meta, onToggle, open, title }: SidebarSectio
         </span>
         {meta ? <span className="sidebar-section-meta">{meta}</span> : null}
       </button>
-      {open ? <div className="sidebar-section-body">{children}</div> : null}
+      {open ? <div className="sidebar-section-body" id={contentId}>{children}</div> : null}
     </section>
   );
 }
@@ -3193,6 +3196,8 @@ function App() {
       />
       <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
         <button
+          aria-expanded={leftPanelOpen}
+          aria-label={leftPanelOpen ? 'Collapse left panel' : 'Expand left panel'}
           className="panel-toggle"
           onClick={() => setLeftPanelOpen(!leftPanelOpen)}
           title={leftPanelOpen ? 'Collapse left panel' : 'Expand left panel'}
@@ -3953,6 +3958,8 @@ function App() {
 
       <aside className={`lux-panel lux-panel-right ${rightPanelOpen ? 'is-open' : 'is-collapsed'}`}>
         <button
+          aria-expanded={rightPanelOpen}
+          aria-label={rightPanelOpen ? 'Collapse right panel' : 'Expand right panel'}
           className="panel-toggle"
           onClick={() => setRightPanelOpen(!rightPanelOpen)}
           title={rightPanelOpen ? 'Collapse right panel' : 'Expand right panel'}
