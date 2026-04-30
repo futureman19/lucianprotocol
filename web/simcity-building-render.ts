@@ -22,7 +22,6 @@ export interface DrawBuildingContext {
 
 type QuadFace = [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
 
-
 function snap(n: number): number {
   return Math.round(n);
 }
@@ -416,45 +415,6 @@ function getNightFactor(phase: number): number {
   return 1 - getDaylight(phase);
 }
 
-function drawGroundShadow(
-  context: CanvasRenderingContext2D,
-  displayX: number,
-  displayY: number,
-  layout: IsoLayout,
-  width: number,
-  depth: number,
-): void {
-  // SC2K-style pre-baked ground shadow: soft oval offset to the southeast
-  const shadowOffsetX = 0.22;
-  const shadowOffsetY = 0.14;
-  const shadowW = width * 1.25;
-  const shadowD = depth * 1.25;
-
-  const center = toScreen(
-    displayX + ((1 - width) / 2) + (width / 2) + shadowOffsetX,
-    displayY + ((1 - depth) / 2) + (depth / 2) + shadowOffsetY,
-    0,
-    layout,
-  );
-
-  const rx = layout.tileWidth * shadowW * 0.5;
-  const ry = layout.tileHeight * shadowD * 0.35;
-
-  context.save();
-  context.globalAlpha = 0.18;
-  context.fillStyle = '#1e293b';
-  context.beginPath();
-  context.ellipse(center.sx, center.sy, rx, ry, 0, 0, Math.PI * 2);
-  context.fill();
-
-  // Inner darker core for depth
-  context.globalAlpha = 0.10;
-  context.beginPath();
-  context.ellipse(center.sx + rx * 0.1, center.sy + ry * 0.05, rx * 0.6, ry * 0.5, 0, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
-}
-
 function drawGroundLot(
   context: CanvasRenderingContext2D,
   displayX: number,
@@ -701,6 +661,20 @@ function drawScaffolding(
   context.restore();
 }
 
+function drawConstructionProgress(
+  context: CanvasRenderingContext2D,
+  face: QuadFace,
+  progress: number,
+  accent: string,
+): void {
+  const panel = getFacePanel(face, 0.12, 0.42, 0.88, 0.58);
+  fillFace(context, panel, 'rgba(15, 23, 42, 0.55)', withAlpha(accent, 0.35), 0.7);
+
+  const fillWidth = Math.max(0.04, progress * 0.76);
+  const fillPanel = getFacePanel(face, 0.12, 0.46, 0.12 + fillWidth, 0.54);
+  fillFace(context, fillPanel, withAlpha(accent, 0.72), withAlpha(accent, 0.45), 0.6);
+}
+
 function drawStateAccent(
   context: CanvasRenderingContext2D,
   topCenter: ScreenPoint,
@@ -710,6 +684,7 @@ function drawStateAccent(
   height?: number,
   projection?: ReturnType<typeof createPrismProjection>,
   nightFactor?: number,
+  constructionMass = 0,
 ): void {
   const palette = getNodeStatePalette(nodeState);
   if (nodeState === 'stable') return;
@@ -730,6 +705,22 @@ function drawStateAccent(
       context.shadowColor = '#ef4444';
       context.beginPath();
       context.arc(topCenter.sx, topCenter.sy, 2.5, 0, Math.PI * 2);
+      context.fill();
+    }
+  } else if (nodeState === 'task' && constructionMass > 0 && projection && nightFactor !== undefined) {
+    const progress = Math.min(1, constructionMass / 10);
+    drawScaffolding(context, projection, nightFactor);
+    if (progress < 1) {
+      drawConstructionProgress(context, projection.left, progress, palette.accent);
+    }
+
+    const lightBlink = (phase % 14) > 7;
+    if (lightBlink) {
+      context.fillStyle = '#3b82f6';
+      context.shadowBlur = 6;
+      context.shadowColor = '#3b82f6';
+      context.beginPath();
+      context.arc(topCenter.sx, topCenter.sy, 2.2, 0, Math.PI * 2);
       context.fill();
     }
   } else {
@@ -869,9 +860,6 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
   const accent = nodeState === 'stable' ? geometry.palette.accent : statePalette.accent;
   const trim = nodeState === 'stable' ? geometry.palette.trim : statePalette.accent;
   const windowColor = withAlpha(geometry.palette.windowDark, 0.3 + (nightFactor * 0.75));
-
-  // SC2K pre-baked ground shadow (drawn before lot)
-  drawGroundShadow(context, display.x, display.y, layout, footprint.width, footprint.depth);
 
   drawGroundLot(context, display.x, display.y, layout, footprint.width, footprint.depth, accent, kind);
 
@@ -1312,7 +1300,7 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
 
   if (nodeState !== 'stable') {
     const topCenter = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + height, layout);
-    drawStateAccent(context, topCenter, layout, nodeState, phase, height, projection, nightFactor);
+    drawStateAccent(context, topCenter, layout, nodeState, phase, height, projection, nightFactor, entity.construction_mass ?? 0);
   }
 
   if (isCriticalMass(entity)) {

@@ -8,9 +8,25 @@ import {
 } from './types';
 
 const GEMINI_API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite';
+const GEMINI_API_DOCS_URL = 'https://ai.google.dev/gemini-api/docs';
+const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_GEMINI_3_FLASH_THINKING_LEVEL = 'minimal';
 const DEFAULT_MAX_CALLS_PER_MINUTE = 60;
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60_000;
+const GEMINI_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'] as const;
+
+type GeminiThinkingLevel = (typeof GEMINI_THINKING_LEVELS)[number];
+
+interface GeminiGenerationConfig {
+  responseJsonSchema?: object;
+  responseMimeType?: 'application/json';
+  temperature: number;
+  thinkingConfig?: {
+    thinkingLevel: GeminiThinkingLevel;
+  };
+  topK?: number;
+  topP?: number;
+}
 
 function parsePositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -20,6 +36,15 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
 
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseThinkingLevelEnv(value: string | undefined): GeminiThinkingLevel | null {
+  if (value === undefined || value.trim().length === 0) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return GEMINI_THINKING_LEVELS.find((level) => level === normalized) ?? null;
 }
 
 function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
@@ -167,6 +192,7 @@ export class GeminiNavigator {
   public constructor(
     private readonly apiKey = process.env.GEMINI_API_KEY,
     private readonly model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    private readonly thinkingLevel = parseThinkingLevelEnv(process.env.GEMINI_THINKING_LEVEL),
     private readonly maxCallsPerMinute = parsePositiveIntEnv(
       'GEMINI_MAX_CALLS_PER_MINUTE',
       DEFAULT_MAX_CALLS_PER_MINUTE,
@@ -177,8 +203,50 @@ export class GeminiNavigator {
     ),
   ) {}
 
+  public getModel(): string {
+    return this.model;
+  }
+
   public isConfigured(): boolean {
     return this.apiKey !== undefined && this.apiKey.trim().length > 0;
+  }
+
+  private getThinkingLevel(): GeminiThinkingLevel | null {
+    if (this.thinkingLevel !== null) {
+      return this.thinkingLevel;
+    }
+
+    if (this.model === DEFAULT_GEMINI_MODEL) {
+      return DEFAULT_GEMINI_3_FLASH_THINKING_LEVEL;
+    }
+
+    return null;
+  }
+
+  private createGenerationConfig(responseSchema?: object): GeminiGenerationConfig {
+    const isGemini3 = this.model.startsWith('gemini-3-');
+    const config: GeminiGenerationConfig =
+      responseSchema === undefined
+        ? {
+          temperature: isGemini3 ? 1 : 0.1,
+        }
+        : {
+          temperature: isGemini3 ? 1 : 0,
+          responseMimeType: 'application/json',
+          responseJsonSchema: responseSchema,
+        };
+
+    if (!isGemini3) {
+      config.topK = 1;
+      config.topP = 1;
+    }
+
+    const thinkingLevel = this.getThinkingLevel();
+    if (thinkingLevel !== null && isGemini3) {
+      config.thinkingConfig = { thinkingLevel };
+    }
+
+    return config;
   }
 
   private isRateLimited(): boolean {
@@ -211,7 +279,7 @@ export class GeminiNavigator {
     if (!this.isConfigured()) {
       if (!this.warnedConfiguration.value) {
         console.warn(
-          '[ai] GEMINI_API_KEY is missing; agent decisions will default to wait until credentials are configured.',
+          `[ai] GEMINI_API_KEY is missing; agent decisions will default to wait until credentials are configured. See ${GEMINI_API_DOCS_URL}.`,
         );
         this.warnedConfiguration.value = true;
       }
@@ -268,20 +336,7 @@ export class GeminiNavigator {
               ],
             },
           ],
-          generationConfig:
-            responseSchema === undefined
-              ? {
-                temperature: 0.1,
-                topK: 1,
-                topP: 1,
-              }
-              : {
-                temperature: 0,
-                topK: 1,
-                topP: 1,
-                responseMimeType: 'application/json',
-                responseJsonSchema: responseSchema,
-              },
+          generationConfig: this.createGenerationConfig(responseSchema),
         }),
       });
 

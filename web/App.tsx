@@ -1,15 +1,17 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, FileCode, Folder, GitBranch, PanelLeft, PanelRight, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  Command,
+  GitBranch,
+  X,
+} from 'lucide-react';
 
 import {
-  HIVEMIND_LAWS,
   computeChiralMass,
   getAgentRole,
   getAgentRoleLabel,
   getNodeStateLabel,
   isCriticalMass,
   type HivemindAgentRole,
-  type HivemindNodeState,
 } from '../src/hivemind';
 import { createInitialEntities, DEFAULT_SEED, WORLD_STATE_ID, manhattanDistance } from '../src/seed';
 import { isStructureEntity } from '../src/mass-mapper';
@@ -22,18 +24,15 @@ import {
   type AgentActivity,
   type Entity,
   type OperatorControl,
-  type TaskValidationResult,
   type Weather,
   type WorldState,
-  type Task,
 } from '../src/types';
-import { computeLineDiff, type DiffLine } from './diff';
-import { buildActivePathSet, buildGitTree, type GitTreeNode } from './git-tree';
 import { CodeSyntaxPreview } from './highlight';
 import { QueenHUD } from './QueenHUD';
 import { drawBuilding } from './simcity-building-render';
 import { getEntityFootprint as getFileFootprint, getEntityHeight as getPrismHeight } from './building-geometry';
 import { drawTethers } from './tether-render';
+import { drawPowerlines } from './powerlines';
 import {
   createIsoLayout,
   DEFAULT_CAMERA,
@@ -44,6 +43,8 @@ import {
 } from './iso';
 import { createTrafficSystem, drawRoadsAndTraffic, drawGroundPlane, spawnCars, updateCars } from './traffic';
 import { computeCityLayout } from './city-layout';
+import { AdvisorCouncil } from './AdvisorCouncil';
+import { computeCityCouncilState, type AdvisorAction } from './city-systems';
 
 interface Viewport {
   height: number;
@@ -76,12 +77,6 @@ interface AgentPalette {
   stroke: string;
 }
 
-interface WorkforceStatus {
-  agents: Entity[];
-  label: string;
-  role: HivemindAgentRole;
-}
-
 const PREVIEW_ENTITIES = createInitialEntities(DEFAULT_SEED).sort((left, right) =>
   left.id.localeCompare(right.id),
 );
@@ -103,7 +98,6 @@ const DEFAULT_OPERATOR_CONTROL: OperatorControl = {
   updated_at: null,
 };
 
-const WORKFORCE_ROLES: readonly HivemindAgentRole[] = ['visionary', 'architect', 'critic'];
 const AUTO_HIDDEN_PATH_PREFIXES = [
   '.venv/',
   '.venv-pdf/',
@@ -164,6 +158,168 @@ function arraysEqual(left: readonly string[], right: readonly string[]): boolean
   return true;
 }
 
+function drawCityscape(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  phase: number,
+  daylight: number,
+  night: number,
+  weather: Weather,
+): void {
+  const rainTint = weather === 'rain' ? 0.16 : 0;
+  const fogTint = weather === 'fog' ? 0.18 : 0;
+  const horizonY = viewport.height * 0.72;
+
+  // Three layers of depth — far, mid, near
+  const layers = [
+    {
+      depth: 1.0,
+      count: 28,
+      baseHeight: viewport.height * 0.14,
+      heightVar: viewport.height * 0.1,
+      alpha: 0.35 + (night * 0.15),
+      windowDensity: 0,
+      colorShift: [8, 12, 22] as const,
+    },
+    {
+      depth: 0.65,
+      count: 22,
+      baseHeight: viewport.height * 0.18,
+      heightVar: viewport.height * 0.14,
+      alpha: 0.55 + (night * 0.2),
+      windowDensity: 0.15 + (night * 0.35),
+      colorShift: [14, 20, 32] as const,
+    },
+    {
+      depth: 0.35,
+      count: 16,
+      baseHeight: viewport.height * 0.22,
+      heightVar: viewport.height * 0.18,
+      alpha: 0.75 + (night * 0.15),
+      windowDensity: 0.25 + (night * 0.45),
+      colorShift: [20, 28, 42] as const,
+    },
+  ];
+
+  for (const layer of layers) {
+    const layerY = horizonY - layer.baseHeight * 0.5;
+    const r = Math.round(layer.colorShift[0] + (daylight * 28) - (rainTint * 40) + (fogTint * 20));
+    const g = Math.round(layer.colorShift[1] + (daylight * 36) - (rainTint * 30) + (fogTint * 18));
+    const b = Math.round(layer.colorShift[2] + (daylight * 48) - (rainTint * 20) + (fogTint * 12));
+
+    context.save();
+
+    // Draw skyline silhouette
+    context.fillStyle = `rgba(${r}, ${g}, ${b}, ${layer.alpha})`;
+    context.beginPath();
+    context.moveTo(0, viewport.height);
+
+    let currentX = -viewport.width * 0.05;
+    const step = (viewport.width * 1.1) / layer.count;
+
+    // Seed-like pseudo-random based on layer index so buildings are stable per layer
+    const seededRandom = (index: number, offset: number): number => {
+      const seed = Math.sin(index * 12.9898 + offset * 78.233 + layer.depth * 43.123) * 43758.5453;
+      return seed - Math.floor(seed);
+    };
+
+    for (let i = 0; i <= layer.count + 1; i++) {
+      const buildingWidth = step * (0.6 + seededRandom(i, 1) * 0.8);
+      const buildingHeight = layer.baseHeight + seededRandom(i, 2) * layer.heightVar;
+      const roofStyle = Math.floor(seededRandom(i, 3) * 4); // 0=flat, 1=peaked, 2=stepped, 3=antenna
+
+      const x = currentX;
+      const y = layerY - buildingHeight;
+
+      if (roofStyle === 0) {
+        context.lineTo(x, y);
+        context.lineTo(x + buildingWidth, y);
+      } else if (roofStyle === 1) {
+        context.lineTo(x, y + buildingHeight * 0.08);
+        context.lineTo(x + buildingWidth * 0.5, y);
+        context.lineTo(x + buildingWidth, y + buildingHeight * 0.08);
+      } else if (roofStyle === 2) {
+        const stepW = buildingWidth * 0.3;
+        const stepH = buildingHeight * 0.12;
+        context.lineTo(x, y + stepH);
+        context.lineTo(x + stepW, y + stepH);
+        context.lineTo(x + stepW, y);
+        context.lineTo(x + buildingWidth - stepW, y);
+        context.lineTo(x + buildingWidth - stepW, y + stepH);
+        context.lineTo(x + buildingWidth, y + stepH);
+      } else {
+        context.lineTo(x, y);
+        context.lineTo(x + buildingWidth * 0.45, y);
+        context.lineTo(x + buildingWidth * 0.45, y - buildingHeight * 0.08);
+        context.lineTo(x + buildingWidth * 0.55, y - buildingHeight * 0.08);
+        context.lineTo(x + buildingWidth * 0.55, y);
+        context.lineTo(x + buildingWidth, y);
+      }
+
+      // Windows
+      if (layer.windowDensity > 0.05) {
+        const cols = Math.max(2, Math.floor(buildingWidth / 7));
+        const rows = Math.max(3, Math.floor(buildingHeight / 10));
+        const winW = Math.max(1.5, buildingWidth / cols * 0.35);
+        const winH = Math.max(1.5, buildingHeight / rows * 0.35);
+        const padX = (buildingWidth - cols * winW) / (cols + 1);
+        const padY = (buildingHeight - rows * winH) / (rows + 1);
+
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            if (seededRandom(i, row * 7 + col * 13 + 50) > layer.windowDensity) continue;
+
+            const wx = x + padX + col * (winW + padX);
+            const wy = y + padY + row * (winH + padY);
+            const blink = 0.5 + 0.5 * Math.sin(phase * 0.03 + i * 10 + row * 3 + col * 7);
+            const winAlpha = (0.25 + (night * 0.55)) * blink;
+            const warm = seededRandom(i, row * 3 + col * 5 + 100) > 0.6;
+            const wr = warm ? 255 : 180 + (daylight * 40);
+            const wg = warm ? 220 + (daylight * 20) : 200 + (daylight * 30);
+            const wb = warm ? 140 + (daylight * 40) : 230 + (daylight * 20);
+
+            context.fillStyle = `rgba(${wr}, ${wg}, ${wb}, ${winAlpha})`;
+            context.fillRect(wx, wy, winW, winH);
+          }
+        }
+      }
+
+      currentX += buildingWidth + step * 0.05;
+    }
+
+    context.lineTo(viewport.width, viewport.height);
+    context.closePath();
+    context.fillStyle = `rgba(${r}, ${g}, ${b}, ${layer.alpha})`;
+    context.fill();
+
+    // Distant searchlights / atmospheric beams at night
+    if (night > 0.35 && layer.depth < 0.5) {
+      for (let i = 0; i < 3; i++) {
+        const sx = viewport.width * (0.2 + i * 0.3 + Math.sin(phase * 0.01 + i * 2.1) * 0.1);
+        const sy = horizonY - layer.baseHeight * 0.6;
+        const angle = Math.sin(phase * 0.015 + i * 1.7) * 0.4 - 0.8;
+        const beamLen = viewport.height * 0.35;
+        const ex = sx + Math.cos(angle) * beamLen;
+        const ey = sy + Math.sin(angle) * beamLen;
+
+        const grad = context.createLinearGradient(sx, sy, ex, ey);
+        grad.addColorStop(0, `rgba(200, 230, 255, ${night * 0.06})`);
+        grad.addColorStop(1, 'rgba(200, 230, 255, 0)');
+
+        context.strokeStyle = grad;
+        context.lineWidth = 2 + night * 3;
+        context.lineCap = 'round';
+        context.beginPath();
+        context.moveTo(sx, sy);
+        context.lineTo(ex, ey);
+        context.stroke();
+      }
+    }
+
+    context.restore();
+  }
+}
+
 function drawBackdrop(
   context: CanvasRenderingContext2D,
   viewport: Viewport,
@@ -181,6 +337,9 @@ function drawBackdrop(
   background.addColorStop(1, `rgba(${Math.round(10 + (58 * daylight) - (rainTint * 55) + (snowTint * 30) + (fogTint * 30))}, ${Math.round(16 + (73 * daylight) - (rainTint * 40) + (snowTint * 26) + (fogTint * 28))}, ${Math.round(24 + (51 * daylight) - (rainTint * 30) + (snowTint * 18) + (fogTint * 18))}, 1)`);
   context.fillStyle = background;
   context.fillRect(0, 0, viewport.width, viewport.height);
+
+  // Sprawling city landscape behind the sky details
+  drawCityscape(context, viewport, phase, daylight, night, weather);
 
   const sunX = viewport.width * (0.2 + ((phase / 60) * 0.6));
   const sunY = viewport.height * (0.12 + (night * 0.08));
@@ -200,7 +359,7 @@ function drawBackdrop(
   if (night > 0.45) {
     context.save();
     context.fillStyle = `rgba(255, 245, 220, ${night * 0.45})`;
-    for (let index = 0; index < 24; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       const x = (viewport.width * (((index * 37) % 100) / 100));
       const y = 20 + (((index * 53) % 120));
       context.fillRect(x, y, 1.5, 1.5);
@@ -217,8 +376,6 @@ function drawBackdrop(
       { x: 0.12, y: 0.08, w: 0.18, h: 0.04, speed: 0.8 },
       { x: 0.38, y: 0.14, w: 0.22, h: 0.05, speed: 0.5 },
       { x: 0.68, y: 0.06, w: 0.15, h: 0.035, speed: 1.1 },
-      { x: 0.85, y: 0.18, w: 0.12, h: 0.03, speed: 0.7 },
-      { x: 0.55, y: 0.1, w: 0.1, h: 0.025, speed: 0.9 },
     ];
     for (const cloud of cloudData) {
       const cx = ((cloud.x + (cloudSpeed * cloud.speed * 0.0005)) % 1.2) - 0.1;
@@ -245,10 +402,10 @@ function drawBackdrop(
     context.strokeStyle = `rgba(30, 30, 35, ${0.35 + (daylight * 0.25)})`;
     context.lineWidth = 1;
     context.lineCap = 'round';
-    for (let flock = 0; flock < 3; flock++) {
+    for (let flock = 0; flock < 2; flock++) {
       const flockX = ((0.15 + (flock * 0.32) + ((phase * 0.0002) * (1 + flock * 0.3))) % 1.3) - 0.15;
       const flockY = 0.05 + (flock * 0.06) + (Math.sin(phase * 0.01 + flock) * 0.02);
-      for (let b = 0; b < 4; b++) {
+      for (let b = 0; b < 3; b++) {
         const bx = (flockX * viewport.width) + (b * 12) + (Math.sin(phase * 0.05 + b + flock) * 3);
         const by = (flockY * viewport.height) + (Math.cos(phase * 0.03 + b) * 2);
         const wingSpan = 3 + Math.sin(phase * 0.08 + b + flock) * 1.5;
@@ -454,150 +611,6 @@ function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: Iso
   context.arc(mastTop.sx, mastTop.sy, 3.2, 0, Math.PI * 2);
   context.fill();
 
-  context.restore();
-}
-
-function drawHoverHighlight(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-): void {
-  const display = getInterpolatedPoint(entity, displayPoints);
-  const footprint = getFileFootprint(entity);
-  const z = (entity.z ?? 0) + 0.04;
-  const margin = 0.08;
-  const parcel = getFootprintPolygon(
-    display.x - margin,
-    display.y - margin,
-    footprint.width + (margin * 2),
-    footprint.depth + (margin * 2),
-    z,
-    layout,
-  );
-  const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.14, z, layout);
-  const centerGround = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z, layout);
-
-  context.save();
-  // Subtle ground spotlight
-  const glowRadius = layout.tileWidth * 0.55;
-  const groundGlow = context.createRadialGradient(centerGround.sx, centerGround.sy, 0, centerGround.sx, centerGround.sy, glowRadius);
-  groundGlow.addColorStop(0, 'rgba(92, 171, 219, 0.1)');
-  groundGlow.addColorStop(1, 'rgba(92, 171, 219, 0)');
-  context.fillStyle = groundGlow;
-  context.beginPath();
-  context.ellipse(centerGround.sx, centerGround.sy, glowRadius, glowRadius * 0.55, 0, 0, Math.PI * 2);
-  context.fill();
-
-  tracePolygonPath(context, parcel);
-  context.fillStyle = 'rgba(92, 171, 219, 0.12)';
-  context.fill();
-  context.strokeStyle = 'rgba(186, 236, 255, 0.82)';
-  context.lineWidth = 1.5;
-  context.setLineDash([7, 4]);
-  context.stroke();
-  context.setLineDash([]);
-
-  context.fillStyle = 'rgba(17, 40, 62, 0.92)';
-  context.beginPath();
-  context.roundRect(plaque.sx - 14, plaque.sy - 8, 28, 12, 4);
-  context.fill();
-  context.strokeStyle = 'rgba(180, 231, 255, 0.78)';
-  context.lineWidth = 1;
-  context.stroke();
-
-  context.fillStyle = 'rgba(220, 247, 255, 0.9)';
-  context.fillRect(plaque.sx - 8, plaque.sy - 1, 16, 2);
-  context.restore();
-}
-
-function drawSelectionRing(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-  phase: number,
-): void {
-  const display = getInterpolatedPoint(entity, displayPoints);
-  const footprint = getFileFootprint(entity);
-  const pulse = 0.7 + ((phase % 12) * 0.04);
-  const margin = 0.14;
-  const z = (entity.z ?? 0) + 0.05;
-  const parcel = getFootprintPolygon(
-    display.x - margin,
-    display.y - margin,
-    footprint.width + (margin * 2),
-    footprint.depth + (margin * 2),
-    z,
-    layout,
-  );
-  const plaque = toScreen(display.x + (footprint.width * 0.5), display.y + footprint.depth + 0.18, z, layout);
-  const centerGround = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z, layout);
-  const lightSource = toScreen(display.x + footprint.width * 0.5, display.y + footprint.depth * 0.5, z + 3.5, layout);
-
-  context.save();
-
-  // Downward spotlight cone
-  context.save();
-  context.strokeStyle = `rgba(132, 234, 255, ${0.06 + pulse * 0.05})`;
-  context.lineWidth = 1;
-  for (const point of parcel) {
-    context.beginPath();
-    context.moveTo(lightSource.sx, lightSource.sy);
-    context.lineTo(point.sx, point.sy);
-    context.stroke();
-  }
-  context.restore();
-
-  // Ground spotlight glow
-  const glowRadius = layout.tileWidth * (0.6 + pulse * 0.15);
-  const groundGlow = context.createRadialGradient(centerGround.sx, centerGround.sy, 0, centerGround.sx, centerGround.sy, glowRadius);
-  groundGlow.addColorStop(0, `rgba(132, 234, 255, ${0.14 * pulse})`);
-  groundGlow.addColorStop(1, 'rgba(132, 234, 255, 0)');
-  context.fillStyle = groundGlow;
-  context.beginPath();
-  context.ellipse(centerGround.sx, centerGround.sy, glowRadius, glowRadius * 0.55, 0, 0, Math.PI * 2);
-  context.fill();
-
-  // Ground ring pulse
-  const ringPulse = (phase % 36) / 36;
-  const ringRadius = layout.tileWidth * (0.35 + ringPulse * 0.45);
-  context.strokeStyle = `rgba(132, 234, 255, ${0.35 * (1 - ringPulse)})`;
-  context.lineWidth = 1.5;
-  context.beginPath();
-  context.ellipse(centerGround.sx, centerGround.sy, ringRadius, ringRadius * 0.55, 0, 0, Math.PI * 2);
-  context.stroke();
-
-  tracePolygonPath(context, parcel);
-  context.fillStyle = `rgba(57, 132, 183, ${pulse * 0.16})`;
-  context.fill();
-  context.strokeStyle = `rgba(132, 234, 255, ${0.72 + (pulse * 0.12)})`;
-  context.lineWidth = 2.2;
-  context.shadowBlur = 22;
-  context.shadowColor = 'rgba(86, 217, 255, 0.55)';
-  context.setLineDash([10, 6]);
-  context.lineDashOffset = -(phase * 1.8);
-  context.stroke();
-  context.setLineDash([]);
-
-  context.shadowBlur = 0;
-  context.fillStyle = `rgba(198, 244, 255, ${pulse * 0.85})`;
-  for (const point of parcel) {
-    context.beginPath();
-    context.arc(point.sx, point.sy, 2.4, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  context.fillStyle = 'rgba(18, 42, 56, 0.94)';
-  context.beginPath();
-  context.roundRect(plaque.sx - 18, plaque.sy - 9, 36, 14, 5);
-  context.fill();
-  context.strokeStyle = `rgba(132, 234, 255, ${0.72 + (pulse * 0.12)})`;
-  context.lineWidth = 1.1;
-  context.stroke();
-
-  context.fillStyle = 'rgba(220, 247, 255, 0.9)';
-  context.fillRect(plaque.sx - 10, plaque.sy - 1.5, 20, 3);
   context.restore();
 }
 
@@ -922,7 +935,7 @@ function drawFireflies(
   if (night < 0.4) return;
 
   context.save();
-  const flyCount = 18;
+  const flyCount = 4;
   for (let i = 0; i < flyCount; i++) {
     const baseX = (viewport.width * (((i * 47 + 13) % 100) / 100));
     const baseY = (viewport.height * (0.3 + (((i * 31 + 7) % 50) / 100)));
@@ -977,7 +990,7 @@ function drawWeatherScreenEffects(
     context.save();
     context.strokeStyle = 'rgba(180, 215, 255, 0.35)';
     context.lineWidth = 1.1;
-    for (let index = 0; index < 90; index += 1) {
+    for (let index = 0; index < 22; index += 1) {
       const x = ((index * 23) + (phase * 18)) % (viewport.width + 30);
       const y = ((index * 37) + (phase * 48)) % (viewport.height + 40);
       context.beginPath();
@@ -992,7 +1005,7 @@ function drawWeatherScreenEffects(
   if (weather === 'snow') {
     context.save();
     context.fillStyle = 'rgba(245, 248, 255, 0.8)';
-    for (let index = 0; index < 70; index += 1) {
+    for (let index = 0; index < 18; index += 1) {
       const x = ((index * 31) + (phase * 6)) % viewport.width;
       const y = ((index * 43) + (phase * 12)) % (viewport.height + 20);
       const radius = 1 + ((index % 3) * 0.6);
@@ -1002,56 +1015,6 @@ function drawWeatherScreenEffects(
     }
     context.restore();
   }
-}
-
-function drawGroundWeatherEffects(
-  context: CanvasRenderingContext2D,
-  layout: IsoLayout,
-  roads: Array<{ fromX: number; fromY: number; toX: number; toY: number }>,
-  phase: number,
-  tick: number,
-  weather: Weather,
-): void {
-  if (weather !== 'rain' && weather !== 'snow') {
-    return;
-  }
-
-  context.save();
-
-  const sampleRoads = roads.slice(0, 18);
-  for (let index = 0; index < sampleRoads.length; index += 1) {
-    const road = sampleRoads[index]!;
-    const t = ((index * 0.17) + (phase * 0.004)) % 1;
-    const x = road.fromX + ((road.toX - road.fromX) * t);
-    const y = road.fromY + ((road.toY - road.fromY) * t);
-    const point = toScreen(x, y, 0, layout);
-
-    if (weather === 'rain') {
-      context.fillStyle = 'rgba(135, 180, 220, 0.16)';
-      context.beginPath();
-      context.ellipse(point.sx, point.sy + 3, 10, 4, 0, 0, Math.PI * 2);
-      context.fill();
-      context.strokeStyle = 'rgba(210, 235, 255, 0.12)';
-      context.beginPath();
-      context.ellipse(point.sx, point.sy + 3, 10, 4, 0, 0, Math.PI * 2);
-      context.stroke();
-      continue;
-    }
-
-    const stride = (tick + (index * 5)) % 20;
-    const leftX = point.sx - 3;
-    const rightX = point.sx + 3;
-    const footY = point.sy + (stride * 0.08);
-    context.fillStyle = 'rgba(210, 218, 230, 0.42)';
-    context.beginPath();
-    context.ellipse(leftX, footY, 2.8, 1.2, -0.25, 0, Math.PI * 2);
-    context.fill();
-    context.beginPath();
-    context.ellipse(rightX, footY + 1.6, 2.8, 1.2, 0.25, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  context.restore();
 }
 
 function drawParticleEntity(
@@ -1115,147 +1078,6 @@ function drawRubbleEntity(
 }
 
 
-
-function drawAmbientOcclusion(
-  context: CanvasRenderingContext2D,
-  entities: Entity[],
-  layout: IsoLayout,
-  displayPoints: Record<string, DisplayPoint>,
-): void {
-  // Build a spatial grid for fast neighbor lookups
-  const grid = new Map<string, Entity>();
-  const structures: Entity[] = [];
-  for (const entity of entities) {
-    if (!isStructureEntity(entity) || entity.type === 'directory') continue;
-    structures.push(entity);
-    grid.set(`${Math.round(entity.x)},${Math.round(entity.y)}`, entity);
-  }
-
-  context.save();
-
-  for (const entity of structures) {
-    const display = getInterpolatedPoint(entity, displayPoints);
-    const footprint = getFileFootprint(entity);
-    const width = footprint.width;
-    const depth = footprint.depth;
-    const z = entity.z ?? 0;
-
-    const baseX = display.x + ((1 - width) / 2);
-    const baseY = display.y + ((1 - depth) / 2);
-    const corners = getFootprintPolygon(baseX, baseY, width, depth, z, layout);
-
-    // 1. Ground-contact ambient occlusion
-    // Darken the area immediately surrounding the building base
-    const cx = (corners[0].sx + corners[2].sx) / 2;
-    const cy = (corners[0].sy + corners[2].sy) / 2;
-    const rx = Math.abs(corners[1].sx - corners[3].sx) * 0.55;
-    const ry = Math.abs(corners[2].sy - corners[0].sy) * 0.35;
-
-    const baseGrad = context.createRadialGradient(cx, cy, rx * 0.25, cx, cy, rx * 0.9);
-    baseGrad.addColorStop(0, 'rgba(6, 13, 20, 0)');
-    baseGrad.addColorStop(0.75, 'rgba(6, 13, 20, 0.05)');
-    baseGrad.addColorStop(1, 'rgba(6, 13, 20, 0.14)');
-
-    context.globalAlpha = 1;
-    context.fillStyle = baseGrad;
-    context.beginPath();
-    context.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    context.fill();
-
-    // 2. Building-to-building contact AO
-    // Check the 8 surrounding grid cells for neighbors
-    for (let ddx = -1; ddx <= 1; ddx++) {
-      for (let ddy = -1; ddy <= 1; ddy++) {
-        if (ddx === 0 && ddy === 0) continue;
-        const neighbor = grid.get(`${Math.round(entity.x) + ddx},${Math.round(entity.y) + ddy}`);
-        if (!neighbor) continue;
-
-        const nd = getInterpolatedPoint(neighbor, displayPoints);
-        const mx = (display.x + nd.x) / 2;
-        const my = (display.y + nd.y) / 2;
-        const mScreen = toScreen(mx, my, z, layout);
-
-        const contactGrad = context.createRadialGradient(
-          mScreen.sx, mScreen.sy, 0,
-          mScreen.sx, mScreen.sy, layout.tileWidth * 0.22,
-        );
-        contactGrad.addColorStop(0, 'rgba(6, 13, 20, 0.22)');
-        contactGrad.addColorStop(1, 'rgba(6, 13, 20, 0)');
-
-        context.fillStyle = contactGrad;
-        context.beginPath();
-        context.arc(mScreen.sx, mScreen.sy, layout.tileWidth * 0.22, 0, Math.PI * 2);
-        context.fill();
-      }
-    }
-  }
-
-  context.restore();
-}
-
-function drawBuildingShadow(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number
-): void {
-  const footprint = getFileFootprint(entity);
-  const width = footprint.width;
-  const depth = footprint.depth;
-  const height = getPrismHeight(entity);
-
-  // Skip shadow for very flat structures (plazas, goals)
-  if (height < 0.15) return;
-
-  const daylight = 0.2 + (0.8 * ((Math.sin(((phase / 60) * Math.PI * 2) - (Math.PI / 2)) + 1) / 2));
-  const night = 1 - daylight;
-
-  const baseX = display.x + ((1 - width) / 2);
-  const baseY = display.y + ((1 - depth) / 2);
-  const z = entity.z ?? 0;
-
-  const ground = getFootprintPolygon(baseX, baseY, width, depth, z, layout);
-
-  // Shadow length scales with building height (taller = longer shadow)
-  // and time of day (lower sun/moon angle at night = longer shadows)
-  const shadowLen = (0.15 + height * 0.28) * (1 + night * 0.6);
-  const sdx = -shadowLen * 0.3;
-  const sdy = -shadowLen * 0.3;
-
-  const proj = getFootprintPolygon(baseX + sdx, baseY + sdy, width, depth, z, layout);
-
-  context.save();
-
-  // 1. Contact shadow (dark area directly under the building footprint)
-  context.globalAlpha = 0.14 + (night * 0.06);
-  context.fillStyle = '#0a1520';
-  tracePolygonPath(context, ground);
-  context.fill();
-
-  // 2. Cast shadow (gradient polygon extending behind the building)
-  // Hexagon: front → right → projected-right → projected-back → projected-left → left
-  const castShadow = [
-    ground[2], ground[1], proj[1], proj[0], proj[3], ground[3],
-  ];
-
-  const cx = (ground[0].sx + ground[2].sx) / 2;
-  const cy = (ground[0].sy + ground[2].sy) / 2;
-  const pcx = (proj[0].sx + proj[2].sx) / 2;
-  const pcy = (proj[0].sy + proj[2].sy) / 2;
-
-  const grad = context.createLinearGradient(cx, cy, pcx, pcy);
-  grad.addColorStop(0, `rgba(8, 16, 28, ${0.22 + night * 0.08})`);
-  grad.addColorStop(0.5, `rgba(8, 16, 28, ${0.1 + night * 0.04})`);
-  grad.addColorStop(1, 'rgba(8, 16, 28, 0)');
-
-  context.globalAlpha = 1;
-  context.fillStyle = grad;
-  tracePolygonPath(context, castShadow);
-  context.fill();
-
-  context.restore();
-}
 
 function drawEntities(
   context: CanvasRenderingContext2D,
@@ -1326,7 +1148,6 @@ function drawEntities(
     context.globalAlpha = 1 - (haze * fogMultiplier);
 
     if (isStructureEntity(entity)) {
-      drawBuildingShadow(context, entity, display, layout, phase);
       drawBuilding({
         context,
         entity,
@@ -1341,7 +1162,6 @@ function drawEntities(
       continue;
     }
 
-    drawBuildingShadow(context, entity, display, layout, phase);
     drawBuilding({
       context,
       entity,
@@ -1382,99 +1202,12 @@ function summarizeDirective(value: string | null | undefined, limit = 96): strin
   return directive.length > limit ? `${directive.slice(0, limit - 1)}…` : directive;
 }
 
-function formatDuration(value: number | null | undefined): string {
-  return value == null ? 'n/a' : `${value}ms`;
-}
-
 function formatControlStatus(value: string | null | undefined): string {
   if (!value) {
     return 'idle';
   }
 
   return value.replace('-', ' ');
-}
-
-function formatTaskStatus(status: Task['status']): string {
-  const labels: Record<Task['status'], string> = {
-    pending: 'Pending',
-    assigned: 'Assigned',
-    in_progress: 'In Progress',
-    awaiting_review: 'Review',
-    revision_needed: 'Revision',
-    approved: 'Approved',
-    done: 'Done',
-  };
-  return labels[status] ?? status;
-}
-
-function formatValidationStatus(status: TaskValidationResult['status']): string {
-  const labels: Record<TaskValidationResult['status'], string> = {
-    idle: 'Idle',
-    running: 'Running',
-    clean: 'Clean',
-    warnings: 'Warnings',
-    errors: 'Errors',
-  };
-  return labels[status] ?? status;
-}
-
-function formatExplanationStatus(value: string | null | undefined): string {
-  if (!value) {
-    return 'Idle';
-  }
-
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function formatActivityStatus(status: AgentActivity['status']): string {
-  const labels: Record<AgentActivity['status'], string> = {
-    thinking: 'Thinking',
-    walking: 'Walking',
-    reading: 'Reading',
-    editing: 'Editing',
-    idle: 'Idle',
-  };
-  return labels[status] ?? status;
-}
-
-function getActivitySwatchClass(status: AgentActivity['status']): string {
-  switch (status) {
-    case 'thinking':
-      return 'is-thinking';
-    case 'walking':
-      return 'is-walking';
-    case 'reading':
-      return 'is-reading';
-    case 'editing':
-      return 'is-editing';
-    case 'idle':
-      return 'is-idle';
-    default:
-      return '';
-  }
-}
-
-function shouldShowDiff(task: Task): boolean {
-  return (
-    (task.status === 'awaiting_review' || task.status === 'done') &&
-    task.original_content != null &&
-    task.completed_content != null
-  );
-}
-
-function TaskDiff({ lines }: { lines: DiffLine[] }) {
-  return (
-    <div className="task-diff">
-      {lines.map((line, index) => (
-        <div className={`diff-line diff-${line.type}`} key={`${line.type}-${index}`}>
-          <span className="diff-prefix">
-            {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
-          </span>
-          <span className="diff-text">{line.text}</span>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
@@ -1555,132 +1288,6 @@ function createLogEntry(kind: LogKind, tick: number, message: string): LogEntry 
   };
 }
 
-function getCodePreview(entity: Entity | null): string {
-  if (!entity) {
-    return '';
-  }
-
-  if (entity.content) {
-    return entity.content;
-  }
-
-  if (entity.content_preview) {
-    return entity.content_preview;
-  }
-
-  if (entity.is_binary) {
-    return '// Binary asset detected\n// Spatial ingest uses hash-only transfer.';
-  }
-
-  return '// No content preview available for this node.';
-}
-
-interface GitTreeItemProps {
-  activePathSet: Set<string>;
-  depth: number;
-  loadedPath: string | null;
-  node: GitTreeNode;
-  nodeStatesByPath: Map<string, HivemindNodeState>;
-}
-
-interface SidebarSectionProps {
-  children: ReactNode;
-  meta?: string;
-  onToggle: () => void;
-  open: boolean;
-  title: string;
-}
-
-type LeftPanelSection =
-  | 'overview'
-  | 'operator'
-  | 'visibility'
-  | 'tasks'
-  | 'workforce'
-  | 'tree'
-  | 'context'
-  | 'inspect';
-
-type RightPanelSection = 'status' | 'activity' | 'directive' | 'log' | 'legend';
-
-const DEFAULT_LEFT_PANEL_SECTIONS: Record<LeftPanelSection, boolean> = {
-  context: true,
-  inspect: true,
-  operator: true,
-  overview: true,
-  tasks: true,
-  tree: true,
-  visibility: true,
-  workforce: true,
-};
-
-const DEFAULT_RIGHT_PANEL_SECTIONS: Record<RightPanelSection, boolean> = {
-  activity: true,
-  directive: true,
-  legend: true,
-  log: true,
-  status: true,
-};
-
-function GitTreeItem({ activePathSet, depth, loadedPath, node, nodeStatesByPath }: GitTreeItemProps) {
-  const active = activePathSet.has(node.path);
-  const loaded = loadedPath === node.path;
-  const entity = node.entity;
-  const nodeState = nodeStatesByPath.get(node.path) ?? 'stable';
-  const Icon = node.type === 'directory' ? Folder : FileCode;
-
-  return (
-    <div className="git-tree-node">
-      <div
-        className={['git-tree-row', active ? 'is-active' : '', loaded ? 'is-loaded' : '', `state-${nodeState}`].join(' ')}
-        style={{ paddingLeft: `${12 + (depth * 14)}px` }}
-      >
-        <Icon className="git-tree-icon" size={14} strokeWidth={1.75} />
-        <span className="git-tree-label">{node.name}</span>
-        <span className={`git-tree-state state-${nodeState}`} />
-        {entity && isCriticalMass(entity) ? <span className="git-tree-critical">F</span> : null}
-      </div>
-      {node.children.map((child) => (
-        <GitTreeItem
-          activePathSet={activePathSet}
-          depth={depth + 1}
-          key={child.path}
-          loadedPath={loadedPath}
-          node={child}
-          nodeStatesByPath={nodeStatesByPath}
-        />
-      ))}
-    </div>
-  );
-}
-
-function SidebarSection({ children, meta, onToggle, open, title }: SidebarSectionProps) {
-  const contentId = useId();
-
-  return (
-    <section className={`sidebar-section ${open ? 'is-open' : 'is-collapsed'}`}>
-      <button
-        aria-controls={contentId}
-        aria-expanded={open}
-        className="sidebar-section-toggle"
-        onClick={onToggle}
-        type="button"
-      >
-        <span className="sidebar-section-title-wrap">
-          <ChevronRight
-            className={`sidebar-section-chevron ${open ? 'is-open' : ''}`}
-            size={14}
-            strokeWidth={1.9}
-          />
-          <span className="sidebar-section-title">{title}</span>
-        </span>
-        {meta ? <span className="sidebar-section-meta">{meta}</span> : null}
-      </button>
-      {open ? <div className="sidebar-section-body" id={contentId}>{children}</div> : null}
-    </section>
-  );
-}
-
 function getEntityPath(entity: Entity): string {
   return entity.path ?? entity.name ?? entity.id;
 }
@@ -1710,11 +1317,21 @@ function buildVisibleStructurePathSet(
 
 function stripUnsafeOperatorControlFields(
   control: Record<string, unknown>,
-): Pick<OperatorControl, 'id' | 'repo_path' | 'operator_prompt'> {
+): Omit<OperatorControl, 'updated_at'> {
   return {
     id: String(control.id ?? 'lux-control'),
     repo_path: String(control.repo_path ?? ''),
     operator_prompt: String(control.operator_prompt ?? ''),
+    weather_override: (control.weather_override as OperatorControl['weather_override']) ?? null,
+    paused: Boolean(control.paused),
+    automate: Boolean(control.automate),
+    visionary_prompt: String(control.visionary_prompt ?? ''),
+    architect_prompt: String(control.architect_prompt ?? ''),
+    critic_prompt: String(control.critic_prompt ?? ''),
+    pending_edit_path: (control.pending_edit_path as OperatorControl['pending_edit_path']) ?? null,
+    pending_edit_content: (control.pending_edit_content as OperatorControl['pending_edit_content']) ?? null,
+    commit_message: (control.commit_message as OperatorControl['commit_message']) ?? null,
+    should_push: Boolean(control.should_push),
   };
 }
 
@@ -1724,37 +1341,23 @@ function App() {
   const [operatorControl, setOperatorControl] = useState<OperatorControl>(DEFAULT_OPERATOR_CONTROL);
   const [repoInput, setRepoInput] = useState<string>('');
   const [directiveInput, setDirectiveInput] = useState<string>('');
-  const [visionaryPromptInput, setVisionaryPromptInput] = useState<string>('');
-  const [architectPromptInput, setArchitectPromptInput] = useState<string>('');
-  const [criticPromptInput, setCriticPromptInput] = useState<string>('');
-  const [editPathInput, setEditPathInput] = useState<string>('');
-  const [editContentInput, setEditContentInput] = useState<string>('');
-  const [commitMessageInput, setCommitMessageInput] = useState<string>('');
-  const [shouldPushInput, setShouldPushInput] = useState<boolean>(false);
-  const [controlMessage, setControlMessage] = useState<string>('Enter a repository path and directive, then commit it into the lattice.');
+  // Status feedback is rendered through errorMessage (hud-alert) and the bottom status bar.
   const [isSavingControl, setIsSavingControl] = useState(false);
   const [mode, setMode] = useState<'preview' | 'live'>('preview');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ height: 720, width: 1280 });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
-  const [contextTab, setContextTab] = useState<'code' | 'explanation'>('code');
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [leftPanelSections, setLeftPanelSections] = useState<Record<LeftPanelSection, boolean>>(
-    DEFAULT_LEFT_PANEL_SECTIONS,
-  );
-  const [rightPanelSections, setRightPanelSections] = useState<Record<RightPanelSection, boolean>>(
-    DEFAULT_RIGHT_PANEL_SECTIONS,
-  );
   const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
-  const [fileFilterQuery, setFileFilterQuery] = useState('');
   const [hiddenFilePaths, setHiddenFilePaths] = useState<string[]>([]);
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
   const [showPlumbing, setShowPlumbing] = useState(false);
+  const [showAgentThoughts, setShowAgentThoughts] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [logExpanded, setLogExpanded] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
   const [engineLoading, setEngineLoading] = useState(false);
-  const [engineError, setEngineError] = useState<string | null>(null);
+  const [, setEngineError] = useState<string | null>(null);
 
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
@@ -1784,10 +1387,15 @@ function App() {
   const previousCriticalMassSignatureRef = useRef<string>('');
   const previousAsymmetrySignatureRef = useRef<string>('');
   const previousAgentActivitiesRef = useRef<Record<string, AgentActivity>>({});
+  const agentDecisionHistoryRef = useRef<Map<string, AgentActivity[]>>(new Map());
   const selectedEntityRef = useRef<Entity | null>(null);
+  const hoveredEntityIdRef = useRef<string | null>(null);
   const cameraRef = useRef<Camera>(DEFAULT_CAMERA);
+  const cameraCommitFrameRef = useRef<number | null>(null);
   const showPlumbingRef = useRef(false);
-  const inspectPanelRef = useRef<HTMLDivElement | null>(null);
+  const weatherRef = useRef<Weather>(worldState.weather ?? 'clear');
+  const isInteractingRef = useRef(false);
+  const interactionSettledTimeoutRef = useRef<number | null>(null);
   const zoomAnimationRef = useRef<{ frame: number | null; target: Camera | null }>({ frame: null, target: null });
   const autoHiddenRepoRef = useRef<string | null>(null);
 
@@ -1801,66 +1409,61 @@ function App() {
     }
   }, [worldState?.sound_events, worldState?.tick]);
 
-  const agents = entities.filter((entity) => entity.type === 'agent');
+  const agents = useMemo(() => entities.filter((entity) => entity.type === 'agent'), [entities]);
   const primaryAgent = agents[0] ?? null;
   const primaryRole = primaryAgent ? (getAgentRole(primaryAgent) ?? 'architect') : 'architect';
-  const structureNodes = entities.filter((entity) => isStructureEntity(entity));
-  const fileNodes = structureNodes
-    .filter((entity) => entity.type === 'file')
-    .sort((left, right) => getEntityPath(left).localeCompare(getEntityPath(right)));
-  const hiddenFilePathSet = new Set(hiddenFilePaths);
-  const visibleStructurePathSet = buildVisibleStructurePathSet(fileNodes, hiddenFilePathSet);
-  const visibleStructureNodes = structureNodes.filter((entity) => {
+  const structureNodes = useMemo(() => entities.filter((entity) => isStructureEntity(entity)), [entities]);
+  const fileNodes = useMemo(
+    () => structureNodes
+      .filter((entity) => entity.type === 'file')
+      .sort((left, right) => getEntityPath(left).localeCompare(getEntityPath(right))),
+    [structureNodes],
+  );
+  const hiddenFilePathSet = useMemo(() => new Set(hiddenFilePaths), [hiddenFilePaths]);
+  const visibleStructurePathSet = useMemo(
+    () => buildVisibleStructurePathSet(fileNodes, hiddenFilePathSet),
+    [fileNodes, hiddenFilePathSet],
+  );
+  const visibleStructureNodes = useMemo(() => structureNodes.filter((entity) => {
     if (!entity.path) {
       return false;
     }
 
     return visibleStructurePathSet.has(entity.path);
-  });
-  const visibleEntities = entities.filter((entity) => {
+  }), [structureNodes, visibleStructurePathSet]);
+  const visibleEntities = useMemo(() => entities.filter((entity) => {
     if (!isStructureEntity(entity)) {
       return true;
     }
 
     return entity.path != null && visibleStructurePathSet.has(entity.path);
-  });
-  const visibleFileCount = fileNodes.filter((entity) => {
-    if (!entity.path) {
-      return false;
-    }
-
-    return !hiddenFilePathSet.has(entity.path);
-  }).length;
-  const normalizedFileFilterQuery = fileFilterQuery.trim().toLowerCase();
-  const filteredFileNodes = fileNodes.filter((entity) => {
-    if (normalizedFileFilterQuery.length === 0) {
-      return true;
-    }
-
-    const entityPath = getEntityPath(entity).toLowerCase();
-    const entityName = (entity.name ?? '').toLowerCase();
-    return entityPath.includes(normalizedFileFilterQuery) || entityName.includes(normalizedFileFilterQuery);
-  });
-  const repositoryRoot =
-    structureNodes.find((entity) => entity.type === 'directory' && entity.path === '.') ?? null;
-  const focus = getNearestStructure(primaryAgent, structureNodes);
+  }), [entities, visibleStructurePathSet]);
+  const cityCouncil = useMemo(
+    () => computeCityCouncilState(visibleEntities, worldState),
+    [visibleEntities, worldState],
+  );
+  const repositoryRoot = useMemo(
+    () => structureNodes.find((entity) => entity.type === 'directory' && entity.path === '.') ?? null,
+    [structureNodes],
+  );
+  const focus = useMemo(() => getNearestStructure(primaryAgent, structureNodes), [primaryAgent, structureNodes]);
   const activeStructure = focus.entity;
-  const loadedFile = getLoadedFile(primaryAgent, structureNodes);
-  const entityByPath = new Map(
-    structureNodes
-      .filter((entity) => entity.path !== null && entity.path !== undefined)
-      .map((entity) => [entity.path as string, entity]),
+  const loadedFile = useMemo(() => getLoadedFile(primaryAgent, structureNodes), [primaryAgent, structureNodes]);
+  const entityByPath = useMemo(
+    () => new Map(
+      structureNodes
+        .filter((entity) => entity.path !== null && entity.path !== undefined)
+        .map((entity) => [entity.path as string, entity]),
+    ),
+    [structureNodes],
   );
-  const routeNodes = buildRouteNodes(loadedFile ?? activeStructure ?? repositoryRoot, entityByPath);
-  const visibleRouteNodes = routeNodes.filter(
-    (entity) => entity.path != null && visibleStructurePathSet.has(entity.path),
+  const routeNodes = useMemo(
+    () => buildRouteNodes(loadedFile ?? activeStructure ?? repositoryRoot, entityByPath),
+    [activeStructure, entityByPath, loadedFile, repositoryRoot],
   );
-  const activePathSet = buildActivePathSet((loadedFile ?? activeStructure ?? repositoryRoot)?.path ?? null);
-  const gitTree = buildGitTree(visibleStructureNodes);
-  const nodeStatesByPath = new Map(
-    structureNodes
-      .filter((entity) => entity.path !== null && entity.path !== undefined)
-      .map((entity) => [entity.path as string, entity.node_state ?? 'stable']),
+  const visibleRouteNodes = useMemo(
+    () => routeNodes.filter((entity) => entity.path != null && visibleStructurePathSet.has(entity.path)),
+    [routeNodes, visibleStructurePathSet],
   );
   const activeStructureState = activeStructure
     ? (activeStructure.node_state ?? 'stable')
@@ -1868,32 +1471,11 @@ function App() {
   const loadedFileState = loadedFile
     ? (loadedFile.node_state ?? 'stable')
     : null;
-  const criticalMassNodes = structureNodes.filter((entity) => isCriticalMass(entity));
-  const asymmetryNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'asymmetry');
-  const genesisNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'task');
-  const verifiedNodes = structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'verified');
-  const t2Agents = agents.filter((entity) => entity.lmm_rule == null);
-  const lmmAgents = agents.filter((entity) => entity.lmm_rule != null);
-  const workforce: WorkforceStatus[] = WORKFORCE_ROLES.map((role) => ({
-    agents: t2Agents.filter((entity) => (getAgentRole(entity) ?? 'architect') === role),
-    label: getAgentRoleLabel(role),
-    role,
-  }));
-  const explanationTargetPath = worldState.explanation_target_path ?? null;
-  const explanationTargetEntity = explanationTargetPath ? entityByPath.get(explanationTargetPath) ?? null : null;
-  const explanationStatus = worldState.explanation_status ?? 'idle';
-  const explanationText = worldState.explanation_text ?? '';
-  const explanationError = worldState.explanation_error ?? null;
-  const hasExplanationTab =
-    explanationTargetPath !== null ||
-    explanationStatus !== 'idle' ||
-    explanationText.length > 0 ||
-    explanationError !== null;
-  const contextEntity = explanationTargetEntity ?? loadedFile;
-  const contextNodeState = explanationTargetEntity
-    ? (explanationTargetEntity.node_state ?? 'stable')
-    : loadedFileState;
-  const codePreview = getCodePreview(contextEntity);
+  const criticalMassNodes = useMemo(() => structureNodes.filter((entity) => isCriticalMass(entity)), [structureNodes]);
+  const asymmetryNodes = useMemo(
+    () => structureNodes.filter((entity) => (entity.node_state ?? 'stable') === 'asymmetry'),
+    [structureNodes],
+  );
   const activeRepositoryName =
     worldState.active_repo_name ??
     repositoryRoot?.name ??
@@ -1904,15 +1486,12 @@ function App() {
     repositoryRoot?.repo_root ??
     (operatorControl.repo_path.trim().length > 0 ? operatorControl.repo_path : null) ??
     null;
-  const activeDirective = summarizeDirective(worldState.operator_prompt ?? operatorControl.operator_prompt);
   const controlStatus = worldState.control_status ?? 'idle';
   const operatorAction = worldState.operator_action ?? null;
   const operatorTargetPath = worldState.operator_target_path ?? null;
-  const operatorTargetQuery = worldState.operator_target_query ?? null;
 
   const isPaused = worldState.paused ?? operatorControl.paused ?? false;
   const isAutomated = worldState.automate ?? operatorControl.automate ?? false;
-
   const inspectPopupPosition = ((): { left: number; top: number } | null => {
     if (!selectedEntity) return null;
     const layout = createIsoLayout(viewport.width, viewport.height, camera);
@@ -1931,90 +1510,6 @@ function App() {
     return { left, top };
   })();
 
-  const handleToggleAutomate = async (): Promise<void> => {
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      setControlMessage('Supabase browser keys are missing, so automate cannot be toggled from this browser.');
-      return;
-    }
-
-    const nextAutomate = !isAutomated;
-    setControlMessage(nextAutomate ? 'Enabling automate mode...' : 'Disabling automate mode...');
-
-    try {
-      const { error } = await supabase
-        .from('operator_controls')
-        .upsert(
-          stripUnsafeOperatorControlFields({
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: directiveInput.trim(),
-            paused: isPaused,
-            automate: nextAutomate,
-            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
-            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
-            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
-            pending_edit_path: operatorControl.pending_edit_path,
-            pending_edit_content: operatorControl.pending_edit_content,
-            commit_message: operatorControl.commit_message,
-            should_push: operatorControl.should_push,
-          }),
-          { onConflict: 'id' },
-        );
-
-      if (error) {
-        throw error;
-      }
-
-      setControlMessage(nextAutomate ? 'Automate enabled. The lattice will loop indefinitely.' : 'Automate disabled.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown automate toggle failure';
-      setControlMessage(`Automate toggle failed: ${message}`);
-    }
-  };
-
-  const handleTogglePause = async (): Promise<void> => {
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      setControlMessage('Supabase browser keys are missing, so pause cannot be toggled from this browser.');
-      return;
-    }
-
-    const nextPaused = !isPaused;
-    setControlMessage(nextPaused ? 'Pausing the lattice...' : 'Resuming the lattice...');
-
-    try {
-      const { error } = await supabase
-        .from('operator_controls')
-        .upsert(
-          stripUnsafeOperatorControlFields({
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: directiveInput.trim(),
-            paused: nextPaused,
-            automate: isAutomated,
-            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
-            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
-            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
-            pending_edit_path: operatorControl.pending_edit_path,
-            pending_edit_content: operatorControl.pending_edit_content,
-            commit_message: operatorControl.commit_message,
-            should_push: operatorControl.should_push,
-          }),
-          { onConflict: 'id' },
-        );
-
-      if (error) {
-        throw error;
-      }
-
-      setControlMessage(nextPaused ? 'Lattice paused. Agents will finish their current tick and freeze.' : 'Lattice resumed.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown pause toggle failure';
-      setControlMessage(`Pause toggle failed: ${message}`);
-    }
-  };
-
   const handleToggleEngine = async (): Promise<void> => {
     setEngineLoading(true);
     setEngineError(null);
@@ -2027,7 +1522,7 @@ function App() {
           setEngineError(data.error ?? 'Failed to stop engine');
         } else {
           setEngineRunning(false);
-          setControlMessage('Engine stopped.');
+          setErrorMessage('Engine stopped.');
         }
       } else {
         const res = await fetch('http://localhost:3001/api/engine/start', { method: 'POST' });
@@ -2036,7 +1531,7 @@ function App() {
           setEngineError(data.error ?? 'Failed to start engine');
         } else {
           setEngineRunning(true);
-          setControlMessage('Engine started. Automata are now ticking.');
+          setErrorMessage('Engine started. Automata are now ticking.');
         }
       }
     } catch {
@@ -2051,7 +1546,7 @@ function App() {
 
     const supabase = supabaseRef.current;
     if (!supabase) {
-      setControlMessage('Supabase browser keys are missing, so controls cannot be committed from this browser.');
+      setErrorMessage('Supabase browser keys are missing, so controls cannot be committed from this browser.');
       return;
     }
 
@@ -2071,7 +1566,7 @@ function App() {
     };
 
     setIsSavingControl(true);
-    setControlMessage('Committing operator control to the lattice...');
+    setErrorMessage(null);
 
     try {
       const { error } = await supabase
@@ -2088,55 +1583,15 @@ function App() {
         ...nextControl,
         updated_at: new Date().toISOString(),
       });
-      setControlMessage(
+      setCommandPaletteOpen(false);
+      setErrorMessage(
         nextControl.repo_path.length > 0
           ? 'Repository import queued. The engine will hot-swap overlays on its next control poll.'
-          : 'Directive committed. The current overlay stays loaded and the agents will adopt the new instruction.',
+          : 'Directive committed. The lattice has accepted the current operator instruction.',
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown operator control failure';
-      setControlMessage(`Control write failed: ${message}`);
-    } finally {
-      setIsSavingControl(false);
-    }
-  };
-
-  const handleStageEdit = async (): Promise<void> => {
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      setControlMessage('Supabase keys missing; cannot stage edit.');
-      return;
-    }
-    if (!editPathInput.trim()) {
-      setControlMessage('Provide a file path to stage an edit.');
-      return;
-    }
-    setIsSavingControl(true);
-    try {
-      const { error } = await supabase
-        .from('operator_controls')
-        .upsert(
-          stripUnsafeOperatorControlFields({
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: directiveInput.trim(),
-            paused: isPaused,
-            automate: isAutomated,
-            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
-            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
-            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
-            pending_edit_path: editPathInput.trim(),
-            pending_edit_content: editContentInput,
-            commit_message: operatorControl.commit_message,
-            should_push: operatorControl.should_push,
-          }),
-          { onConflict: 'id' },
-        );
-      if (error) throw error;
-      setControlMessage(`Edit staged for ${editPathInput.trim()}. The engine will apply it on the next poll.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      setControlMessage(`Stage edit failed: ${message}`);
+      setErrorMessage(`Control write failed: ${message}`);
     } finally {
       setIsSavingControl(false);
     }
@@ -2145,11 +1600,12 @@ function App() {
   const dispatchFileAction = async (action: 'read' | 'explain' | 'repair', targetPath: string): Promise<void> => {
     const supabase = supabaseRef.current;
     if (!supabase) {
-      setControlMessage('Supabase keys missing; cannot dispatch file action from browser.');
+      setErrorMessage('Supabase keys missing; cannot dispatch file action from browser.');
       return;
     }
     const prompt = `${action} ${targetPath}`;
     setIsSavingControl(true);
+    setErrorMessage(null);
     try {
       const { error } = await supabase
         .from('operator_controls')
@@ -2171,54 +1627,17 @@ function App() {
           { onConflict: 'id' },
         );
       if (error) throw error;
-      setControlMessage(`Dispatched: ${prompt}. An architect will pick it up on the next tick.`);
+      setErrorMessage(`Dispatched: ${prompt}. An architect will pick it up on the next tick.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      setControlMessage(`Dispatch failed: ${message}`);
+      setErrorMessage(`Dispatch failed: ${message}`);
     } finally {
       setIsSavingControl(false);
     }
   };
 
-  const handleCommit = async (): Promise<void> => {
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      setControlMessage('Supabase keys missing; cannot commit.');
-      return;
-    }
-    if (!commitMessageInput.trim()) {
-      setControlMessage('Provide a commit message.');
-      return;
-    }
-    setIsSavingControl(true);
-    try {
-      const { error } = await supabase
-        .from('operator_controls')
-        .upsert(
-          stripUnsafeOperatorControlFields({
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: directiveInput.trim(),
-            paused: isPaused,
-            automate: isAutomated,
-            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
-            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
-            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
-            pending_edit_path: operatorControl.pending_edit_path,
-            pending_edit_content: operatorControl.pending_edit_content,
-            commit_message: commitMessageInput.trim(),
-            should_push: shouldPushInput,
-          }),
-          { onConflict: 'id' },
-        );
-      if (error) throw error;
-      setControlMessage(`Commit queued: "${commitMessageInput.trim()}"${shouldPushInput ? ' with push' : ''}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      setControlMessage(`Commit failed: ${message}`);
-    } finally {
-      setIsSavingControl(false);
-    }
+  const handleAdvisorAction = (action: AdvisorAction, targetPath: string): void => {
+    void dispatchFileAction(action, targetPath);
   };
 
   useEffect(() => {
@@ -2229,6 +1648,14 @@ function App() {
     visibleEntityListRef.current = visibleEntities;
     visibleStructureListRef.current = visibleStructureNodes;
   }, [visibleEntities, visibleStructureNodes]);
+
+  useEffect(() => {
+    const layoutData = computeCityLayout(visibleEntities);
+    cityLayoutRef.current = layoutData;
+    trafficRef.current.cars = trafficRef.current.cars.filter(
+      (car) => car.roadIndex < layoutData.roads.length,
+    );
+  }, [visibleEntities]);
 
   useEffect(() => {
     const validPaths = new Set(fileNodes.map((entity) => entity.path).filter((path): path is string => path != null));
@@ -2331,36 +1758,14 @@ function App() {
     }
 
     if (worldState.control_status === 'error') {
-      setControlMessage(worldState.control_error ?? 'Operator control failed.');
+      setErrorMessage(worldState.control_error ?? 'Operator control failed.');
       return;
     }
-
-    if (worldState.control_status === 'importing') {
-      setControlMessage(`Importing ${operatorControl.repo_path.trim() || activeRepositoryPath || 'repository'} into the lattice...`);
-      return;
-    }
-
-    if (worldState.control_status === 'active') {
-      if (worldState.operator_target_path) {
-        setControlMessage(
-          `${formatControlStatus(worldState.control_status).toUpperCase()}: ${worldState.operator_action ?? 'maintain'} -> ${worldState.operator_target_path}`,
-        );
-      } else {
-        setControlMessage('Directive committed. The lattice has accepted the current operator instruction.');
-      }
-      return;
-    }
-
-    setControlMessage('Enter a repository path and directive, then commit it into the lattice.');
   }, [
-    activeRepositoryPath,
     isSavingControl,
     mode,
-    operatorControl.repo_path,
     worldState.control_error,
     worldState.control_status,
-    worldState.operator_action,
-    worldState.operator_target_path,
   ]);
 
   // Visual phase/tick are now self-driven in the requestAnimationFrame loop
@@ -2379,6 +1784,10 @@ function App() {
   }, [selectedEntity]);
 
   useEffect(() => {
+    hoveredEntityIdRef.current = hoveredEntityId;
+  }, [hoveredEntityId]);
+
+  useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
 
@@ -2387,39 +1796,23 @@ function App() {
   }, [showPlumbing]);
 
   useEffect(() => {
-    if (selectedEntity && !leftPanelOpen) {
-      setLeftPanelOpen(true);
-    }
-    if (selectedEntity) {
-      setLeftPanelSections((prev) => (prev.inspect ? prev : { ...prev, inspect: true }));
-    }
-  // Only react to selection changes, not leftPanelOpen toggles
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEntity]);
+    weatherRef.current = worldState.weather ?? 'clear';
+  }, [worldState.weather]);
 
+  // Global keyboard shortcuts
   useEffect(() => {
-    if (selectedEntity && inspectPanelRef.current) {
-      inspectPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [selectedEntity]);
-
-  useEffect(() => {
-    if (!hasExplanationTab) {
-      if (contextTab === 'explanation') {
-        setContextTab('code');
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
       }
-      return;
-    }
-
-    if (
-      explanationStatus === 'pending' ||
-      explanationStatus === 'streaming' ||
-      explanationStatus === 'complete' ||
-      explanationError !== null
-    ) {
-      setContextTab('explanation');
-    }
-  }, [contextTab, explanationError, explanationStatus, explanationTargetPath, hasExplanationTab]);
+      if (e.key === 'Escape') {
+        setCommandPaletteOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     const nextLogs: LogEntry[] = [];
@@ -2572,6 +1965,20 @@ function App() {
     }
     previousAgentActivitiesRef.current = Object.fromEntries(agentActivities.map((a) => [a.agent_id, a]));
 
+    // Accumulate agent decision history (up to 20 per agent)
+    const history = agentDecisionHistoryRef.current;
+    for (const activity of agentActivities) {
+      const list = history.get(activity.agent_id) ?? [];
+      const isDuplicate = list.length > 0 && list[list.length - 1]!.tick === activity.tick && list[list.length - 1]!.status === activity.status;
+      if (!isDuplicate) {
+        list.push(activity);
+        if (list.length > 20) {
+          list.shift();
+        }
+        history.set(activity.agent_id, list);
+      }
+    }
+
     if (nextLogs.length > 0) {
       setLogEntries((previous) => [...previous, ...nextLogs].slice(-90));
     }
@@ -2642,6 +2049,33 @@ function App() {
     let lastPointerX = 0;
     let lastPointerY = 0;
 
+    const markInteracting = (): void => {
+      isInteractingRef.current = true;
+
+      if (interactionSettledTimeoutRef.current !== null) {
+        window.clearTimeout(interactionSettledTimeoutRef.current);
+      }
+
+      interactionSettledTimeoutRef.current = window.setTimeout(() => {
+        isInteractingRef.current = false;
+        interactionSettledTimeoutRef.current = null;
+      }, 140);
+    };
+
+    const setCameraImmediate = (updater: (previous: Camera) => Camera): void => {
+      const nextCamera = updater(cameraRef.current);
+      cameraRef.current = nextCamera;
+
+      if (cameraCommitFrameRef.current !== null) {
+        return;
+      }
+
+      cameraCommitFrameRef.current = window.requestAnimationFrame(() => {
+        cameraCommitFrameRef.current = null;
+        setCamera(cameraRef.current);
+      });
+    };
+
     const resolveCanvasPoint = (event: MouseEvent): { sx: number; sy: number } => {
       const rect = canvas.getBoundingClientRect();
       return {
@@ -2656,23 +2090,31 @@ function App() {
       layout: IsoLayout,
       thresholdMultiplier: number,
     ): Entity | null => {
-      const nearest = visibleStructureListRef.current
-        .map((entity) => {
-          const center = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
-          const dist = Math.hypot(center.sx - sx, center.sy - sy);
-          return { entity, dist };
-        })
-        .filter((item) => item.dist < layout.tileHeight * thresholdMultiplier)
-        .sort((left, right) => left.dist - right.dist)[0];
+      const threshold = layout.tileHeight * thresholdMultiplier;
+      let nearest: Entity | null = null;
+      let nearestDistanceSq = threshold * threshold;
 
-      return nearest?.entity ?? null;
+      for (const entity of visibleStructureListRef.current) {
+        const center = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+        const dx = center.sx - sx;
+        const dy = center.sy - sy;
+        const distanceSq = (dx * dx) + (dy * dy);
+
+        if (distanceSq < nearestDistanceSq) {
+          nearest = entity;
+          nearestDistanceSq = distanceSq;
+        }
+      }
+
+      return nearest;
     };
 
     const handleWheel = (event: WheelEvent): void => {
       event.preventDefault();
+      markInteracting();
       const { sx: mouseX, sy: mouseY } = resolveCanvasPoint(event);
 
-      setCamera((prev) => {
+      setCameraImmediate((prev) => {
         const oldLayout = createIsoLayout(viewport.width, viewport.height, prev);
         const anchor = fromScreen(mouseX, mouseY, oldLayout);
         const newZoom = Math.max(0.3, Math.min(4, prev.zoom * (event.deltaY < 0 ? 1.12 : 0.88)));
@@ -2696,6 +2138,7 @@ function App() {
 
         if (event.shiftKey) {
           dragMode = 'pan';
+          markInteracting();
           canvas.style.cursor = 'grabbing';
           return;
         }
@@ -2706,6 +2149,7 @@ function App() {
         dragMode = 'pan';
         lastPointerX = event.clientX;
         lastPointerY = event.clientY;
+        markInteracting();
         canvas.style.cursor = 'grabbing';
       }
     };
@@ -2727,14 +2171,19 @@ function App() {
         const dy = event.clientY - lastPointerY;
         lastPointerX = event.clientX;
         lastPointerY = event.clientY;
-        setCamera((prev) => ({ ...prev, panX: prev.panX + dx, panY: prev.panY + dy }));
+        markInteracting();
+        setCameraImmediate((prev) => ({ ...prev, panX: prev.panX + dx, panY: prev.panY + dy }));
         return;
       }
 
       const { sx, sy } = resolveCanvasPoint(event);
       const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
       const nearest = findNearestVisibleStructure(sx, sy, layout, 1.2);
-      setHoveredEntityId(nearest?.id ?? null);
+      const nextHoveredId = nearest?.id ?? null;
+      if (hoveredEntityIdRef.current !== nextHoveredId) {
+        hoveredEntityIdRef.current = nextHoveredId;
+        setHoveredEntityId(nextHoveredId);
+      }
       canvas.style.cursor = nearest ? 'pointer' : 'default';
     };
 
@@ -2752,11 +2201,6 @@ function App() {
         const nearest = findNearestVisibleStructure(sx, sy, layout, 1.4);
         setSelectedEntity(nearest);
         canvas.style.cursor = nearest ? 'pointer' : 'default';
-        // Auto-open left panel and focus on inspect/context when clicking a building
-        if (nearest) {
-          setLeftPanelOpen(true);
-          setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
-        }
         return;
       }
 
@@ -2798,14 +2242,12 @@ function App() {
       
       startCameraAnimation(targetCamera, 330); // ~20 frames at 60fps
       
-      // Auto-open left panel and focus on inspect section
-      setLeftPanelOpen(true);
-      setLeftPanelSections((prev) => ({ ...prev, inspect: true, context: true }));
     };
 
     const startCameraAnimation = (targetCamera: Camera, duration: number) => {
       const startCamera = { ...cameraRef.current };
       const startTime = performance.now();
+      markInteracting();
       
       const animate = (time: number): void => {
         const elapsed = time - startTime;
@@ -2819,7 +2261,7 @@ function App() {
           zoom: startCamera.zoom + (targetCamera.zoom - startCamera.zoom) * ease,
         };
         
-        setCamera(nextCamera);
+        setCameraImmediate(() => nextCamera);
         
         if (t < 1) {
           zoomAnimationRef.current.frame = requestAnimationFrame(animate);
@@ -2855,10 +2297,20 @@ function App() {
       canvas.removeEventListener('dblclick', handleDoubleClick);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('keydown', handleKeyDown);
       const frame = zoomAnimation.frame;
       if (frame) {
         cancelAnimationFrame(frame);
       }
+      if (cameraCommitFrameRef.current !== null) {
+        window.cancelAnimationFrame(cameraCommitFrameRef.current);
+        cameraCommitFrameRef.current = null;
+      }
+      if (interactionSettledTimeoutRef.current !== null) {
+        window.clearTimeout(interactionSettledTimeoutRef.current);
+        interactionSettledTimeoutRef.current = null;
+      }
+      isInteractingRef.current = false;
     };
   }, [viewport]);
 
@@ -2873,29 +2325,31 @@ function App() {
       return undefined;
     }
 
-    const devicePixelRatio = window.devicePixelRatio || 1;
+    const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
     canvas.width = Math.floor(viewport.width * devicePixelRatio);
     canvas.height = Math.floor(viewport.height * devicePixelRatio);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
+    context.imageSmoothingEnabled = false;
 
     const render = (): void => {
       // Self-drive the visual phase/tick at 60fps independent of Supabase sync rate.
       // Original engine: 10 ticks/sec (100ms interval), phase period = 60 ticks = 6 sec.
       // At 60fps we scale by 10/60 = 1/6 per frame to preserve the same cycle timing.
-      phaseRef.current += 10 / 60;
-      tickRef.current += 10 / 60;
+      phaseRef.current += 2 / 60;
+      tickRef.current += 2 / 60;
 
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
       context.clearRect(0, 0, viewport.width, viewport.height);
 
-      const layout = createIsoLayout(viewport.width, viewport.height, camera);
+      const layout = createIsoLayout(viewport.width, viewport.height, cameraRef.current);
       const currentEntities = visibleEntityListRef.current;
+      const currentAgents = currentEntities.filter((entity) => entity.type === 'agent');
       const phase = phaseRef.current;
       const tick = tickRef.current;
-      const weather = worldState.weather ?? 'clear';
-      const layoutData = computeCityLayout(currentEntities);
-      cityLayoutRef.current = layoutData;
+      const weather = weatherRef.current;
+      const layoutData = cityLayoutRef.current;
+      const isInteracting = isInteractingRef.current;
 
       drawBackdrop(context, viewport, phase, weather);
 
@@ -2906,18 +2360,17 @@ function App() {
 
       drawGroundPlane(context, viewport, layout, currentEntities, layoutData, phase);
 
-      // Render the SimCity-style road network from the computed city layout.
+      // Roads & traffic
       const roadCount = layoutData.roads.length;
       const totalTraffic = layoutData.roads.reduce((s, r) => s + r.trafficDensity, 0);
       spawnCars(trafficRef.current, roadCount, totalTraffic, tick, layoutData.roads, currentEntities);
-      updateCars(trafficRef.current, 10 / 60);
+      updateCars(trafficRef.current, 2 / 60);
       drawRoadsAndTraffic(context, layoutData.roads, trafficRef.current, layout, phase, currentEntities);
-      drawGroundWeatherEffects(context, layout, layoutData.roads, phase, tick, weather);
 
       drawTetherRoute(context, routeNodesRef.current, layout, phase);
       drawAgentTethers(
         context,
-        agents,
+        currentAgents,
         currentEntities,
         layout,
         displayPointsRef.current,
@@ -2935,18 +2388,9 @@ function App() {
         weather,
       );
 
-      drawAmbientOcclusion(context, currentEntities, layout, displayPointsRef.current);
-
-      if (hoveredEntityId) {
-        const hovered = currentEntities.find((e) => e.id === hoveredEntityId);
-        if (hovered && isStructureEntity(hovered)) {
-          drawHoverHighlight(context, hovered, layout, displayPointsRef.current);
-        }
-      }
-
-      const selected = selectedEntityRef.current;
-      if (selected && isStructureEntity(selected)) {
-        drawSelectionRing(context, selected, layout, displayPointsRef.current, phase);
+      // Overhead power/utility grid
+      if (!isInteracting) {
+        drawPowerlines(context, currentEntities, layoutData.roads, layout, phase);
       }
 
       drawFireflies(context, viewport, phase);
@@ -2964,7 +2408,7 @@ function App() {
         frameRef.current = null;
       }
     };
-  }, [viewport, camera, hoveredEntityId, agents, worldState.weather]);
+  }, [viewport]);
 
   useEffect(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
@@ -3194,642 +2638,128 @@ function App() {
         alarm={worldState.queen_alarm ?? 0}
         urgency={worldState.queen_urgency ?? 0}
       />
-      <aside className={`lux-panel lux-panel-left ${leftPanelOpen ? 'is-open' : 'is-collapsed'}`}>
-        <button
-          aria-expanded={leftPanelOpen}
-          aria-label={leftPanelOpen ? 'Collapse left panel' : 'Expand left panel'}
-          className="panel-toggle"
-          onClick={() => setLeftPanelOpen(!leftPanelOpen)}
-          title={leftPanelOpen ? 'Collapse left panel' : 'Expand left panel'}
-          type="button"
-        >
-          {leftPanelOpen ? <ChevronLeft size={16} /> : <PanelLeft size={16} />}
-        </button>
-        {leftPanelOpen ? (
-          <div className="panel-stack">
-            <div className="panel-header">
-              <div className="panel-title-wrap">
-                <GitBranch size={14} strokeWidth={1.85} />
-                <span className="panel-title">Git Overlay</span>
-              </div>
-              <span className="panel-subtitle">
-                {visibleStructureNodes.length}/{structureNodes.length} visible nodes
-              </span>
+           {selectedEntity && inspectPopupPosition ? (
+        <div className="floating-inspector" style={{ left: inspectPopupPosition.left, top: inspectPopupPosition.top }}>
+          <div className="floating-inspector-header">
+            <span className="floating-inspector-title">{selectedEntity.name ?? 'Unnamed Node'}</span>
+            <button className="floating-inspector-close" onClick={() => setSelectedEntity(null)} type="button">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="floating-inspector-body">
+            <div className="floating-inspector-meta">
+              <span>{selectedEntity.type}</span>
+              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
+              <span>Mass {selectedEntity.mass}</span>
+              <span>Chiral {computeChiralMass(selectedEntity)}</span>
+              <span>{selectedEntity.git_status ?? 'clean'}</span>
+              <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
             </div>
-
-            <SidebarSection
-              meta={activeRepositoryName}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, overview: !prev.overview }))}
-              open={leftPanelSections.overview}
-              title="Overlay Overview"
-            >
-              <div className="repo-chip">
-                <span className="repo-chip-label">Repository</span>
-                <span className="repo-chip-value">{activeRepositoryName}</span>
-                <span className="repo-chip-path">{activeRepositoryPath ?? 'No repository overlay loaded yet.'}</span>
-              </div>
-
-              <div className="engine-control">
-                <div className="engine-control-header">
-                  <span className="protocol-card-title">Engine</span>
-                  <span className={`engine-status ${engineRunning ? 'is-running' : 'is-stopped'}`}>
-                    {engineRunning ? 'Running' : 'Stopped'}
-                  </span>
-                </div>
-                <button
-                  className={`control-button engine-button ${engineRunning ? 'is-stop' : 'is-start'}`}
-                  disabled={engineLoading}
-                  onClick={() => { void handleToggleEngine(); }}
-                  type="button"
-                >
-                  {engineLoading ? 'Working...' : engineRunning ? 'Stop Engine' : 'Start Engine'}
-                </button>
-                {engineError ? (
-                  <span className="engine-error">{engineError}</span>
-                ) : null}
-              </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={formatControlStatus(controlStatus)}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, operator: !prev.operator }))}
-              open={leftPanelSections.operator}
-              title="Operator Control"
-            >
-              <form className="control-card" onSubmit={(event) => { void handleControlSubmit(event); }}>
-                <div className="control-card-header">
-                  <div className="protocol-card-title">Operator Queue</div>
-                  <span className={`control-status status-${controlStatus} ${isSavingControl ? 'is-busy' : 'is-ready'}`}>
-                    {isSavingControl ? 'writing' : formatControlStatus(controlStatus)}
-                  </span>
-                </div>
-
-                <label className="control-field">
-                  <span className="control-label">Repository Path</span>
-                  <input
-                    className="control-input"
-                    onChange={(event) => {
-                      controlDirtyRef.current = true;
-                      setRepoInput(event.target.value);
-                    }}
-                    placeholder="C:\\Users\\Futureman\\Desktop\\lucianprotocol"
-                    spellCheck={false}
-                    type="text"
-                    value={repoInput}
-                  />
-                  {worldState.saved_overlay_names && worldState.saved_overlay_names.length > 0 && (
-                    <select
-                      className="control-select"
-                      onChange={(event) => {
-                        if (event.target.value) {
-                          controlDirtyRef.current = true;
-                          setRepoInput(event.target.value);
-                        }
-                      }}
-                      value=""
-                    >
-                      <option value="">— Load saved overlay —</option>
-                      {worldState.saved_overlay_names.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </label>
-
-                <label className="control-field">
-                  <span className="control-label">Directive</span>
-                  <textarea
-                    className="control-textarea"
-                    onChange={(event) => {
-                      controlDirtyRef.current = true;
-                      setDirectiveInput(event.target.value);
-                    }}
-                    placeholder="Navigate to src/engine.ts and explain what the Architect is doing."
-                    rows={4}
-                    spellCheck={false}
-                    value={directiveInput}
-                  />
-                </label>
-
-                <div className="control-actions">
-                  <button className="control-button" disabled={isSavingControl} type="submit">
-                    {isSavingControl ? 'Committing...' : 'Apply To Lattice'}
-                  </button>
-                  <button
-                    className={`control-button ${isPaused ? 'is-paused' : ''}`}
-                    disabled={isSavingControl}
-                    onClick={() => { void handleTogglePause(); }}
-                    type="button"
-                  >
-                    {isPaused ? 'Resume' : 'Pause'}
-                  </button>
-                  <button
-                    className={`control-button ${isAutomated ? 'is-active' : ''}`}
-                    disabled={isSavingControl}
-                    onClick={() => { void handleToggleAutomate(); }}
-                    type="button"
-                  >
-                    {isAutomated ? 'Automate On' : 'Automate'}
-                  </button>
-                </div>
-
-                <details className="control-details">
-                  <summary className="control-summary">Edit &amp; Commit</summary>
-                  <label className="control-field">
-                    <span className="control-label">Edit Path</span>
-                    <input
-                      className="control-input"
-                      onChange={(event) => setEditPathInput(event.target.value)}
-                      placeholder="src/engine.ts"
-                      spellCheck={false}
-                      type="text"
-                      value={editPathInput}
-                    />
-                  </label>
-                  <label className="control-field">
-                    <span className="control-label">Edit Content</span>
-                    <textarea
-                      className="control-textarea"
-                      onChange={(event) => setEditContentInput(event.target.value)}
-                      placeholder="Paste new file content..."
-                      rows={4}
-                      spellCheck={false}
-                      value={editContentInput}
-                    />
-                  </label>
-                  <div className="control-actions">
-                    <button
-                      className="control-button"
-                      disabled={isSavingControl || !editPathInput.trim()}
-                      onClick={() => { void handleStageEdit(); }}
-                      type="button"
-                    >
-                      Stage Edit
-                    </button>
-                  </div>
-                  <label className="control-field">
-                    <span className="control-label">Commit Message</span>
-                    <input
-                      className="control-input"
-                      onChange={(event) => setCommitMessageInput(event.target.value)}
-                      placeholder="feat: update engine logic"
-                      spellCheck={false}
-                      type="text"
-                      value={commitMessageInput}
-                    />
-                  </label>
-                  <label className="control-field checkbox-field">
-                    <input
-                      checked={shouldPushInput}
-                      onChange={(event) => setShouldPushInput(event.target.checked)}
-                      type="checkbox"
-                    />
-                    <span className="control-label">Push to remote after commit</span>
-                  </label>
-                  <div className="control-actions">
-                    <button
-                      className="control-button"
-                      disabled={isSavingControl || !commitMessageInput.trim()}
-                      onClick={() => { void handleCommit(); }}
-                      type="button"
-                    >
-                      Commit{shouldPushInput ? ' & Push' : ''}
-                    </button>
-                  </div>
-                </details>
-
-                <div className="control-note">
-                  Leave the repo path unchanged to keep the current overlay and only swap the operator prompt.
-                </div>
-                <div className="control-feedback">{controlMessage}</div>
-                <div className="control-metrics">
-                  <span>Action {operatorAction ?? 'maintain'}</span>
-                  <span>Target {operatorTargetPath ?? operatorTargetQuery ?? 'none'}</span>
-                  <span>Import {formatDuration(worldState.last_import_duration_ms)}</span>
-                </div>
-              </form>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${visibleFileCount}/${fileNodes.length} visible`}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, visibility: !prev.visibility }))}
-              open={leftPanelSections.visibility}
-              title="Visible Files"
-            >
-              {fileNodes.length > 0 ? (
-                <>
-                  <div className="file-filter-toolbar">
-                    <input
-                      className="control-input file-filter-input"
-                      onChange={(event) => setFileFilterQuery(event.target.value)}
-                      placeholder="Search files..."
-                      spellCheck={false}
-                      type="text"
-                      value={fileFilterQuery}
-                    />
-                    <div className="file-filter-actions">
-                      <button
-                        className="file-filter-action"
-                        disabled={hiddenFilePaths.length === 0}
-                        onClick={() => setHiddenFilePaths([])}
-                        type="button"
-                      >
-                        Show All
-                      </button>
-                      <button
-                        className="file-filter-action"
-                        disabled={fileNodes.length === 0 || hiddenFilePaths.length === fileNodes.length}
-                        onClick={() =>
-                          setHiddenFilePaths(
-                            fileNodes
-                              .map((entity) => entity.path)
-                              .filter((path): path is string => path != null),
-                          )
-                        }
-                        type="button"
-                      >
-                        Hide All
-                      </button>
+            {selectedEntity.type === 'agent' ? (
+              <div className="floating-inspector-decisions">
+                <span className="decisions-title">Recent Decisions</span>
+                {(agentDecisionHistoryRef.current.get(selectedEntity.id) ?? []).length > 0 ? (
+                  (agentDecisionHistoryRef.current.get(selectedEntity.id) ?? []).slice(-10).map((activity, index) => (
+                    <div className="decision-row" key={`${activity.agent_id}-${activity.tick}-${index}`}>
+                      <span className="decision-tick">T{activity.tick}</span>
+                      <span className={`decision-status decision-${activity.status}`}>{activity.status}</span>
+                      <span className="decision-action">{activity.action ?? '—'}</span>
+                      <span className="decision-target">{activity.target_path ?? '—'}</span>
+                      {activity.latency_ms != null ? <span className="decision-latency">{activity.latency_ms}ms</span> : null}
                     </div>
-                    <div className="file-filter-summary">
-                      <span>{visibleFileCount} visible</span>
-                      <span>{Math.max(0, fileNodes.length - visibleFileCount)} hidden</span>
-                    </div>
-                  </div>
-
-                  <div className="file-filter-list">
-                    {filteredFileNodes.length > 0 ? (
-                      filteredFileNodes.map((entity) => {
-                        const filePath = entity.path ?? getEntityPath(entity);
-                        const isVisible = !hiddenFilePathSet.has(filePath);
-
-                        return (
-                          <label
-                            className={`file-filter-row ${isVisible ? 'is-visible' : 'is-hidden'}`}
-                            key={entity.id}
-                          >
-                            <input
-                              checked={isVisible}
-                              onChange={(event) => {
-                                const nextVisible = event.target.checked;
-                                setHiddenFilePaths((prev) => {
-                                  if (nextVisible) {
-                                    return prev.filter((path) => path !== filePath);
-                                  }
-
-                                  return prev.includes(filePath) ? prev : [...prev, filePath];
-                                });
-                              }}
-                              type="checkbox"
-                            />
-                            <span className="file-filter-copy">
-                              <span className="file-filter-name">{entity.name ?? filePath.split('/').at(-1) ?? filePath}</span>
-                              <span className="file-filter-path">{filePath}</span>
-                            </span>
-                          </label>
-                        );
-                      })
-                    ) : (
-                      <p className="panel-placeholder">No files match the current search.</p>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p className="panel-placeholder">No repository files are loaded yet.</p>
-              )}
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${worldState.active_tasks?.length ?? 0} tasks`}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, tasks: !prev.tasks }))}
-              open={leftPanelSections.tasks}
-              title="Task Pipeline"
-            >
-              {worldState.active_tasks && worldState.active_tasks.length > 0 ? (
-                <div className="protocol-card">
-                  <div className="protocol-card-title">Queued Work</div>
-                  <div className="task-stats">
-                    <span className="task-stat is-pending">{worldState.active_tasks.filter((t) => t.status === 'pending').length} pending</span>
-                    <span className="task-stat is-active">{worldState.active_tasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length} active</span>
-                    <span className="task-stat is-review">{worldState.active_tasks.filter((t) => t.status === 'awaiting_review').length} review</span>
-                    <span className="task-stat is-done">{worldState.active_tasks.filter((t) => t.status === 'done').length} done</span>
-                  </div>
-                  <div className="task-list">
-                    {worldState.active_tasks.map((task) => {
-                      const diffLines = shouldShowDiff(task)
-                        ? computeLineDiff(task.original_content ?? '', task.completed_content ?? '')
-                        : null;
-                      const validationBadges = [
-                        { label: 'Lint', value: task.validation?.lint },
-                        { label: 'Types', value: task.validation?.typecheck },
-                      ].filter((entry): entry is { label: string; value: TaskValidationResult } => entry.value != null);
-                      return (
-                        <div className={`task-row status-${task.status}`} key={task.id}>
-                          <span className="task-id">{task.id}</span>
-                          <span className="task-path">{task.target_path}</span>
-                          <span className={`task-badge status-${task.status}`}>{formatTaskStatus(task.status)}</span>
-                          {validationBadges.length > 0 ? (
-                            <div className="task-validation-strip">
-                              {validationBadges.map((entry) => (
-                                <span
-                                  className={`task-validation-badge status-${entry.value.status}`}
-                                  key={`${task.id}-${entry.label}`}
-                                  title={entry.value.summary ?? `${entry.label} ${formatValidationStatus(entry.value.status)}`}
-                                >
-                                  {entry.label} {formatValidationStatus(entry.value.status)}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                          {diffLines && diffLines.length > 0 ? (
-                            <TaskDiff lines={diffLines} />
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <p className="panel-placeholder">No queued tasks are currently visible.</p>
-              )}
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${t2Agents.length} T2 · ${lmmAgents.length} LMM`}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, workforce: !prev.workforce }))}
-              open={leftPanelSections.workforce}
-              title="Hivemind Workforce"
-            >
-              <div className="protocol-card">
-                <div className="protocol-card-title">Active Roles</div>
-                <div className="workforce-list">
-                  {workforce.map((member) => {
-                    const promptValue = member.role === 'visionary'
-                      ? visionaryPromptInput
-                      : member.role === 'architect'
-                        ? architectPromptInput
-                        : criticPromptInput;
-                    const promptSource = member.role === 'visionary'
-                      ? worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''
-                      : member.role === 'architect'
-                        ? worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''
-                        : worldState.critic_prompt ?? operatorControl.critic_prompt ?? '';
-
-                    return (
-                      <div className={`workforce-row role-${member.role}`} key={member.role}>
-                        <span className={`role-swatch role-${member.role}`} />
-                        <span className="workforce-label">{member.label}</span>
-                        <span className="workforce-value">
-                          {member.agents[0]
-                            ? `online ${member.agents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}`
-                            : 'standby'}
-                        </span>
-                        <details className="agent-prompt-details">
-                          <summary className="agent-prompt-summary">
-                            {promptSource.length > 0 ? 'Directive set' : 'Set directive'}
-                          </summary>
-                          <textarea
-                            className="control-textarea agent-prompt-textarea"
-                            onChange={(event) => {
-                              if (member.role === 'visionary') setVisionaryPromptInput(event.target.value);
-                              else if (member.role === 'architect') setArchitectPromptInput(event.target.value);
-                              else setCriticPromptInput(event.target.value);
-                            }}
-                            placeholder={`Specific instruction for the ${member.label}...`}
-                            rows={3}
-                            spellCheck={false}
-                            value={promptValue}
-                          />
-                          <button
-                            className="control-button agent-prompt-button"
-                            disabled={isSavingControl}
-                            onClick={async () => {
-                              const supabase = supabaseRef.current;
-                              if (!supabase) {
-                                setControlMessage('Supabase keys missing; cannot set agent directive.');
-                                return;
-                              }
-                              try {
-                                const { error } = await supabase
-                                  .from('operator_controls')
-                                  .upsert(
-                                    stripUnsafeOperatorControlFields({
-                                      id: DEFAULT_OPERATOR_CONTROL.id,
-                                      repo_path: repoInput.trim(),
-                                      operator_prompt: directiveInput.trim(),
-                                      paused: isPaused,
-                                      automate: isAutomated,
-                                      visionary_prompt: member.role === 'visionary' ? promptValue.trim() : (worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? ''),
-                                      architect_prompt: member.role === 'architect' ? promptValue.trim() : (worldState.architect_prompt ?? operatorControl.architect_prompt ?? ''),
-                                      critic_prompt: member.role === 'critic' ? promptValue.trim() : (worldState.critic_prompt ?? operatorControl.critic_prompt ?? ''),
-                                    }),
-                                    { onConflict: 'id' },
-                                  );
-                                if (error) throw error;
-                                setControlMessage(`${member.label} directive committed.`);
-                              } catch (error) {
-                                const message = error instanceof Error ? error.message : 'Unknown error';
-                                setControlMessage(`Directive failed: ${message}`);
-                              }
-                            }}
-                            type="button"
-                          >
-                            Commit Directive
-                          </button>
-                        </details>
-                      </div>
-                    );
-                  })}
-                  {lmmAgents.length > 0 && (
-                    <div className="workforce-row role-swarm">
-                      <span className="role-swatch role-swarm" />
-                      <span className="workforce-label">Swarm</span>
-                      <span className="workforce-value">
-                        {lmmAgents.length} automata {lmmAgents.map((agent) => `(${agent.x},${agent.y})`).join(', ')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div className="protocol-stats">
-                  <span>Genesis {genesisNodes.length}</span>
-                  <span>Asymmetry {asymmetryNodes.length}</span>
-                  <span>Fission {criticalMassNodes.length}</span>
-                </div>
-              </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${visibleFileCount} visible files`}
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, tree: !prev.tree }))}
-              open={leftPanelSections.tree}
-              title="Overlay Tree"
-            >
-              <div className="git-tree">
-                {gitTree && visibleFileCount > 0 ? (
-                  <GitTreeItem
-                    activePathSet={activePathSet}
-                    depth={0}
-                    loadedPath={loadedFile?.path ?? null}
-                    node={gitTree}
-                    nodeStatesByPath={nodeStatesByPath}
-                  />
+                  ))
                 ) : (
-                  <p className="panel-placeholder">
-                    {fileNodes.length > 0
-                      ? 'All files are hidden by the current visibility filter.'
-                      : 'No Git structure overlay loaded yet.'}
-                  </p>
+                  <p className="panel-placeholder">No decisions recorded yet.</p>
                 )}
               </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={
-                contextTab === 'explanation' && hasExplanationTab
-                  ? formatExplanationStatus(explanationStatus)
-                  : getNodeStateLabel(contextNodeState ?? 'stable')
-              }
-              onToggle={() => setLeftPanelSections((prev) => ({ ...prev, context: !prev.context }))}
-              open={leftPanelSections.context}
-              title="Spatial Context"
-            >
-              {contextEntity || hasExplanationTab ? (
-                <div className="panel-card context-panel">
-                  <div className="panel-card-header">
-                    <div className="panel-card-title">Spatial Context</div>
-                    <div className="context-badge">
-                      {contextTab === 'explanation' && hasExplanationTab
-                        ? formatExplanationStatus(explanationStatus)
-                        : getNodeStateLabel(contextNodeState ?? 'stable')}
-                    </div>
-                  </div>
-                  <div className="context-meta">
-                    <span>{contextEntity?.descriptor ?? 'Source artifact'}</span>
-                    {contextEntity ? <span>Mass {contextEntity.mass}</span> : null}
-                    {contextEntity ? <span>Chiral {computeChiralMass(contextEntity)}</span> : null}
-                    {contextEntity ? <span>{contextEntity.git_status ?? 'clean'}</span> : null}
-                    {hasExplanationTab ? <span>Explain {formatExplanationStatus(explanationStatus)}</span> : null}
-                  </div>
-                  {hasExplanationTab ? (
-                    <div className="context-tabs">
-                      <button
-                        className={`context-tab ${contextTab === 'code' ? 'is-active' : ''}`}
-                        onClick={() => setContextTab('code')}
-                        type="button"
-                      >
-                        Code
-                      </button>
-                      <button
-                        className={`context-tab ${contextTab === 'explanation' ? 'is-active' : ''}`}
-                        onClick={() => setContextTab('explanation')}
-                        type="button"
-                      >
-                        Explanation
-                      </button>
-                    </div>
-                  ) : null}
-                  {contextTab === 'explanation' && hasExplanationTab ? (
-                    <div className="explanation-frame">
-                      <div className={`explanation-status status-${explanationStatus}`}>
-                        {formatExplanationStatus(explanationStatus)}
-                      </div>
-                      {explanationError ? (
-                        <div className="explanation-placeholder is-error">{explanationError}</div>
-                      ) : explanationText.trim().length > 0 ? (
-                        <div className="explanation-body">{explanationText}</div>
-                      ) : (
-                        <div className="explanation-placeholder">
-                          {explanationStatus === 'pending'
-                            ? 'Awaiting Gemini explanation for this file.'
-                            : explanationStatus === 'streaming'
-                              ? 'Streaming explanation into the lattice.'
-                              : 'No explanation captured yet.'}
-                        </div>
-                      )}
-                    </div>
-                  ) : contextEntity ? (
-                    <CodeSyntaxPreview code={codePreview} />
-                  ) : (
-                    <div className="explanation-placeholder">No file content is loaded for this target yet.</div>
-                  )}
-                </div>
-              ) : (
-                <p className="panel-placeholder">No spatial context is available for the current focus.</p>
-              )}
-            </SidebarSection>
-
-            {selectedEntity ? (
-              <SidebarSection
-                meta={selectedEntity.type}
-                onToggle={() => setLeftPanelSections((prev) => ({ ...prev, inspect: !prev.inspect }))}
-                open={leftPanelSections.inspect}
-                title="Inspector"
-              >
-                <div className="panel-card inspect-panel" ref={inspectPanelRef}>
-                  <div className="panel-card-header">
-                    <div className="panel-card-title">{selectedEntity.name ?? 'Unnamed Node'}</div>
-                    <button
-                      className="inspect-close"
-                      onClick={() => setSelectedEntity(null)}
-                      type="button"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div className="context-meta">
-                    <span>{selectedEntity.type}</span>
-                    <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
-                    <span>Mass {selectedEntity.mass}</span>
-                    <span>Chiral {computeChiralMass(selectedEntity)}</span>
-                    <span>{selectedEntity.git_status ?? 'clean'}</span>
-                    <span>{getNodeStateLabel(selectedEntity.node_state ?? 'stable')}</span>
-                  </div>
-                  {selectedEntity.path ? (
-                    <div className="inspect-actions">
-                      <button
-                        className="inspect-action-btn"
-                        onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
-                        type="button"
-                      >
-                        Send Architect
-                      </button>
-                      <button
-                        className="inspect-action-btn is-repair"
-                        onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
-                        type="button"
-                      >
-                        Repair File
-                      </button>
-                      <button
-                        className="inspect-action-btn is-explain"
-                        onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
-                        type="button"
-                      >
-                        Explain
-                      </button>
-                    </div>
-                  ) : null}
-                  {selectedEntity.content_preview || selectedEntity.content ? (
-                    <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
-                  ) : (
-                    <div className="code-frame">
-                      <div className="code-line">
-                        <span className="code-gutter">—</span>
-                        <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </SidebarSection>
             ) : null}
+            {selectedEntity.path ? (
+              <div className="floating-inspector-actions">
+                <button onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }} type="button">Send Architect</button>
+                <button onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }} type="button">Repair File</button>
+                <button onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }} type="button">Explain</button>
+              </div>
+            ) : null}
+            {selectedEntity.content_preview || selectedEntity.content ? (
+              <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
+            ) : (
+              <div className="code-frame">
+                <div className="code-line">
+                  <span className="code-gutter">—</span>
+                  <span className="code-content">{selectedEntity.is_binary ? 'Binary asset — hash-only transfer.' : 'No content preview available.'}</span>
+                </div>
+              </div>
+            )}
           </div>
-        ) : null}
-      </aside>
+        </div>
+      ) : null}
+
+      {commandPaletteOpen ? (
+        <>
+          <div className="command-palette-backdrop" onClick={() => setCommandPaletteOpen(false)} />
+          <div className="command-palette">
+            <div className="command-palette-header">
+              <span className="command-palette-title">Command Palette</span>
+              <button className="floating-inspector-close" onClick={() => setCommandPaletteOpen(false)} type="button">
+                <X size={14} />
+              </button>
+            </div>
+            <form className="command-palette-body" onSubmit={handleControlSubmit}>
+              <div className="command-palette-section">
+                <span className="command-palette-label">Repository Path</span>
+                <input
+                  className="command-palette-input"
+                  onChange={(e) => setRepoInput(e.target.value)}
+                  placeholder="C:/Users/... or repo URL"
+                  type="text"
+                  value={repoInput}
+                />
+              </div>
+              <div className="command-palette-section">
+                <span className="command-palette-label">Operator Prompt</span>
+                <textarea
+                  className="command-palette-textarea"
+                  onChange={(e) => setDirectiveInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      void handleControlSubmit(e as unknown as FormEvent<HTMLFormElement>);
+                    }
+                  }}
+                  placeholder="Enter directive... (Ctrl+Enter to submit)"
+                  value={directiveInput}
+                />
+              </div>
+              <div className="command-palette-actions">
+                <button disabled={engineLoading} onClick={() => { void handleToggleEngine(); }} type="button">
+                  {engineLoading ? 'Working...' : engineRunning ? 'Stop Engine' : 'Start Engine'}
+                </button>
+                <button disabled={isSavingControl} type="submit">
+                  Commit Control
+                </button>
+                <button onClick={() => setShowPlumbing((prev) => !prev)} type="button">
+                  {showPlumbing ? 'Hide Plumbing' : 'Show Plumbing'}
+                </button>
+                <button onClick={() => setShowAgentThoughts((prev) => !prev)} type="button">
+                  {showAgentThoughts ? 'Hide Agent Thoughts' : 'Show Agent Thoughts'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      ) : null}
+
+      <button className="fab" onClick={() => setCommandPaletteOpen(true)} title="Command Palette ( / )" type="button">
+        <Command size={18} />
+      </button>
+
+      <div className="kbd-hint">Press <kbd>/</kbd> for commands</div>
+
 
       <section className="lux-lattice" ref={latticeRef}>
         <canvas className="lux-canvas" ref={canvasRef} />
+
+        <AdvisorCouncil city={cityCouncil} onAction={handleAdvisorAction} />
 
         <div className="hud-minibar">
           <span className="hud-minibar-item">
@@ -3886,245 +2816,89 @@ function App() {
           <span className="view-hint">Drag pan · Shift drag pan</span>
         </div>
 
-        {selectedEntity && inspectPopupPosition ? (
-          <div
-            className="canvas-inspect-popup"
-            style={{ left: inspectPopupPosition.left, top: inspectPopupPosition.top }}
-          >
-            <div className="canvas-inspect-popup-header">
-              <div className="canvas-inspect-popup-title">
-                {selectedEntity.name ?? selectedEntity.path ?? 'Unnamed'}
-              </div>
-              <button
-                className="canvas-inspect-popup-close"
-                onClick={() => setSelectedEntity(null)}
-                type="button"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="canvas-inspect-popup-meta">
-              <span>{selectedEntity.type}</span>
-              <span>{selectedEntity.descriptor ?? 'No descriptor'}</span>
-              <span>Mass {selectedEntity.mass}</span>
-              <span>{selectedEntity.git_status ?? 'clean'}</span>
-            </div>
-            {selectedEntity.path ? (
-              <div className="canvas-inspect-popup-actions">
-                <button
-                  className="inspect-action-btn"
-                  onClick={() => { void dispatchFileAction('read', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Send Architect
-                </button>
-                <button
-                  className="inspect-action-btn is-repair"
-                  onClick={() => { void dispatchFileAction('repair', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Repair File
-                </button>
-                <button
-                  className="inspect-action-btn is-explain"
-                  onClick={() => { void dispatchFileAction('explain', selectedEntity.path ?? ''); }}
-                  type="button"
-                >
-                  Explain
-                </button>
-              </div>
-            ) : null}
-            <div className="canvas-inspect-popup-body">
-              {selectedEntity.content_preview || selectedEntity.content ? (
-                <CodeSyntaxPreview code={selectedEntity.content ?? selectedEntity.content_preview ?? ''} />
-              ) : (
-                <div className="code-frame">
-                  <div className="code-line">
-                    <span className="code-gutter">—</span>
-                    <span className="code-content">
-                      {selectedEntity.is_binary
-                        ? 'Binary asset — hash-only transfer.'
-                        : 'No content preview available.'}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
-
         {errorMessage ? <div className="hud-alert">{errorMessage}</div> : null}
       </section>
 
-      <aside className={`lux-panel lux-panel-right ${rightPanelOpen ? 'is-open' : 'is-collapsed'}`}>
-        <button
-          aria-expanded={rightPanelOpen}
-          aria-label={rightPanelOpen ? 'Collapse right panel' : 'Expand right panel'}
-          className="panel-toggle"
-          onClick={() => setRightPanelOpen(!rightPanelOpen)}
-          title={rightPanelOpen ? 'Collapse right panel' : 'Expand right panel'}
-          type="button"
-        >
-          {rightPanelOpen ? <ChevronRight size={16} /> : <PanelRight size={16} />}
-        </button>
-        {rightPanelOpen ? (
-          <div className="panel-stack">
-            <div className="panel-header">
-              <div className="panel-title-wrap">
-                <GitBranch size={14} strokeWidth={1.85} />
-                <span className="panel-title">AI Cognition Log</span>
-              </div>
-              <span className="panel-subtitle">{mode === 'live' ? 'live feed' : 'preview feed'}</span>
-            </div>
+           <div className="bottom-status-bar">
+        <div className="status-bar-left">
+          <span className="status-bar-item">{activeRepositoryName}</span>
+          <span className={`status-bar-item ${engineRunning ? 'is-live' : 'is-error'}`}>
+            {engineRunning ? 'Engine On' : 'Engine Off'}
+          </span>
+          <span className="status-bar-item">T{worldState.tick}:{worldState.phase}</span>
+        </div>
+        <div className="status-bar-right">
+          <span className="status-bar-item">Queue {worldState.queue_depth ?? 0}</span>
+          <span className="status-bar-item">{worldState.weather ?? 'clear'}</span>
+          <span className="status-bar-item">{formatControlStatus(controlStatus)}</span>
+          <button className="status-bar-action" onClick={() => setCommandPaletteOpen(true)} type="button">
+            Open Console
+          </button>
+        </div>
+      </div>
 
-            <SidebarSection
-              meta={mode === 'live' ? 'live' : 'preview'}
-              onToggle={() => setRightPanelSections((prev) => ({ ...prev, status: !prev.status }))}
-              open={rightPanelSections.status}
-              title="Live Status"
-            >
-              <div className={`cognition-status role-${primaryRole}`}>
-                <span className={`cursor-pulse role-${primaryRole}`} />
-                <span>
-                  {loadedFile
-                    ? `${getAgentRoleLabel(primaryRole).toLowerCase()} reading ${loadedFile.name ?? loadedFile.path ?? 'node'}`
-                    : activeStructure
-                      ? `${getAgentRoleLabel(primaryRole).toLowerCase()} traversing ${activeStructure.name ?? activeStructure.path ?? 'lattice'}`
-                      : 'awaiting structure lock'}
-                </span>
-              </div>
-
-              <div className="cognition-footer">
-                <div>Nearest Node: {activeStructure?.name ?? 'none'}</div>
-                <div>Verified: {verifiedNodes.length}</div>
-                <div>Critical Mass: {criticalMassNodes.length}</div>
-                <div>Tick: {formatDuration(worldState.last_tick_duration_ms)}</div>
-                <div>AI: {formatDuration(worldState.last_ai_latency_ms)}</div>
-                <div>Queue: {worldState.queue_depth ?? 0}</div>
-              </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${worldState.agent_activities?.length ?? 0} agents`}
-              onToggle={() => setRightPanelSections((prev) => ({ ...prev, activity: !prev.activity }))}
-              open={rightPanelSections.activity}
-              title="Workforce Activity"
-            >
-              {worldState.agent_activities && worldState.agent_activities.length > 0 ? (
-                <div className="activity-panel">
-                  <div className="activity-list">
-                    {worldState.agent_activities.map((activity) => (
-                      <div className={`activity-row status-${activity.status}`} key={activity.agent_id}>
-                        <span className={`activity-swatch ${getActivitySwatchClass(activity.status)}`} />
-                        <span className="activity-id">{activity.agent_id.replace('agent-', '')}</span>
-                        <span className="activity-status">{formatActivityStatus(activity.status)}</span>
-                        {activity.target_path ? (
-                          <span className="activity-target">{activity.target_path}</span>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
+      <div
+        className={`floating-log ${logExpanded ? 'is-expanded' : ''}`}
+        onMouseEnter={() => setLogExpanded(true)}
+        onMouseLeave={() => setLogExpanded(false)}
+      >
+        <div className="floating-log-header">
+          <span className="floating-log-title">Cognition Log</span>
+          <span className="floating-log-count">{logEntries.length}</span>
+        </div>
+        <div className="floating-log-body">
+          {logEntries.length > 0 ? (
+            logEntries.slice(-15).map((entry) => (
+              <div className={`log-entry log-${entry.kind}`} key={entry.id}>
+                <div className="log-meta">
+                  <span>{entry.timestamp}</span>
+                  <span>T+{entry.tick}</span>
                 </div>
-              ) : (
-                <p className="panel-placeholder">No activity events are streaming yet.</p>
-              )}
-            </SidebarSection>
+                <div className="log-message">{entry.message}</div>
+              </div>
+            ))
+          ) : (
+            <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
+          )}
+        </div>
+      </div>
 
-            <SidebarSection
-              meta={formatControlStatus(controlStatus)}
-              onToggle={() => setRightPanelSections((prev) => ({ ...prev, directive: !prev.directive }))}
-              open={rightPanelSections.directive}
-              title="Directive & Laws"
-            >
-              <div className="directive-strip">
-                <span className="directive-label">Operator Prompt</span>
-                <span className="directive-value">{activeDirective}</span>
-              </div>
-
-              <div className="laws-strip">
-                {HIVEMIND_LAWS.slice(0, 3).map((law, index) => (
-                  <div className="law-chip" key={`law-${index}`}>
-                    L{index + 1}: {law}
-                  </div>
-                ))}
-              </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${logEntries.length} events`}
-              onToggle={() => setRightPanelSections((prev) => ({ ...prev, log: !prev.log }))}
-              open={rightPanelSections.log}
-              title="Cognition Log"
-            >
-              <div className="cognition-log">
-                {logEntries.length > 0 ? (
-                  logEntries.map((entry) => (
-                    <div className={`log-entry log-${entry.kind}`} key={entry.id}>
-                      <div className="log-meta">
-                        <span>{entry.timestamp}</span>
-                        <span>T+{entry.tick}</span>
-                      </div>
-                      <div className="log-message">{entry.message}</div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="panel-placeholder">Awaiting first tick from the lattice.</p>
-                )}
-              </div>
-            </SidebarSection>
-
-            <SidebarSection
-              meta={`${verifiedNodes.length} verified`}
-              onToggle={() => setRightPanelSections((prev) => ({ ...prev, legend: !prev.legend }))}
-              open={rightPanelSections.legend}
-              title="Hivemind Taxonomy"
-            >
-              <div className="legend-section">
-                <div className="legend-heading">Agents</div>
-                <div className="legend-list">
-                  <div className="legend-row">
-                    <span className="legend-swatch is-visionary" />
-                    <span>Visionary</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-architect" />
-                    <span>Architect</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-critic" />
-                    <span>Critic</span>
-                  </div>
-                </div>
-              </div>
-              <div className="legend-section">
-                <div className="legend-heading">Node States</div>
-                <div className="legend-list">
-                  <div className="legend-row">
-                    <span className="legend-swatch is-task" />
-                    <span>Genesis Task</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-progress" />
-                    <span>Locked Build</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-asymmetry" />
-                    <span>Asymmetry / Error</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-stable" />
-                    <span>Stable Code</span>
-                  </div>
-                  <div className="legend-row">
-                    <span className="legend-swatch is-verified" />
-                    <span>Verified</span>
-                  </div>
-                </div>
-              </div>
-            </SidebarSection>
+      {showAgentThoughts ? (
+        <div className="floating-thoughts">
+          <div className="floating-thoughts-header">
+            <span className="floating-thoughts-title">Agent Thoughts</span>
+            <span className="floating-thoughts-count">
+              {Array.from(agentDecisionHistoryRef.current.values()).reduce((sum, list) => sum + list.length, 0)}
+            </span>
           </div>
-        ) : null}
-      </aside>
+          <div className="floating-thoughts-body">
+            {(() => {
+              const allDecisions: Array<AgentActivity & { agentName: string }> = [];
+              for (const [agentId, list] of agentDecisionHistoryRef.current.entries()) {
+                const agent = entityMapRef.current.get(agentId);
+                const name = agent?.name ?? agentId;
+                for (const d of list) {
+                  allDecisions.push({ ...d, agentName: name });
+                }
+              }
+              allDecisions.sort((a, b) => b.tick - a.tick);
+              if (allDecisions.length === 0) {
+                return <p className="panel-placeholder">No agent decisions yet.</p>;
+              }
+              return allDecisions.slice(0, 20).map((activity, index) => (
+                <div className="thought-row" key={`${activity.agent_id}-${activity.tick}-${index}`}>
+                  <span className="thought-agent">{activity.agentName}</span>
+                  <span className="thought-tick">T{activity.tick}</span>
+                  <span className={`thought-status thought-${activity.status}`}>{activity.status}</span>
+                  <span className="thought-action">{activity.action ?? '—'}</span>
+                  {activity.latency_ms != null ? <span className="thought-latency">{activity.latency_ms}ms</span> : null}
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      ) : null}
+
     </main>
   );
 }

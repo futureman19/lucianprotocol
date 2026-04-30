@@ -19,6 +19,7 @@ declare global {
 const OPTIONAL_ENTITY_SCHEMA_KEYS = [
   'z',
   'memory',
+  'construction_mass',
   'ttl_ticks',
   'target_height',
   'current_height',

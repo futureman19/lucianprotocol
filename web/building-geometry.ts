@@ -43,6 +43,8 @@ export interface BuildingGeometry {
   ornamentation: number;
 }
 
+const BUILDING_GEOMETRY_CACHE = new WeakMap<Entity, BuildingGeometry>();
+
 function hashString(str: string): number {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -98,6 +100,11 @@ function getArchetypeBaseFloors(archetype: BuildingArchetype): number {
 }
 
 export function getBuildingGeometry(entity: Entity): BuildingGeometry {
+  const cached = BUILDING_GEOMETRY_CACHE.get(entity);
+  if (cached) {
+    return cached;
+  }
+
   const archetype = deriveArchetypeFromEntity(entity);
   const importanceTier = deriveImportanceTierFromEntity(entity);
   const upgradeLevel = deriveUpgradeLevelFromEntity(entity);
@@ -137,7 +144,7 @@ export function getBuildingGeometry(entity: Entity): BuildingGeometry {
     condition === 'worn' ? 0.5 :
     condition === 'decaying' ? 0.8 : 1.0;
 
-  return {
+  const geometry: BuildingGeometry = {
     archetype,
     importanceTier,
     upgradeLevel,
@@ -153,6 +160,9 @@ export function getBuildingGeometry(entity: Entity): BuildingGeometry {
     occupancy: getOccupancy(entity),
     ornamentation: importanceTier * 0.25 + upgradeLevel * 0.15,
   };
+
+  BUILDING_GEOMETRY_CACHE.set(entity, geometry);
+  return geometry;
 }
 
 export function getEntityFootprint(entity: Entity): { width: number; depth: number } {

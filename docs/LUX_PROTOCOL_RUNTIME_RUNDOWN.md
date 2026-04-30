@@ -28,7 +28,7 @@ On each tick, it does the following:
 5. Flush dirty entity rows plus throttled `world_state` updates to Supabase.
 6. Increment the global tick and continue.
 
-The important architectural rule is that Gemini does not block the clock. Requests are issued asynchronously and applied on a later tick when they return.
+The important architectural rule is that Gemini does not block the clock. Requests are issued asynchronously and applied on a later tick when they return. The agent brain model is configured through the Gemini API (`https://ai.google.dev/gemini-api/docs`) and defaults to `gemini-3-flash-preview`.
 
 However, agents do not request decisions when idle. Under the Lucian Axiom, if no tasks, operator prompts, or asymmetry events exist, target selectors return `null` and agents deterministically `wait`. This means the tick loop continues, but external API usage drops to zero.
 
@@ -66,8 +66,8 @@ Lux currently simulates three agents:
 
 - Color: magenta
 - Purpose: identify backlog, unstable, or critical-mass nodes
-- Behavior: deterministic, rule-based
-- Gemini usage: none
+- Behavior: deterministic target selection plus Gemini-backed task planning when the operator submits a high-level request
+- Gemini usage: `gemini-3-flash-preview` by default for planning calls
 
 The Visionary looks for nodes that need attention, especially critical mass or backlog-like nodes, and biases the lattice toward future work.
 
@@ -75,23 +75,23 @@ The Visionary looks for nodes that need attention, especially critical mass or b
 
 - Color: emerald green
 - Purpose: move through the lattice and act on the current objective
-- Behavior: Gemini-driven for movement decisions
-- Gemini usage: yes
+- Behavior: Gemini-driven for movement, reading, broadcast, submit, and surgical edit decisions
+- Gemini usage: `gemini-3-flash-preview` by default
 
-The Architect is the only agent currently calling Gemini. It receives a structured neighborhood scan and returns an action such as `move`, `wait`, or `read`.
+The Architect receives a structured neighborhood scan and returns an action such as `move`, `wait`, `read`, `patch`, `insert`, `delete`, `broadcast`, or `submit`.
 
 ### Critic
 
 - Color: crimson red
 - Purpose: inspect work performed by the Architect
-- Behavior: deterministic, rule-based
-- Gemini usage: none
+- Behavior: deterministic patrol plus Gemini-backed review when a submitted task is ready for judgment
+- Gemini usage: `gemini-3-flash-preview` by default for review calls
 
 The Critic patrols locked or recently stabilized nodes and marks them `verified` or `asymmetry` based on the current deterministic rules.
 
 ## Where API Cost Comes From
 
-The Gemini cost is coming from the Architect.
+The Gemini cost comes from agent brain calls that have real work to do. By default those calls use `gemini-3-flash-preview` through the Gemini API. `GEMINI_MODEL` can override the model, and `GEMINI_THINKING_LEVEL` can tune Gemini 3 thinking behavior.
 
 The Architect sends Gemini a structured JSON scan that includes:
 

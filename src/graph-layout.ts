@@ -41,8 +41,9 @@ const CENTER = (GRID_SIZE - 1) / 2; // 24.5
 const K_REPULSE = 2.0;
 const K_ATTRACT = 0.015;
 const K_CENTER = 0.25;
-const K_DIRECTORY = 0.02;
-const MAX_ITERATIONS = 120;
+const K_DIRECTORY = 0.06;
+const K_GRID_ALIGN = 0.018;
+const MAX_ITERATIONS = 160;
 const BOUNDARY_MARGIN = 4;
 const BOUNDARY_REPULSE = 0.4;
 
@@ -332,7 +333,19 @@ function runForceLayout(files: LayoutNode[], positions: Map<string, FloatPos>): 
       forces.set(node.path, { fx, fy });
     }
 
-    // 4. Directory cohesion — files in same dir weakly attract
+    // 4. Grid alignment — very soft pull toward integer grid lines
+    // This creates the "city block" feeling without destroying the organic layout
+    for (const node of fileList) {
+      const p = pos(node.path);
+      let { fx, fy } = forces.get(node.path)!;
+      const nearestX = Math.round(p.x);
+      const nearestY = Math.round(p.y);
+      fx += (nearestX - p.x) * K_GRID_ALIGN;
+      fy += (nearestY - p.y) * K_GRID_ALIGN;
+      forces.set(node.path, { fx, fy });
+    }
+
+    // 5. Directory cohesion — files in same dir weakly attract
     const dirGroups = new Map<string, LayoutNode[]>();
     for (const node of fileList) {
       if (node.type !== 'file') continue;

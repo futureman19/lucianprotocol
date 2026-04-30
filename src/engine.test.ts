@@ -555,6 +555,8 @@ test('executeLMMDecision deposits on the current task cell and recycles adjacent
     z: 0,
     mass: 4,
     tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
     node_state: 'task',
     path: 'src/lmm-task.ts',
   };
@@ -570,6 +572,7 @@ test('executeLMMDecision deposits on the current task cell and recycles adjacent
   const updatedTask = harness.entities.get(taskEntity.id);
   const afterDeposit = harness.entities.get(lmm.id);
   assert.equal(updatedTask?.mass, 5);
+  assert.equal(updatedTask?.construction_mass, 1);
   assert.equal(afterDeposit?.cargo, 0);
 
   const looseMassIndex = toIndex(openCell.x + 1, openCell.y, 0);
@@ -582,6 +585,143 @@ test('executeLMMDecision deposits on the current task cell and recycles adjacent
   const afterRecycle = harness.entities.get(lmm.id);
   assert.equal(harness.shatteredMassGrid[looseMassIndex], 0);
   assert.equal(afterRecycle?.cargo, 1);
+});
+
+test('executeLMMDecision deposit thresholds promote and submit assigned construction tasks', () => {
+  const engine = new LuxEngine('lmm-construction-threshold-test', 100, 5, false);
+  const harness = engine as unknown as EngineHarness & {
+    activeTasks: Task[];
+    agentIds: string[];
+    executeLMMDecision(agent: Entity, decision: { action: 'deposit' }): void;
+  };
+
+  harness.resetWorld([]);
+
+  const openCell = findUnusedCell(harness.entities.values());
+  const lmm = createLMMEntity('lmm-builder-threshold', openCell.x, openCell.y, 'builder');
+  const architectId = harness.agentIds.find((id) => id.startsWith('agent-architect'));
+  assert.ok(architectId);
+
+  const taskEntity: Entity = {
+    id: 'file:lmm-threshold',
+    type: 'file',
+    x: openCell.x,
+    y: openCell.y,
+    z: 0,
+    mass: 4,
+    construction_mass: 4,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    node_state: 'task',
+    path: 'src/lmm-threshold.ts',
+    content: 'export const threshold = true;\n',
+  };
+
+  harness.registerEntity(taskEntity);
+  harness.registerEntity(lmm);
+  harness.patchEntity(lmm.id, { cargo: 6 });
+  harness.activeTasks = [
+    {
+      id: 't-threshold',
+      description: 'Build threshold file',
+      target_path: 'src/lmm-threshold.ts',
+      status: 'assigned',
+      assigned_agent_id: architectId,
+      created_at_tick: 0,
+      updated_at_tick: 0,
+    },
+  ];
+
+  let builder = harness.entities.get(lmm.id);
+  assert.ok(builder);
+  harness.executeLMMDecision(builder, { action: 'deposit' });
+
+  let updatedTaskEntity = harness.entities.get(taskEntity.id);
+  assert.equal(updatedTaskEntity?.construction_mass, 5);
+  assert.equal(updatedTaskEntity?.node_state, 'in-progress');
+  assert.equal(harness.activeTasks[0]!.status, 'in_progress');
+
+  for (let i = 0; i < 5; i += 1) {
+    builder = harness.entities.get(lmm.id);
+    assert.ok(builder);
+    harness.executeLMMDecision(builder, { action: 'deposit' });
+  }
+
+  updatedTaskEntity = harness.entities.get(taskEntity.id);
+  assert.equal(updatedTaskEntity?.construction_mass, 10);
+  assert.equal(harness.activeTasks[0]!.status, 'awaiting_review');
+  assert.equal(harness.activeTasks[0]!.completed_content, 'export const threshold = true;\n');
+});
+
+test('executeLMMDecision creates an awaiting_review task when construction completes without an architect', () => {
+  const engine = new LuxEngine('lmm-construction-review-test', 100, 5, false);
+  const harness = engine as unknown as EngineHarness & {
+    activeTasks: Task[];
+    executeLMMDecision(agent: Entity, decision: { action: 'deposit' }): void;
+  };
+
+  harness.resetWorld([]);
+
+  const openCell = findUnusedCell(harness.entities.values());
+  const lmm = createLMMEntity('lmm-builder-review', openCell.x, openCell.y, 'builder');
+  const taskEntity: Entity = {
+    id: 'file:lmm-review',
+    type: 'file',
+    x: openCell.x,
+    y: openCell.y,
+    z: 0,
+    mass: 9,
+    construction_mass: 9,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    node_state: 'in-progress',
+    path: 'src/lmm-review.ts',
+    content: 'export const review = true;\n',
+  };
+
+  harness.registerEntity(taskEntity);
+  harness.registerEntity(lmm);
+  harness.patchEntity(lmm.id, { cargo: 1 });
+
+  const builder = harness.entities.get(lmm.id);
+  assert.ok(builder);
+  harness.executeLMMDecision(builder, { action: 'deposit' });
+
+  assert.equal(harness.activeTasks.length, 1);
+  assert.equal(harness.activeTasks[0]!.target_path, 'src/lmm-review.ts');
+  assert.equal(harness.activeTasks[0]!.status, 'awaiting_review');
+  assert.equal(harness.activeTasks[0]!.assigned_agent_id, null);
+  assert.equal(harness.activeTasks[0]!.origin, 'autonomous');
+  assert.equal(harness.activeTasks[0]!.completed_content, 'export const review = true;\n');
+});
+
+test('patchEntity resets construction mass when a node leaves construction states', () => {
+  const engine = new LuxEngine('construction-mass-reset-test', 100, 5, false);
+  const harness = engine as unknown as EngineHarness;
+
+  const taskEntity: Entity = {
+    id: 'file:lmm-reset',
+    type: 'file',
+    x: 8,
+    y: 8,
+    z: 0,
+    mass: 5,
+    construction_mass: 7,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    node_state: 'in-progress',
+    path: 'src/lmm-reset.ts',
+  };
+  harness.resetWorld([taskEntity]);
+
+  harness.patchEntity(taskEntity.id, { node_state: 'stable' });
+
+  const updatedTaskEntity = harness.entities.get(taskEntity.id);
+  assert.equal(updatedTaskEntity?.node_state, 'stable');
+  assert.equal(updatedTaskEntity?.construction_mass, 0);
 });
 
 test('applyLMMDecisions keeps the lower-tier swarm moving on a quiet lattice', () => {
@@ -951,6 +1091,7 @@ interface TaskPipelineHarness {
   agentIds: string[];
   advanceExplanationStream(): void;
   activeRepoPath: string | null;
+  automate: boolean;
   assignPendingTasks(): void;
   entities: Map<string, Entity>;
   executeRead(agent: Entity, decision: AgentDecision): void;
@@ -976,6 +1117,8 @@ interface TaskPipelineHarness {
   runCriticReview(task: Task, targetEntity: Entity): Promise<void>;
   runVisionaryFinalReview(task: Task): Promise<void>;
   runVisionaryPlanning(prompt: string): Promise<void>;
+  triggerAutonomousPlanning(): void;
+  visionaryPlanningPromise: Promise<void> | null;
   pendingEditAgents: Set<string>;
   requestDecisionForAgent(agent: Entity, scan: NeighborhoodScan): Promise<AgentDecision>;
   scanNeighborhood(agent: Entity): NeighborhoodScan;
@@ -989,6 +1132,8 @@ class MockNavigator {
   commitMessageResult: string | null = null;
   decisionResult: AgentDecision = { action: 'wait' };
   explanationResult: string | null = null;
+  visionaryPrompts: string[] = [];
+  visionaryCodebaseSummaries: string[] = [];
 
   isConfigured() {
     return true;
@@ -998,7 +1143,9 @@ class MockNavigator {
     return this.decisionResult;
   }
 
-  async requestVisionaryPlan() {
+  async requestVisionaryPlan(prompt: string, codebaseSummary: string) {
+    this.visionaryPrompts.push(prompt);
+    this.visionaryCodebaseSummaries.push(codebaseSummary);
     return this.visionaryPlanResult;
   }
 
@@ -1052,6 +1199,96 @@ test('Visionary planning creates tasks with correct statuses', async () => {
   assert.equal(harness.activeTasks[0]!.assigned_agent_id, null);
   assert.equal(harness.activeTasks[1]!.id, 't2');
   assert.equal(harness.activeTasks[1]!.status, 'pending');
+});
+
+test('Autonomous planning discovers broken tethers, asymmetry, and high chiral mass', async () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const brokenImport: Entity = {
+    id: 'file:broken-import',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    name: 'broken-import.ts',
+    path: 'src/broken-import.ts',
+    node_state: 'stable',
+    tether_broken: true,
+  };
+  const asymmetry: Entity = {
+    id: 'file:asymmetry',
+    type: 'file',
+    x: 6,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    name: 'asymmetry.ts',
+    path: 'src/asymmetry.ts',
+    node_state: 'asymmetry',
+  };
+  const heavyFile: Entity = {
+    id: 'file:heavy',
+    type: 'file',
+    x: 7,
+    y: 5,
+    mass: 9,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    name: 'heavy.ts',
+    path: 'src/heavy.ts',
+    node_state: 'stable',
+  };
+  harness.resetWorld([brokenImport, asymmetry, heavyFile]);
+  harness.automate = true;
+  mock.visionaryPlanResult = [
+    { id: 'auto-1', description: 'Fix broken import', target_path: 'src/broken-import.ts' },
+    { id: 'auto-2', description: 'Resolve asymmetry', target_path: 'src/asymmetry.ts' },
+    { id: 'auto-3', description: 'Refactor heavy file', target_path: 'src/heavy.ts' },
+  ];
+
+  harness.triggerAutonomousPlanning();
+  assert.ok(harness.visionaryPlanningPromise);
+  await harness.visionaryPlanningPromise;
+
+  assert.equal(mock.visionaryPrompts.length, 1);
+  assert.match(mock.visionaryPrompts[0]!, /fix import: src\/broken-import\.ts/);
+  assert.match(mock.visionaryPrompts[0]!, /resolve asymmetry: src\/asymmetry\.ts/);
+  assert.match(mock.visionaryPrompts[0]!, /refactor\/split file: src\/heavy\.ts/);
+  assert.equal(harness.activeTasks.length, 3);
+  assert.equal(harness.activeTasks[0]!.origin, 'autonomous');
+});
+
+test('Autonomous planning is gated behind automate', () => {
+  const { engine, mock } = createMockEngine();
+  const harness = engine as unknown as TaskPipelineHarness;
+
+  const asymmetry: Entity = {
+    id: 'file:asymmetry-gated',
+    type: 'file',
+    x: 5,
+    y: 5,
+    mass: 2,
+    tick_updated: 0,
+    current_height: 1,
+    target_height: 1,
+    name: 'asymmetry-gated.ts',
+    path: 'src/asymmetry-gated.ts',
+    node_state: 'asymmetry',
+  };
+  harness.resetWorld([asymmetry]);
+  harness.automate = false;
+
+  harness.triggerAutonomousPlanning();
+
+  assert.equal(mock.visionaryPrompts.length, 0);
+  assert.equal(harness.visionaryPlanningPromise, null);
 });
 
 test('Task assignment picks the first available architect', () => {
@@ -1315,6 +1552,13 @@ test('Visionary final review marks done or sends back for revision', async () =>
   await harness.runVisionaryFinalReview(harness.activeTasks[0]!);
   assert.equal(harness.activeTasks[0]!.status, 'revision_needed');
   assert.ok(harness.activeTasks[0]!.review_feedback?.includes('intent has changed'));
+
+  harness.activeTasks[0]!.status = 'approved';
+  harness.activeTasks[0]!.origin = 'autonomous';
+  harness.operatorPrompt = '';
+
+  await harness.runVisionaryFinalReview(harness.activeTasks[0]!);
+  assert.equal(harness.activeTasks[0]!.status, 'done');
 });
 
 

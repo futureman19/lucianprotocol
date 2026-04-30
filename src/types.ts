@@ -156,6 +156,7 @@ export const EntitySchema = z.object({
   lock_owner: z.string().min(1).nullable().optional(),
   lock_tick: z.number().int().nonnegative().nullable().optional(),
   state_tick: z.number().int().nonnegative().nullable().optional(),
+  construction_mass: z.number().int().nonnegative().nullable().optional(),
   objective_path: z.string().min(1).nullable().optional(),
   memory: AgentMemorySchema.nullable().optional(),
   author_id: z.string().min(1).nullable().optional(),
@@ -223,6 +224,9 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const TaskOriginSchema = z.enum(['operator', 'autonomous']);
+export type TaskOrigin = z.infer<typeof TaskOriginSchema>;
+
 export const ValidationStatusSchema = z.enum(['idle', 'running', 'clean', 'warnings', 'errors']);
 export type ValidationStatus = z.infer<typeof ValidationStatusSchema>;
 
@@ -246,6 +250,7 @@ export const TaskSchema = z.object({
   description: z.string().min(1),
   target_path: z.string().min(1),
   status: TaskStatusSchema,
+  origin: TaskOriginSchema.nullable().optional(),
   assigned_agent_id: z.string().nullable().optional(),
   original_content: z.string().nullable().optional(),
   completed_content: z.string().nullable().optional(),
@@ -262,6 +267,8 @@ export const AgentActivitySchema = z.object({
   status: z.enum(['thinking', 'walking', 'reading', 'editing', 'idle']),
   target_path: z.string().nullable().optional(),
   tick: z.number().int().nonnegative(),
+  action: z.string().nullable().optional(),
+  latency_ms: z.number().int().nonnegative().nullable().optional(),
 });
 export type AgentActivity = z.infer<typeof AgentActivitySchema>;
 

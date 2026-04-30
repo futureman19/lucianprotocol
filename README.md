@@ -7,7 +7,7 @@ Deterministic spatial operating system prototype for autonomous AI orchestration
 - Node.js + TypeScript strict mode
 - React + Vite canvas visualizer
 - Supabase for shared state and realtime
-- Gemini 2.5 Flash-Lite for micro-prompt navigation
+- Gemini API with `gemini-3-flash-preview` as the default agent brain model
 
 ## Docs
 
@@ -59,6 +59,7 @@ Replace the placeholder values in `.env` with:
 - `VITE_SUPABASE_ANON_KEY`
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`
+- `GEMINI_THINKING_LEVEL`
 - `LUX_SEED`
 - `LUX_LOOP`
 - `LUX_RESTART_DELAY_MS`
@@ -93,6 +94,8 @@ npm run build
 
 - Engine ticks at `100ms` and never blocks on Gemini responses.
 - AI decisions are queued and applied on the next available tick.
+- Agent brain calls use the Gemini API (`https://ai.google.dev/gemini-api/docs`) and default to `gemini-3-flash-preview`; override with `GEMINI_MODEL`.
+- `GEMINI_THINKING_LEVEL=minimal` is the default for Gemini 3 Flash Preview to keep agent turns responsive.
 - Grid physics stay integer-only in the engine.
 - Browser interpolation uses float lerp only for rendering smooth motion.
 - With `LUX_LOOP=true`, the engine automatically restarts after `goal-reached` or `stalled` so the demo remains observable.

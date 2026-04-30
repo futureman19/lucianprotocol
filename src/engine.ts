@@ -114,6 +114,7 @@ import {
   type WorldState,
   type WorldStatus,
   type Task,
+  type TaskOrigin,
   type Weather,
 } from './types';
 
@@ -150,6 +151,12 @@ interface PendingEntityDelete {
   version: number;
 }
 
+interface AutonomousPlanningFinding {
+  kind: 'fix import' | 'resolve asymmetry' | 'refactor/split file';
+  target: Entity;
+  reason: string;
+}
+
 
 const CLOCKWISE_SHIFT: Record<Direction, Direction> = {
   north: 'east',
@@ -175,6 +182,14 @@ const CONTROL_POLL_INTERVAL_TICKS = 10;
 const SUPABASE_ENTITY_SYNC_INTERVAL_TICKS = 60;
 const SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS = 1;
 const EXPLANATION_STREAM_CHARS_PER_TICK = 220;
+const LMM_CONSTRUCTION_PROMOTE_THRESHOLD = 5;
+const LMM_CONSTRUCTION_SUBMIT_THRESHOLD = 10;
+
+function isConstructionProgressNodeState(
+  nodeState: NodeState | null | undefined,
+): boolean {
+  return nodeState === 'task' || nodeState === 'in-progress';
+}
 
 function createEmptyExplanationState(): ExplanationState {
   return {
@@ -290,6 +305,8 @@ export class LuxEngine {
   private readonly decisionQueue = new Map<string, QueuedDecision>();
   private readonly pendingAiAgents = new Map<string, PendingAiRequest>();
   private readonly lastAiDecisionTick = new Map<string, number>();
+  private readonly lastAgentAction = new Map<string, string>();
+  private readonly lastAgentLatencyMs = new Map<string, number>();
   private readonly pendingEditAgents = new Set<string>();
   private readonly aiNavigator = new GeminiNavigator();
   private readonly supabase = createServiceSupabaseClient();
@@ -347,6 +364,7 @@ export class LuxEngine {
   private weather: Weather = DEFAULT_WEATHER;
   private weatherOverride: Weather | null = null;
   private lastOperatorPromptForPlanning = '';
+  private lastAutonomousPlanningSignature = '';
   private visionaryPlanningPromise: Promise<void> | null = null;
   private criticReviewPromise: Promise<void> | null = null;
   private visionaryFinalReviewPromise: Promise<void> | null = null;
@@ -396,7 +414,7 @@ export class LuxEngine {
     const structureCount = this.getStructureEntities().length;
 
     console.log(
-      `[${mode}] Lux engine seed=${this.seed} interval=${this.tickIntervalMs}ms period=${CLOCK_PERIOD} max_ticks=${this.maxTicks} ai=${this.aiNavigator.isConfigured() ? 'configured' : 'wait-only'} supabase=${this.supabase ? 'configured' : 'disabled'} loop=${this.loopRuns ? 'on' : 'off'} structures=${structureCount}`,
+      `[${mode}] Lux engine seed=${this.seed} interval=${this.tickIntervalMs}ms period=${CLOCK_PERIOD} max_ticks=${this.maxTicks} ai=${this.aiNavigator.isConfigured() ? `configured:${this.aiNavigator.getModel()}` : 'wait-only'} supabase=${this.supabase ? 'configured' : 'disabled'} loop=${this.loopRuns ? 'on' : 'off'} structures=${structureCount}`,
     );
 
     this.queueSupabaseSync();
@@ -440,6 +458,7 @@ export class LuxEngine {
     this.activeTasks = [];
     this.weather = this.weatherOverride ?? DEFAULT_WEATHER;
     this.lastOperatorPromptForPlanning = '';
+    this.lastAutonomousPlanningSignature = '';
     this.visionaryPlanningPromise = null;
     this.criticReviewPromise = null;
     this.visionaryFinalReviewPromise = null;
@@ -1285,6 +1304,14 @@ export class LuxEngine {
       z: patch.z ?? entity.z ?? 0,
     };
 
+    if (
+      'node_state' in patch &&
+      patch.node_state !== entity.node_state &&
+      !isConstructionProgressNodeState(patch.node_state)
+    ) {
+      updatedEntity.construction_mass = 0;
+    }
+
     this.entities.set(entityId, updatedEntity);
     this.invalidateStructureCache();
 
@@ -1301,7 +1328,7 @@ export class LuxEngine {
     // Only mark dirty if something sync-relevant changed.
     // tick_updated, state_tick, created_at churn alone should not trigger DB writes.
     const meaningfulFields: Array<keyof Entity> = [
-      'x', 'y', 'z', 'node_state', 'mass', 'name', 'path',
+      'x', 'y', 'z', 'node_state', 'mass', 'construction_mass', 'name', 'path',
       'agent_role', 'memory', 'lmm_rule', 'content_preview', 'extension',
       'lock_owner', 'descriptor', 'git_status', 'content_hash', 'tether_to',
       'tether_from', 'tether_broken', 'ttl_ticks', 'target_height', 'current_height',
@@ -1562,6 +1589,13 @@ export class LuxEngine {
     if (this.visionaryPlanningPromise !== null) return false;
     if (this.explanationState.status === 'streaming') return false;
     if (this.activeTasks.some((t) => t.status === 'in_progress')) return false;
+    if (
+      this.automate &&
+      this.operatorPrompt.trim().length === 0 &&
+      this.getAutonomousPlanningFindings().length > 0
+    ) {
+      return false;
+    }
     if (this.hasActiveLifecycleWork()) return false;
 
     // If every agent lacks an objective, there's nothing to simulate.
@@ -1641,6 +1675,7 @@ export class LuxEngine {
     this.queenState.updatedAt = new Date().toISOString();
     this.weather = this.weatherOverride ?? getWeatherForQueenCycle(this.queenState.cycle);
     void saveQueenState(this.queenState);
+    this.triggerAutonomousPlanning();
     console.log(
       `[queen] cycle=${this.queenState.cycle} alarm=${this.queenState.pheromoneAlarm} urgency=${this.queenState.pheromoneUrgency} weather=${this.weather}`,
     );
@@ -1750,7 +1785,101 @@ export class LuxEngine {
     });
   }
 
-  private async runVisionaryPlanning(prompt: string): Promise<void> {
+  private triggerAutonomousPlanning(): void {
+    if (!this.automate) {
+      return;
+    }
+
+    if (this.operatorPrompt.trim().length > 0) {
+      return;
+    }
+
+    if (this.visionaryPlanningPromise !== null) {
+      return;
+    }
+
+    const hasIncompleteTasks = this.activeTasks.some((t) => t.status !== 'done');
+    if (hasIncompleteTasks) {
+      return;
+    }
+
+    const findings = this.getAutonomousPlanningFindings();
+    if (findings.length === 0) {
+      this.lastAutonomousPlanningSignature = '';
+      return;
+    }
+
+    const signature = this.getAutonomousPlanningSignature(findings);
+    if (signature === this.lastAutonomousPlanningSignature && this.activeTasks.length > 0) {
+      return;
+    }
+
+    const prompt = this.buildAutonomousPlanningPrompt(findings);
+    this.visionaryPlanningPromise = this.runVisionaryPlanning(prompt, 'autonomous').finally(() => {
+      this.visionaryPlanningPromise = null;
+    });
+    this.lastAutonomousPlanningSignature = signature;
+  }
+
+  private getAutonomousPlanningFindings(): AutonomousPlanningFinding[] {
+    const findings: AutonomousPlanningFinding[] = [];
+
+    for (const entity of this.getStructureEntities()) {
+      if (entity.tether_broken === true) {
+        findings.push({
+          kind: 'fix import',
+          target: entity,
+          reason: 'tether_broken=true',
+        });
+      }
+
+      if (entity.node_state === 'asymmetry') {
+        findings.push({
+          kind: 'resolve asymmetry',
+          target: entity,
+          reason: 'node_state=asymmetry',
+        });
+      }
+
+      if (entity.type === 'file') {
+        const chiralMass = computeChiralMass(entity);
+        if (chiralMass > 8) {
+          findings.push({
+            kind: 'refactor/split file',
+            target: entity,
+            reason: `chiral_mass=${chiralMass}`,
+          });
+        }
+      }
+    }
+
+    return findings;
+  }
+
+  private getAutonomousPlanningSignature(findings: AutonomousPlanningFinding[]): string {
+    return findings
+      .map((finding) => `${finding.kind}:${this.getEntityPath(finding.target)}:${finding.reason}`)
+      .sort()
+      .join('|');
+  }
+
+  private buildAutonomousPlanningPrompt(findings: AutonomousPlanningFinding[]): string {
+    const lines = findings.map((finding) => {
+      const pathOrName = this.getEntityPath(finding.target);
+      return `- ${finding.kind}: ${pathOrName} (${finding.reason})`;
+    });
+
+    return [
+      'Autonomous Queen-cycle maintenance discovered structural work with no operator prompt.',
+      'Create concrete Architect tasks for these findings:',
+      ...lines,
+    ].join('\n');
+  }
+
+  private async runVisionaryPlanning(
+    prompt: string,
+    origin: TaskOrigin = 'operator',
+  ): Promise<void> {
     const codebaseSummary = this.getStructureEntities()
       .map((e) => `${e.type}: ${e.path ?? e.name ?? e.id}`)
       .join('\n');
@@ -1766,6 +1895,7 @@ export class LuxEngine {
       description: t.description,
       target_path: t.target_path,
       status: 'pending' as const,
+      origin,
       assigned_agent_id: null,
       original_content: null,
       completed_content: null,
@@ -1774,9 +1904,11 @@ export class LuxEngine {
       updated_at_tick: this.absoluteTick,
     }));
 
-    this.lastOperatorPromptForPlanning = prompt;
+    if (origin === 'operator') {
+      this.lastOperatorPromptForPlanning = prompt;
+    }
     this.hasAutoCommittedForCurrentTasks = false;
-    console.log(`[visionary] planned ${tasks.length} tasks from operator prompt`);
+    console.log(`[visionary] planned ${tasks.length} tasks from ${origin} prompt`);
   }
 
   private assignPendingTasks(): void {
@@ -1900,7 +2032,7 @@ export class LuxEngine {
   private async runVisionaryFinalReview(task: Task): Promise<void> {
     const prompt = this.operatorPrompt.trim();
 
-    if (prompt !== this.lastOperatorPromptForPlanning) {
+    if ((task.origin ?? 'operator') === 'operator' && prompt !== this.lastOperatorPromptForPlanning) {
       task.status = 'revision_needed';
       task.review_feedback = 'User intent has changed since this task was planned. Please re-evaluate.';
       task.updated_at_tick = this.absoluteTick;
@@ -2285,6 +2417,8 @@ export class LuxEngine {
   }
 
   private executeDecision(agent: Entity, decision: AgentDecision): void {
+    this.lastAgentAction.set(agent.id, decision.action);
+
     const currentNode = this.getStructureAtPosition({ x: agent.x, y: agent.y, z: getPositionZ(agent) });
     if (
       currentNode &&
@@ -3227,6 +3361,7 @@ export class LuxEngine {
               this.maxAiLatencyMs === null
                 ? latencyMs
                 : Math.max(this.maxAiLatencyMs, latencyMs);
+            this.lastAgentLatencyMs.set(agentId, latencyMs);
           }
 
           if (runId !== this.currentRunId) {
@@ -3743,6 +3878,8 @@ export class LuxEngine {
       }
 
       const role = getAgentRole(agent) ?? 'architect';
+      const lastAction = this.lastAgentAction.get(agent.id) ?? null;
+      const lastLatency = this.lastAgentLatencyMs.get(agent.id) ?? null;
 
       if (this.pendingAiAgents.has(agent.id)) {
         activities.push({
@@ -3751,6 +3888,8 @@ export class LuxEngine {
           status: 'thinking',
           target_path: agent.objective_path ?? null,
           tick: this.absoluteTick,
+          action: lastAction,
+          latency_ms: lastLatency,
         });
         continue;
       }
@@ -3762,6 +3901,8 @@ export class LuxEngine {
           status: 'editing',
           target_path: agent.objective_path ?? null,
           tick: this.absoluteTick,
+          action: lastAction,
+          latency_ms: lastLatency,
         });
         continue;
       }
@@ -3774,6 +3915,8 @@ export class LuxEngine {
           status: 'reading',
           target_path: currentNode.path ?? currentNode.name ?? null,
           tick: this.absoluteTick,
+          action: lastAction,
+          latency_ms: lastLatency,
         });
         continue;
       }
@@ -3785,6 +3928,8 @@ export class LuxEngine {
           status: 'walking',
           target_path: agent.objective_path,
           tick: this.absoluteTick,
+          action: lastAction,
+          latency_ms: lastLatency,
         });
         continue;
       }
@@ -3795,6 +3940,8 @@ export class LuxEngine {
         status: 'idle',
         target_path: null,
         tick: this.absoluteTick,
+        action: lastAction,
+        latency_ms: lastLatency,
       });
     }
 
@@ -4075,6 +4222,121 @@ export class LuxEngine {
     }
   }
 
+  private findConstructionTask(target: Entity): Task | null {
+    const targetPath = target.path;
+    if (!targetPath) {
+      return null;
+    }
+
+    return this.activeTasks.find((task) => task.target_path === targetPath && task.status !== 'done')
+      ?? this.activeTasks.find((task) => task.target_path === targetPath)
+      ?? null;
+  }
+
+  private promoteConstructionTask(target: Entity): void {
+    const task = this.findConstructionTask(target);
+    if (
+      task &&
+      (
+        task.status === 'pending' ||
+        task.status === 'assigned' ||
+        task.status === 'revision_needed'
+      )
+    ) {
+      task.status = 'in_progress';
+      task.validation = null;
+      task.updated_at_tick = this.absoluteTick;
+
+      if (task.original_content == null) {
+        task.original_content = target.content ?? target.content_preview ?? '';
+      }
+    }
+
+    if (target.node_state === 'task') {
+      this.setNodeState(target, 'in-progress', null, null);
+    }
+  }
+
+  private createConstructionReviewTask(target: Entity): Task {
+    const targetPath = target.path ?? target.name ?? target.id;
+    const digest = createHash('sha1').update(targetPath).digest('hex').slice(0, 8);
+    const baseId = `lmm-${digest}-${this.absoluteTick}`;
+    let taskId = baseId;
+    let suffix = 1;
+    while (this.activeTasks.some((task) => task.id === taskId)) {
+      suffix += 1;
+      taskId = `${baseId}-${suffix}`;
+    }
+
+    const completedContent = target.content ?? target.content_preview ?? '';
+    const task: Task = {
+      id: taskId,
+      description: `Review swarm-built construction on ${targetPath}`,
+      target_path: targetPath,
+      status: 'awaiting_review',
+      origin: 'autonomous',
+      assigned_agent_id: null,
+      original_content: completedContent,
+      completed_content: completedContent,
+      review_feedback: null,
+      validation: null,
+      created_at_tick: this.absoluteTick,
+      updated_at_tick: this.absoluteTick,
+    };
+    this.activeTasks.push(task);
+    return task;
+  }
+
+  private submitConstructionTask(target: Entity): void {
+    const task = this.findConstructionTask(target);
+    if (
+      task &&
+      (
+        task.status === 'awaiting_review' ||
+        task.status === 'approved' ||
+        task.status === 'done'
+      )
+    ) {
+      return;
+    }
+
+    if (task?.assigned_agent_id) {
+      const assignedArchitect = this.entities.get(task.assigned_agent_id);
+      if (assignedArchitect?.type === 'agent' && getAgentRole(assignedArchitect) === 'architect') {
+        this.executeSubmit(assignedArchitect);
+        return;
+      }
+    }
+
+    const reviewTask = task ?? this.createConstructionReviewTask(target);
+    const completedContent = target.content ?? target.content_preview ?? '';
+    reviewTask.status = 'awaiting_review';
+    reviewTask.assigned_agent_id = reviewTask.assigned_agent_id ?? null;
+    reviewTask.original_content = reviewTask.original_content ?? completedContent;
+    reviewTask.completed_content = completedContent;
+    reviewTask.validation = null;
+    reviewTask.updated_at_tick = this.absoluteTick;
+  }
+
+  private advanceLMMConstruction(target: Entity): void {
+    const nextConstructionMass = (target.construction_mass ?? 0) + 1;
+    let liveTarget = this.patchEntity(target.id, {
+      mass: (target.mass ?? 1) + 1,
+      construction_mass: nextConstructionMass,
+    }) ?? target;
+
+    this.refreshStructureVisualMetrics(target.id);
+
+    if (nextConstructionMass >= LMM_CONSTRUCTION_PROMOTE_THRESHOLD) {
+      this.promoteConstructionTask(liveTarget);
+      liveTarget = this.entities.get(target.id) ?? liveTarget;
+    }
+
+    if (nextConstructionMass >= LMM_CONSTRUCTION_SUBMIT_THRESHOLD) {
+      this.submitConstructionTask(liveTarget);
+    }
+  }
+
   private executeLMMDecision(agent: LMMEntity, decision: LMMDecision): void {
     // Lay trail if requested (at current position before moving)
     if ('layTrail' in decision && decision.layTrail) {
@@ -4178,8 +4440,15 @@ export class LuxEngine {
           entities.find((entity) => entity.type === 'file' || entity.type === 'directory' || entity.type === 'wall');
 
         if (target) {
-          this.patchEntity(target.id, { mass: (target.mass ?? 1) + 1 });
-          this.refreshStructureVisualMetrics(target.id);
+          if (
+            (target.type === 'file' || target.type === 'directory') &&
+            isConstructionProgressNodeState(target.node_state)
+          ) {
+            this.advanceLMMConstruction(target);
+          } else {
+            this.patchEntity(target.id, { mass: (target.mass ?? 1) + 1 });
+            this.refreshStructureVisualMetrics(target.id);
+          }
           this.patchEntity(agent.id, { cargo: (agent.cargo ?? 0) - 1 });
           break;
         }

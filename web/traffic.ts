@@ -24,6 +24,11 @@ export interface TrafficSystem {
 type Road = CityLayout['roads'][number];
 type District = CityLayout['districts'][number];
 
+const ROAD_TILE_KEYS_CACHE = new WeakMap<Road[], Set<string>>();
+let cachedIntersectionRoads: Road[] | null = null;
+let cachedIntersectionStructures: Entity[] | null = null;
+let cachedIntersections: Array<{ x: number; y: number }> = [];
+
 const CAR_COLORS = [
   { body: '#ef4444', headlight: '#fff7cc' },
   { body: '#3b82f6', headlight: '#f8fafc' },
@@ -518,6 +523,28 @@ function findRoadIntersections(roads: Road[], structures: Entity[]): Array<{ x: 
   return intersections;
 }
 
+function getCachedRoadTileKeys(roads: Road[]): Set<string> {
+  const cached = ROAD_TILE_KEYS_CACHE.get(roads);
+  if (cached) {
+    return cached;
+  }
+
+  const roadTiles = getRoadTileKeys(roads);
+  ROAD_TILE_KEYS_CACHE.set(roads, roadTiles);
+  return roadTiles;
+}
+
+function getCachedRoadIntersections(roads: Road[], structures: Entity[]): Array<{ x: number; y: number }> {
+  if (cachedIntersectionRoads === roads && cachedIntersectionStructures === structures) {
+    return cachedIntersections;
+  }
+
+  cachedIntersectionRoads = roads;
+  cachedIntersectionStructures = structures;
+  cachedIntersections = findRoadIntersections(roads, structures);
+  return cachedIntersections;
+}
+
 export function createTrafficSystem(): TrafficSystem {
   return { cars: [], lastSpawnTick: 0 };
 }
@@ -530,9 +557,9 @@ export function spawnCars(
   roads?: Road[],
   entities?: Entity[],
 ): void {
-  const targetCars = Math.floor(totalTrafficDensity * 10);
+  const targetCars = Math.floor(totalTrafficDensity * 2);
 
-  if (traffic.cars.length < targetCars && roadCount > 0 && tick - traffic.lastSpawnTick > 5) {
+  if (traffic.cars.length < targetCars && roadCount > 0 && tick - traffic.lastSpawnTick > 20) {
     traffic.lastSpawnTick = tick;
     const roadIndex = Math.floor(Math.random() * roadCount);
     const road = roads?.[roadIndex];
@@ -638,7 +665,7 @@ export function drawRoadsAndTraffic(
   }
 
   // Phase 2: intersection grass patches
-  const intersections = findRoadIntersections(roads, structures);
+  const intersections = getCachedRoadIntersections(roads, structures);
   for (const pt of intersections) {
     const screenPt = toScreen(pt.x, pt.y, 0.03, layout);
     context.save();
@@ -747,13 +774,13 @@ export function drawRoadsAndTraffic(
     context.lineTo(to.sx, to.sy);
     context.strokeStyle = `rgba(252, 211, 77, ${0.55 + (daylight * 0.25)})`;
     context.lineWidth = 1.0;
-    context.setLineDash([5 + (phase % 3), 9]);
+    context.setLineDash([5, 9]);
     context.stroke();
     context.setLineDash([]);
 
     // Lamp posts on the grass verges
-    if (layout.tileWidth > 18) {
-      const lightCount = Math.max(2, Math.floor(len / 140));
+    if (layout.tileWidth > 24) {
+      const lightCount = Math.max(2, Math.floor(len / 220));
       for (let index = 1; index <= lightCount; index += 1) {
         const t = index / (lightCount + 1);
         const px = from.sx + (dx * t);
@@ -954,14 +981,31 @@ export function drawGroundPlane(
   phase: number,
 ): void {
   const structures = entities.filter((entity) => entity.type === 'file' || entity.type === 'directory');
-  // Render the full grid so the city always has ground under every tile
-  const minX = 0;
-  const minY = 0;
-  const maxX = 49;
-  const maxY = 49;
+  // Only render ground around the occupied area + margin — saves huge per-frame cost
+  let minX = 0;
+  let minY = 0;
+  let maxX = 49;
+  let maxY = 49;
+  if (structures.length > 0) {
+    let sMinX = Infinity;
+    let sMinY = Infinity;
+    let sMaxX = -Infinity;
+    let sMaxY = -Infinity;
+    for (const s of structures) {
+      sMinX = Math.min(sMinX, s.x);
+      sMinY = Math.min(sMinY, s.y);
+      sMaxX = Math.max(sMaxX, s.x);
+      sMaxY = Math.max(sMaxY, s.y);
+    }
+    const margin = 4;
+    minX = Math.max(0, Math.floor(sMinX) - margin);
+    minY = Math.max(0, Math.floor(sMinY) - margin);
+    maxX = Math.min(49, Math.ceil(sMaxX) + margin);
+    maxY = Math.min(49, Math.ceil(sMaxY) + margin);
+  }
 
   const daylight = daylightFromPhase(phase);
-  const roadTiles = getRoadTileKeys(cityLayout.roads);
+  const roadTiles = getCachedRoadTileKeys(cityLayout.roads);
   const occupiedTiles = new Set(
     structures.map((entity) => `${Math.floor(entity.x)},${Math.floor(entity.y)}`),
   );

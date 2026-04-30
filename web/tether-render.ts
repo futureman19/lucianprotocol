@@ -35,7 +35,7 @@ function drawPipeSegment(
   color: string,
   width: number,
   isBroken: boolean,
-  phase: number,
+  _phase: number,
 ): void {
   context.save();
 
@@ -67,26 +67,13 @@ function drawPipeSegment(
     context.lineTo(to.sx, to.sy);
     context.stroke();
 
-    // Subtle flow pulse
-    const flowT = ((phase * 2) % 60) / 60;
-    const fx = from.sx + (to.sx - from.sx) * flowT;
-    const fy = from.sy + (to.sy - from.sy) * flowT;
-    context.fillStyle = withComputedAlpha(color, 0.9);
+    // Static indicator dot at midpoint (no animation)
+    context.fillStyle = withComputedAlpha(color, 0.7);
+    const mx = (from.sx + to.sx) / 2;
+    const my = (from.sy + to.sy) / 2;
     context.beginPath();
-    context.arc(fx, fy, width * 0.35, 0, Math.PI * 2);
+    context.arc(mx, my, width * 0.22, 0, Math.PI * 2);
     context.fill();
-
-    // Data packets (small dots)
-    const numPackets = 3;
-    context.fillStyle = '#ffffff';
-    for (let i = 0; i < numPackets; i++) {
-        const pt = ((phase * 2 + i * 20) % 60) / 60;
-        const px = from.sx + (to.sx - from.sx) * pt;
-        const py = from.sy + (to.sy - from.sy) * pt;
-        context.beginPath();
-        context.arc(px, py, width * 0.2, 0, Math.PI * 2);
-        context.fill();
-    }
   }
 
   context.restore();

@@ -171,7 +171,7 @@ function createRoadSegments(fileStructures: Entity[]): RoadSegment[] {
         toX: end + 0.5,
         toY: y + 0.5,
         name: isMain ? 'Main Street' : 'Grid Avenue',
-        width: 0.5,
+        width: isMain ? 0.6 : 0.5,
         trafficDensity: isMain ? 0.6 : 0.3,
       });
     }
@@ -192,10 +192,98 @@ function createRoadSegments(fileStructures: Entity[]): RoadSegment[] {
         toX: x + 0.5,
         toY: end + 0.5,
         name: isMain ? 'Main Street' : 'Grid Avenue',
-        width: 0.5,
+        width: isMain ? 0.6 : 0.5,
         trafficDensity: isMain ? 0.6 : 0.3,
       });
     }
+  }
+
+  return roads;
+}
+
+// Planned arterial roads give the city an organized backbone
+function createPlannedRoads(
+  downtownCenter: { x: number; y: number },
+  span: number,
+  entryPoints: Entity[],
+  districts: District[],
+): RoadSegment[] {
+  const roads: RoadSegment[] = [];
+  const gridSpacing = Math.max(5, Math.round(span / 5));
+  const halfSpan = Math.ceil(span / 2) + 1;
+
+  // Downtown avenue grid — major east-west and north-south arterials
+  const startX = Math.round(downtownCenter.x - halfSpan);
+  const endX = Math.round(downtownCenter.x + halfSpan);
+  const startY = Math.round(downtownCenter.y - halfSpan);
+  const endY = Math.round(downtownCenter.y + halfSpan);
+
+  for (let x = startX; x <= endX; x += gridSpacing) {
+    roads.push({
+      fromX: clampTile(x) + 0.5,
+      fromY: clampTile(startY) + 0.5,
+      toX: clampTile(x) + 0.5,
+      toY: clampTile(endY) + 0.5,
+      name: 'Avenue',
+      width: 0.7,
+      trafficDensity: 0.5,
+    });
+  }
+
+  for (let y = startY; y <= endY; y += gridSpacing) {
+    roads.push({
+      fromX: clampTile(startX) + 0.5,
+      fromY: clampTile(y) + 0.5,
+      toX: clampTile(endX) + 0.5,
+      toY: clampTile(y) + 0.5,
+      name: 'Boulevard',
+      width: 0.7,
+      trafficDensity: 0.5,
+    });
+  }
+
+  // Radial arterials from downtown to each non-downtown district center
+  for (const district of districts) {
+    if (district.type === 'downtown' || district.type === 'harbor') continue;
+    roads.push({
+      fromX: downtownCenter.x,
+      fromY: downtownCenter.y,
+      toX: district.x,
+      toY: district.y,
+      name: 'Arterial',
+      width: 0.65,
+      trafficDensity: 0.45,
+    });
+  }
+
+  // Ring road around downtown
+  const ringRadius = Math.max(3, Math.round(span * 0.22));
+  const ringSegments = 8;
+  for (let i = 0; i < ringSegments; i++) {
+    const angle1 = (i / ringSegments) * Math.PI * 2;
+    const angle2 = ((i + 1) / ringSegments) * Math.PI * 2;
+    roads.push({
+      fromX: downtownCenter.x + Math.cos(angle1) * ringRadius,
+      fromY: downtownCenter.y + Math.sin(angle1) * ringRadius,
+      toX: downtownCenter.x + Math.cos(angle2) * ringRadius,
+      toY: downtownCenter.y + Math.sin(angle2) * ringRadius,
+      name: 'Ring Road',
+      width: 0.6,
+      trafficDensity: 0.4,
+    });
+  }
+
+  // Connect entry points directly to downtown with prominent roads
+  for (const entry of entryPoints.slice(0, 4)) {
+    roads.push({
+      fromX: entry.x + 0.5,
+      fromY: entry.y + 0.5,
+      toX: downtownCenter.x,
+      toY: downtownCenter.y,
+      name: 'Expressway',
+      width: 0.75,
+      trafficDensity: 0.7,
+    });
   }
 
   return roads;
@@ -481,7 +569,21 @@ export function computeCityLayout(entities: Entity[]): CityLayout {
   });
 
   const fileStructures = structures.filter((s) => s.type === 'file');
-  const roads = createRoadSegments(fileStructures);
+  const organicRoads = createRoadSegments(fileStructures);
+  const plannedRoads = createPlannedRoads(downtownCenter, span, entryPoints, districts);
+
+  // Merge, deduplicating near-overlapping segments
+  const roadKey = (r: RoadSegment) =>
+    `${Math.round(r.fromX)},${Math.round(r.fromY)}-${Math.round(r.toX)},${Math.round(r.toY)}`;
+  const seen = new Set<string>();
+  const roads: RoadSegment[] = [];
+  for (const r of [...organicRoads, ...plannedRoads]) {
+    const key = roadKey(r);
+    if (!seen.has(key)) {
+      seen.add(key);
+      roads.push(r);
+    }
+  }
 
   if (water) {
     const waterWidth = (water.maxX - water.minX) + 1;

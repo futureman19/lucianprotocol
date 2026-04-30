@@ -1,0 +1,10 @@
+[2m8:41:09 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [33mwarning: [33mDuplicate key "construction_mass" in object literal[33m
+179 |    construction_phase: ConstructionPhaseSchema.nullable().optional(),
+180 |    demolition_phase: DemolitionPhaseSchema.nullable().optional(),
+181 |    construction_mass: z.number().int().min(0).nullable().optional(),
+    |    ^
+182 |    weather_wetness: z.number().min(0).max(1).nullable().optional(),
+183 |    weather_snow_cover: z.number().min(0).max(1).nullable().optional(),
+[39m
+  Plugin: [35mvite:esbuild[39m
+  File: [36mC:/Users/futur/Desktop/lucianprotocol/src/types.ts[39m
