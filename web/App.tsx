@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
+  ChevronDown,
+  ChevronRight,
   Command,
+  FileText,
+  Folder,
   GitBranch,
   X,
 } from 'lucide-react';
@@ -43,6 +47,7 @@ import {
 } from './iso';
 import { createTrafficSystem, drawRoadsAndTraffic, drawGroundPlane, spawnCars, updateCars } from './traffic';
 import { computeCityLayout } from './city-layout';
+import { buildGitTree, type GitTreeNode } from './git-tree';
 import { AdvisorCouncil } from './AdvisorCouncil';
 import { computeCityCouncilState, type AdvisorAction } from './city-systems';
 
@@ -735,117 +740,18 @@ function drawPheromone(
   context.restore();
 }
 
-function drawLMMGhost(
+function drawConstructionWorker(
   context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number,
-  tick: number,
+  center: { sx: number; sy: number },
+  scale: number,
+  hatColor: string,
+  shirtColor: string,
+  glowColor: string,
+  label: string,
+  walkCycle: number,
+  opacity: number,
+  hasObjective: boolean,
 ): void {
-  const role = getAgentRole(entity) ?? 'architect';
-  const palette = getAgentPalette(role);
-  const ground = toScreen(display.x + 0.5, display.y + 0.5, 0.18, layout);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 1.02, layout);
-  const scale = layout.tileHeight * 0.38;
-  const pulse = 0.55 + ((phase % 10) * 0.035);
-  const floatY = Math.sin(tick * 0.15) * scale * 0.15;
-  const opacity = pulse;
-
-  if (opacity <= 0.01) {
-    return;
-  }
-
-  const bodyFill = _withAlpha(palette.fill, opacity * 0.8);
-  const bodyStroke = _withAlpha(palette.stroke, opacity * 0.95);
-  const rotorFill = `rgba(214, 228, 240, ${opacity * 0.92})`;
-  const lensFill = `rgba(238, 248, 255, ${opacity * 0.96})`;
-
-  context.save();
-  context.fillStyle = 'rgba(0, 0, 0, 0.2)';
-  context.beginPath();
-  context.ellipse(ground.sx, ground.sy + (layout.tileHeight * 0.18), scale * 0.75, scale * 0.22, 0, 0, Math.PI * 2);
-  context.fill();
-
-  context.translate(center.sx, center.sy + floatY);
-  context.shadowBlur = 18;
-  context.shadowColor = palette.glow;
-
-  context.strokeStyle = bodyStroke;
-  context.lineWidth = 1.6;
-  context.beginPath();
-  context.moveTo(-scale * 0.55, -scale * 0.08);
-  context.lineTo(scale * 0.55, scale * 0.08);
-  context.moveTo(-scale * 0.12, -scale * 0.45);
-  context.lineTo(scale * 0.12, scale * 0.45);
-  context.stroke();
-
-  const rotorOffsets = [
-    { x: -scale * 0.62, y: -scale * 0.1 },
-    { x: scale * 0.62, y: scale * 0.1 },
-    { x: -scale * 0.14, y: -scale * 0.5 },
-    { x: scale * 0.14, y: scale * 0.5 },
-  ];
-  context.fillStyle = rotorFill;
-  for (const rotor of rotorOffsets) {
-    context.beginPath();
-    context.arc(rotor.x, rotor.y, scale * 0.12, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  context.beginPath();
-  context.moveTo(0, -scale * 0.28);
-  context.lineTo(scale * 0.3, 0);
-  context.lineTo(0, scale * 0.28);
-  context.lineTo(-scale * 0.3, 0);
-  context.closePath();
-  context.fillStyle = bodyFill;
-  context.fill();
-  context.strokeStyle = bodyStroke;
-  context.lineWidth = 1.2;
-  context.stroke();
-
-  context.shadowBlur = 0;
-  context.beginPath();
-  context.arc(0, 0, scale * 0.12, 0, Math.PI * 2);
-  context.fillStyle = lensFill;
-  context.fill();
-
-  context.fillStyle = `rgba(15, 25, 38, ${opacity * 0.85})`;
-  context.font = `${Math.max(8, Math.round(scale * 0.35))}px monospace`;
-  context.textAlign = 'center';
-  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', 0, scale * 0.07);
-
-  context.restore();
-}
-
-function drawAgent(
-  context: CanvasRenderingContext2D,
-  entity: Entity,
-  display: DisplayPoint,
-  layout: IsoLayout,
-  phase: number,
-  tick: number,
-): void {
-  const role = getAgentRole(entity) ?? 'architect';
-  const palette = getAgentPalette(role);
-  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.4, layout);
-  const scale = layout.tileHeight * 0.35;
-  const pulse = 0.85 + ((phase % 10) * 0.02);
-
-  const idleTicks = tick - entity.tick_updated;
-  const hasObjective = entity.objective_path != null;
-  let opacity = pulse;
-  if (!hasObjective && idleTicks > 30) {
-    opacity = pulse * Math.max(0.3, 1 - (idleTicks - 30) / 90);
-  }
-
-  if (opacity <= 0.01) {
-    return;
-  }
-
-  const walkCycle = hasObjective ? Math.sin(tick * 0.8) * scale * 0.08 : 0;
-
   context.save();
   context.globalAlpha = opacity;
 
@@ -855,9 +761,6 @@ function drawAgent(
   context.ellipse(center.sx, center.sy + scale * 0.6, scale * 0.5, scale * 0.15, 0, 0, Math.PI * 2);
   context.fill();
 
-  // Hard hat color based on role
-  const hatColor = palette.fill;
-  const shirtColor = palette.stroke;
   const pantsColor = '#455a64';
   const skinColor = '#ffe0b2';
 
@@ -908,8 +811,8 @@ function drawAgent(
   // Role glow when active
   if (hasObjective) {
     context.shadowBlur = 12;
-    context.shadowColor = palette.glow;
-    context.strokeStyle = palette.fill;
+    context.shadowColor = glowColor;
+    context.strokeStyle = hatColor;
     context.lineWidth = 1;
     context.beginPath();
     context.arc(center.sx, center.sy, scale * 0.7, 0, Math.PI * 2);
@@ -921,9 +824,92 @@ function drawAgent(
   context.fillStyle = `rgba(200, 210, 230, ${opacity * 0.6})`;
   context.font = `${Math.max(7, Math.round(scale * 0.3))}px monospace`;
   context.textAlign = 'center';
-  context.fillText(entity.lmm_rule?.charAt(0).toUpperCase() ?? '?', center.sx, center.sy - scale * 0.7);
+  context.fillText(label, center.sx, center.sy - scale * 0.7);
 
   context.restore();
+}
+
+function drawLMMGhost(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+  tick: number,
+): void {
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.4, layout);
+  const scale = layout.tileHeight * 0.35;
+  const pulse = 0.85 + ((phase % 10) * 0.02);
+
+  const idleTicks = tick - entity.tick_updated;
+  const hasObjective = entity.objective_path != null;
+  let opacity = pulse;
+  if (!hasObjective && idleTicks > 30) {
+    opacity = pulse * Math.max(0.3, 1 - (idleTicks - 30) / 90);
+  }
+
+  if (opacity <= 0.01) {
+    return;
+  }
+
+  const walkCycle = hasObjective ? Math.sin(tick * 0.8) * scale * 0.08 : 0;
+  const label = entity.lmm_rule?.charAt(0).toUpperCase() ?? '?';
+
+  // LMM workers wear amber hard hats and gold vests
+  drawConstructionWorker(
+    context,
+    center,
+    scale,
+    '#f59e0b',
+    '#fbbf24',
+    'rgba(245, 158, 11, 0.5)',
+    label,
+    walkCycle,
+    opacity,
+    hasObjective,
+  );
+}
+
+function drawAgent(
+  context: CanvasRenderingContext2D,
+  entity: Entity,
+  display: DisplayPoint,
+  layout: IsoLayout,
+  phase: number,
+  tick: number,
+): void {
+  const role = getAgentRole(entity) ?? 'architect';
+  const palette = getAgentPalette(role);
+  const center = toScreen(display.x + 0.5, display.y + 0.5, 0.4, layout);
+  const scale = layout.tileHeight * 0.7;
+  const pulse = 0.85 + ((phase % 10) * 0.02);
+
+  const idleTicks = tick - entity.tick_updated;
+  const hasObjective = entity.objective_path != null;
+  let opacity = pulse;
+  if (!hasObjective && idleTicks > 30) {
+    opacity = pulse * Math.max(0.3, 1 - (idleTicks - 30) / 90);
+  }
+
+  if (opacity <= 0.01) {
+    return;
+  }
+
+  const walkCycle = hasObjective ? Math.sin(tick * 0.8) * scale * 0.08 : 0;
+  const label = role.charAt(0).toUpperCase();
+
+  drawConstructionWorker(
+    context,
+    center,
+    scale,
+    palette.fill,
+    palette.stroke,
+    palette.glow,
+    label,
+    walkCycle,
+    opacity,
+    hasObjective,
+  );
 }
 
 function drawFireflies(
@@ -1359,6 +1345,20 @@ function App() {
   const [engineLoading, setEngineLoading] = useState(false);
   const [, setEngineError] = useState<string | null>(null);
 
+  // Git staging panel state
+  const [gitStatusResult, setGitStatusResult] = useState<{
+    not_added: string[];
+    modified: string[];
+    created: string[];
+    deleted: string[];
+    staged: string[];
+  } | null>(null);
+  const [commitMessageInput, setCommitMessageInput] = useState('');
+  const [commitLoading, setCommitLoading] = useState(false);
+  const [commitResult, setCommitResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set(['.']));
+  const [selectedTreePath, setSelectedTreePath] = useState<string | null>(null);
+
   const frameRef = useRef<number | null>(null);
   const flushFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1638,6 +1638,84 @@ function App() {
 
   const handleAdvisorAction = (action: AdvisorAction, targetPath: string): void => {
     void dispatchFileAction(action, targetPath);
+  };
+
+  // Poll git status when engine is running and repo is active
+  useEffect(() => {
+    if (!engineRunning || !activeRepositoryPath) {
+      setGitStatusResult(null);
+      return undefined;
+    }
+
+    const poll = async () => {
+      try {
+        const res = await fetch('http://localhost:3001/api/git/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoPath: activeRepositoryPath }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { status?: { not_added: string[]; modified: string[]; created: string[]; deleted: string[]; staged: string[] } };
+          if (data.status) {
+            setGitStatusResult(data.status);
+          }
+        }
+      } catch {
+        // silently fail — bridge may be restarting
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(poll, 3000);
+    return () => window.clearInterval(id);
+  }, [engineRunning, activeRepositoryPath]);
+
+  const handleCommit = async (): Promise<void> => {
+    if (!activeRepositoryPath || commitMessageInput.trim().length === 0) {
+      setCommitResult({ type: 'error', message: 'Enter a commit message.' });
+      return;
+    }
+    setCommitLoading(true);
+    setCommitResult(null);
+    try {
+      const res = await fetch('http://localhost:3001/api/git/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: activeRepositoryPath, message: commitMessageInput.trim() }),
+      });
+      const data = (await res.json()) as { error?: string; result?: { commit?: string } };
+      if (res.ok && data.result?.commit) {
+        setCommitResult({ type: 'success', message: `Committed: ${data.result.commit.slice(0, 7)}` });
+        setCommitMessageInput('');
+        setGitStatusResult(null);
+      } else {
+        setCommitResult({ type: 'error', message: data.error ?? 'Commit failed.' });
+      }
+    } catch {
+      setCommitResult({ type: 'error', message: 'Bridge unreachable.' });
+    } finally {
+      setCommitLoading(false);
+    }
+  };
+
+  const handleToggleAutoCommit = async (): Promise<void> => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setErrorMessage('Supabase keys missing; cannot toggle auto-commit.');
+      return;
+    }
+    const next = !isAutomated;
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .update({ automate: next })
+        .eq('id', DEFAULT_OPERATOR_CONTROL.id);
+      if (error) throw error;
+      setOperatorControl((prev) => ({ ...prev, automate: next }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setErrorMessage(`Auto-commit toggle failed: ${message}`);
+    }
   };
 
   useEffect(() => {
@@ -2631,8 +2709,265 @@ function App() {
     };
   }, []);
 
+  const hasChanges = gitStatusResult && (
+    gitStatusResult.staged.length > 0 ||
+    gitStatusResult.modified.length > 0 ||
+    gitStatusResult.not_added.length > 0 ||
+    gitStatusResult.deleted.length > 0
+  );
+
+  const gitTree = useMemo(() => buildGitTree(visibleStructureNodes), [visibleStructureNodes]);
+
+  const togglePath = (path: string): void => {
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const focusOnEntity = (entity: Entity): void => {
+    const targetZoom = 1.5;
+    const tempCamera: Camera = { ...cameraRef.current, zoom: targetZoom };
+    const layout = createIsoLayout(viewport.width, viewport.height, tempCamera);
+    const screen = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+    const dx = screen.sx - viewport.width / 2;
+    const dy = screen.sy - viewport.height / 2;
+    setCamera({
+      ...tempCamera,
+      panX: tempCamera.panX - dx,
+      panY: tempCamera.panY - dy,
+    });
+  };
+
+  const renderGitTreeNode = (node: GitTreeNode, depth = 0): React.ReactNode => {
+    const isExpanded = expandedPaths.has(node.path);
+    const isSelected = selectedTreePath === node.path;
+    const hasChildren = node.children.length > 0;
+    const paddingLeft = 8 + depth * 14;
+
+    return (
+      <div key={node.path}>
+        <button
+          className={`git-tree-row ${isSelected ? 'is-active' : ''} ${node.type === 'directory' ? 'is-directory' : ''}`}
+          onClick={() => {
+            if (node.type === 'directory' && hasChildren) {
+              togglePath(node.path);
+            }
+            setSelectedTreePath(node.path);
+            if (node.entity) {
+              setSelectedEntity(node.entity);
+              focusOnEntity(node.entity);
+            }
+          }}
+          style={{ paddingLeft }}
+          type="button"
+        >
+          {hasChildren ? (
+            <span className="git-tree-chevron">
+              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </span>
+          ) : (
+            <span className="git-tree-chevron is-leaf" />
+          )}
+          <span className="git-tree-icon">
+            {node.type === 'directory' ? <Folder size={12} /> : <FileText size={12} />}
+          </span>
+          <span className="git-tree-label">{node.name}</span>
+          {node.entity?.node_state && node.entity.node_state !== 'stable' ? (
+            <span className={`git-tree-state state-${node.entity.node_state}`} />
+          ) : null}
+        </button>
+        {isExpanded && node.children.map((child) => renderGitTreeNode(child, depth + 1))}
+      </div>
+    );
+  };
+
   return (
     <main className="lux-shell">
+      <aside className="lux-panel lux-panel-left">
+        {/* Repository input */}
+        <div className="panel-header">
+          <div className="panel-header-main">
+            <span className="panel-title">Repository</span>
+            <span className="panel-subtitle">{activeRepositoryName}</span>
+          </div>
+        </div>
+        <div className="repo-input-section">
+          <input
+            className="repo-input"
+            onChange={(e) => setRepoInput(e.target.value)}
+            placeholder="C:/Users/.../project"
+            type="text"
+            value={repoInput}
+          />
+          <button
+            className="repo-load-button"
+            disabled={isSavingControl || repoInput.trim().length === 0}
+            onClick={() => {
+              const supabase = supabaseRef.current;
+              if (!supabase) {
+                setErrorMessage('Supabase keys missing; cannot load repository.');
+                return;
+              }
+              setIsSavingControl(true);
+              void Promise.resolve(
+                supabase
+                  .from('operator_controls')
+                  .upsert(
+                    {
+                      id: DEFAULT_OPERATOR_CONTROL.id,
+                      repo_path: repoInput.trim(),
+                      operator_prompt: directiveInput.trim(),
+                    },
+                    { onConflict: 'id' },
+                  ),
+              )
+                .then(({ error }) => {
+                  if (error) throw error;
+                  setErrorMessage('Repository path queued. The engine will import on next poll.');
+                })
+                .catch((err: unknown) => {
+                  const message = err instanceof Error ? err.message : 'Unknown error';
+                  setErrorMessage(`Repository load failed: ${message}`);
+                })
+                .finally(() => setIsSavingControl(false));
+            }}
+            type="button"
+          >
+            Load
+          </button>
+        </div>
+
+        {/* File tree */}
+        <div className="panel-header is-sub">
+          <div className="panel-header-main">
+            <span className="panel-title">Files</span>
+            <span className="panel-subtitle">{visibleStructureNodes.length} nodes</span>
+          </div>
+        </div>
+        <div className="panel-body is-scrollable">
+          {!gitTree ? (
+            <p className="panel-placeholder">No repository loaded yet.</p>
+          ) : (
+            <div className="git-tree-panel">
+              {renderGitTreeNode(gitTree)}
+            </div>
+          )}
+        </div>
+
+        {/* Staging area */}
+        <div className="panel-header is-sub">
+          <div className="panel-header-main">
+            <span className="panel-title">Staging</span>
+            <span className="panel-subtitle">
+              {gitStatusResult
+                ? `${gitStatusResult.staged.length + gitStatusResult.modified.length + gitStatusResult.not_added.length + gitStatusResult.deleted.length} changed`
+                : '—'}
+            </span>
+          </div>
+        </div>
+        <div className="panel-body">
+          {!engineRunning ? (
+            <p className="panel-placeholder">Start the engine to see changes.</p>
+          ) : !activeRepositoryPath ? (
+            <p className="panel-placeholder">No active repository.</p>
+          ) : !hasChanges ? (
+            <p className="panel-placeholder">Working tree clean.</p>
+          ) : (
+            <div className="git-status-list">
+              {gitStatusResult.staged.length > 0 && (
+                <div className="git-status-group">
+                  <span className="git-status-label">Staged</span>
+                  {gitStatusResult.staged.map((path) => (
+                    <div className="git-status-row is-staged" key={`staged-${path}`}>
+                      <span className="git-status-icon">+</span>
+                      <span className="git-status-path">{path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {gitStatusResult.modified.length > 0 && (
+                <div className="git-status-group">
+                  <span className="git-status-label">Modified</span>
+                  {gitStatusResult.modified.map((path) => (
+                    <div className="git-status-row is-modified" key={`mod-${path}`}>
+                      <span className="git-status-icon">M</span>
+                      <span className="git-status-path">{path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {gitStatusResult.not_added.length > 0 && (
+                <div className="git-status-group">
+                  <span className="git-status-label">Untracked</span>
+                  {gitStatusResult.not_added.map((path) => (
+                    <div className="git-status-row is-untracked" key={`untracked-${path}`}>
+                      <span className="git-status-icon">?</span>
+                      <span className="git-status-path">{path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {gitStatusResult.deleted.length > 0 && (
+                <div className="git-status-group">
+                  <span className="git-status-label">Deleted</span>
+                  {gitStatusResult.deleted.map((path) => (
+                    <div className="git-status-row is-deleted" key={`del-${path}`}>
+                      <span className="git-status-icon">−</span>
+                      <span className="git-status-path">{path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="commit-section">
+            <input
+              className="commit-input"
+              disabled={commitLoading || !activeRepositoryPath}
+              onChange={(e) => setCommitMessageInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  void handleCommit();
+                }
+              }}
+              placeholder="Commit message… (Ctrl+Enter)"
+              type="text"
+              value={commitMessageInput}
+            />
+            <button
+              className="commit-button"
+              disabled={commitLoading || !activeRepositoryPath || commitMessageInput.trim().length === 0}
+              onClick={() => void handleCommit()}
+              type="button"
+            >
+              {commitLoading ? 'Committing…' : 'Commit Staged'}
+            </button>
+            {commitResult && (
+              <span className={`commit-result is-${commitResult.type}`}>{commitResult.message}</span>
+            )}
+          </div>
+
+          <div className="auto-commit-row">
+            <label className="auto-commit-label">
+              <input
+                checked={isAutomated}
+                onChange={() => void handleToggleAutoCommit()}
+                type="checkbox"
+              />
+              <span>Auto-commit when all tasks complete</span>
+            </label>
+          </div>
+        </div>
+      </aside>
+
       <QueenHUD
         cycle={worldState.queen_cycle ?? 0}
         alarm={worldState.queen_alarm ?? 0}

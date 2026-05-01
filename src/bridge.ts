@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { simpleGit } from 'simple-git';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 3001);
 let engineProcess: ChildProcess | null = null;
@@ -24,6 +25,14 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(body);
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => resolve(body));
+  });
 }
 
 function startEngine(): boolean {
@@ -82,7 +91,7 @@ function stopEngine(): boolean {
   return true;
 }
 
-const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -127,6 +136,64 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     return;
   }
 
+  if (url.pathname === '/api/git/status' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const { repoPath } = JSON.parse(raw) as { repoPath?: string };
+      if (!repoPath) {
+        sendJson(res, 400, { error: 'repoPath is required' });
+        return;
+      }
+      const git = simpleGit(repoPath);
+      const status = await git.status();
+      sendJson(res, 200, { status });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown git status error';
+      sendJson(res, 500, { error: message });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/git/diff' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const { repoPath, filePath } = JSON.parse(raw) as { repoPath?: string; filePath?: string };
+      if (!repoPath) {
+        sendJson(res, 400, { error: 'repoPath is required' });
+        return;
+      }
+      const git = simpleGit(repoPath);
+      const diff = filePath ? await git.diff(['--', filePath]) : await git.diff();
+      sendJson(res, 200, { diff: diff ?? '' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown git diff error';
+      sendJson(res, 500, { error: message });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/git/commit' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const { repoPath, message } = JSON.parse(raw) as { repoPath?: string; message?: string };
+      if (!repoPath) {
+        sendJson(res, 400, { error: 'repoPath is required' });
+        return;
+      }
+      if (!message || message.trim().length === 0) {
+        sendJson(res, 400, { error: 'commit message is required' });
+        return;
+      }
+      const git = simpleGit(repoPath);
+      const result = await git.commit(message.trim());
+      sendJson(res, 200, { result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown git commit error';
+      sendJson(res, 500, { error: message });
+    }
+    return;
+  }
+
   sendJson(res, 404, { error: 'Not found' });
 });
 
@@ -135,4 +202,7 @@ server.listen(PORT, () => {
   console.log(`[bridge] POST http://localhost:${PORT}/api/engine/start  → start engine`);
   console.log(`[bridge] POST http://localhost:${PORT}/api/engine/stop   → stop engine`);
   console.log(`[bridge] GET  http://localhost:${PORT}/api/engine/status → check status`);
+  console.log(`[bridge] POST http://localhost:${PORT}/api/git/status  → git status`);
+  console.log(`[bridge] POST http://localhost:${PORT}/api/git/diff    → git diff`);
+  console.log(`[bridge] POST http://localhost:${PORT}/api/git/commit  → git commit`);
 });

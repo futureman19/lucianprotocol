@@ -471,7 +471,13 @@ function segmentsIntersect(
 ): { x: number; y: number } | null {
   // For axis-aligned segments, find the actual crossing point.
   const aHoriz = Math.abs(a.fromY - a.toY) < 0.01;
+  const aVert = Math.abs(a.fromX - a.toX) < 0.01;
   const bHoriz = Math.abs(b.fromY - b.toY) < 0.01;
+  const bVert = Math.abs(b.fromX - b.toX) < 0.01;
+
+  // Reject diagonals — they slice through the isometric grid and buildings
+  if (!aHoriz && !aVert) return null;
+  if (!bHoriz && !bVert) return null;
 
   // Parallel segments don't cross (we ignore collinear overlap for intersections)
   if (aHoriz === bHoriz) return null;

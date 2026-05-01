@@ -206,7 +206,7 @@ function createPlannedRoads(
   downtownCenter: { x: number; y: number },
   span: number,
   entryPoints: Entity[],
-  districts: District[],
+  _districts: District[],
 ): RoadSegment[] {
   const roads: RoadSegment[] = [];
   const gridSpacing = Math.max(5, Math.round(span / 5));
@@ -242,42 +242,37 @@ function createPlannedRoads(
     });
   }
 
-  // Radial arterials from downtown to each non-downtown district center
-  for (const district of districts) {
-    if (district.type === 'downtown' || district.type === 'harbor') continue;
+  // Ring road around downtown — axis-aligned square to keep the grid clean
+  const ringRadius = Math.max(3, Math.round(span * 0.22));
+  const ringLeft = clampTile(Math.round(downtownCenter.x - ringRadius)) + 0.5;
+  const ringRight = clampTile(Math.round(downtownCenter.x + ringRadius)) + 0.5;
+  const ringTop = clampTile(Math.round(downtownCenter.y - ringRadius)) + 0.5;
+  const ringBottom = clampTile(Math.round(downtownCenter.y + ringRadius)) + 0.5;
+
+  roads.push(
+    { fromX: ringLeft, fromY: ringTop, toX: ringRight, toY: ringTop, name: 'Ring Road', width: 0.6, trafficDensity: 0.4 },
+    { fromX: ringRight, fromY: ringTop, toX: ringRight, toY: ringBottom, name: 'Ring Road', width: 0.6, trafficDensity: 0.4 },
+    { fromX: ringRight, fromY: ringBottom, toX: ringLeft, toY: ringBottom, name: 'Ring Road', width: 0.6, trafficDensity: 0.4 },
+    { fromX: ringLeft, fromY: ringBottom, toX: ringLeft, toY: ringTop, name: 'Ring Road', width: 0.6, trafficDensity: 0.4 },
+  );
+
+  // Connect entry points to downtown via axis-aligned Manhattan routes (never diagonal)
+  for (const entry of entryPoints.slice(0, 4)) {
+    const entryX = entry.x + 0.5;
+    const entryY = entry.y + 0.5;
+    // Two-segment L-shape: horizontal then vertical (or vice-versa) to avoid cutting through buildings diagonally
+    roads.push({
+      fromX: entryX,
+      fromY: entryY,
+      toX: downtownCenter.x,
+      toY: entryY,
+      name: 'Expressway',
+      width: 0.75,
+      trafficDensity: 0.7,
+    });
     roads.push({
       fromX: downtownCenter.x,
-      fromY: downtownCenter.y,
-      toX: district.x,
-      toY: district.y,
-      name: 'Arterial',
-      width: 0.65,
-      trafficDensity: 0.45,
-    });
-  }
-
-  // Ring road around downtown
-  const ringRadius = Math.max(3, Math.round(span * 0.22));
-  const ringSegments = 8;
-  for (let i = 0; i < ringSegments; i++) {
-    const angle1 = (i / ringSegments) * Math.PI * 2;
-    const angle2 = ((i + 1) / ringSegments) * Math.PI * 2;
-    roads.push({
-      fromX: downtownCenter.x + Math.cos(angle1) * ringRadius,
-      fromY: downtownCenter.y + Math.sin(angle1) * ringRadius,
-      toX: downtownCenter.x + Math.cos(angle2) * ringRadius,
-      toY: downtownCenter.y + Math.sin(angle2) * ringRadius,
-      name: 'Ring Road',
-      width: 0.6,
-      trafficDensity: 0.4,
-    });
-  }
-
-  // Connect entry points directly to downtown with prominent roads
-  for (const entry of entryPoints.slice(0, 4)) {
-    roads.push({
-      fromX: entry.x + 0.5,
-      fromY: entry.y + 0.5,
+      fromY: entryY,
       toX: downtownCenter.x,
       toY: downtownCenter.y,
       name: 'Expressway',
@@ -437,7 +432,11 @@ export function getRoadTileKeys(roads: RoadSegment[]): Set<string> {
   const roadTiles = new Set<string>();
 
   for (const road of roads) {
-    if (Math.abs(road.fromY - road.toY) < 0.01) {
+    const isHorizontal = Math.abs(road.fromY - road.toY) < 0.01;
+    const isVertical = Math.abs(road.fromX - road.toX) < 0.01;
+
+    // Only trace axis-aligned roads; diagonals are skipped to avoid slicing through buildings
+    if (isHorizontal) {
       const y = clampTile(Math.round(road.fromY - 0.5));
       const startX = clampTile(Math.round(Math.min(road.fromX, road.toX) - 0.5));
       const endX = clampTile(Math.round(Math.max(road.fromX, road.toX) - 0.5));
@@ -449,13 +448,19 @@ export function getRoadTileKeys(roads: RoadSegment[]): Set<string> {
       continue;
     }
 
-    const x = clampTile(Math.round(road.fromX - 0.5));
-    const startY = clampTile(Math.round(Math.min(road.fromY, road.toY) - 0.5));
-    const endY = clampTile(Math.round(Math.max(road.fromY, road.toY) - 0.5));
+    if (isVertical) {
+      const x = clampTile(Math.round(road.fromX - 0.5));
+      const startY = clampTile(Math.round(Math.min(road.fromY, road.toY) - 0.5));
+      const endY = clampTile(Math.round(Math.max(road.fromY, road.toY) - 0.5));
 
-    for (let y = startY; y <= endY; y += 1) {
-      roadTiles.add(`${x},${y}`);
+      for (let y = startY; y <= endY; y += 1) {
+        roadTiles.add(`${x},${y}`);
+      }
+
+      continue;
     }
+
+    // Diagonal roads are intentionally ignored — they break the isometric grid aesthetic
   }
 
   return roadTiles;

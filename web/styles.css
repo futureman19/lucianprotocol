@@ -3765,10 +3765,289 @@ a {
   }
 }
 
-/* ─── Hide old panel system ─── */
-.lux-panel-left,
-.lux-panel-right {
-  display: none !important;
+/* ─── Panel system is active ─── */
+
+/* ─── Git Staging Panel ─── */
+.repo-input-section {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.repo-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  outline: none;
+}
+
+.repo-input:focus {
+  border-color: rgba(86, 217, 255, 0.45);
+}
+
+.repo-load-button {
+  padding: 6px 10px;
+  border: 1px solid rgba(86, 217, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(86, 217, 255, 0.1);
+  color: #7dd3fc;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  cursor: pointer;
+}
+
+.repo-load-button:hover:not(:disabled) {
+  background: rgba(86, 217, 255, 0.18);
+}
+
+.repo-load-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.panel-header.is-sub {
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.panel-header.is-sub .panel-title {
+  font-size: 0.72rem;
+}
+
+.panel-body.is-scrollable {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.git-tree-panel {
+  padding: 4px 0;
+}
+
+.git-tree-panel .git-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.git-tree-panel .git-tree-row:hover {
+  background: rgba(86, 217, 255, 0.08);
+}
+
+.git-tree-panel .git-tree-row.is-active {
+  background: rgba(16, 185, 129, 0.12);
+  color: #d8fff0;
+}
+
+.git-tree-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.git-tree-chevron.is-leaf {
+  opacity: 0;
+}
+
+.git-tree-panel .git-tree-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.git-tree-panel .git-tree-row.is-directory .git-tree-icon {
+  color: #fbbf24;
+}
+
+.git-tree-panel .git-tree-label {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.git-status-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-status-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.git-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+
+.git-status-row:hover {
+  background: rgba(86, 217, 255, 0.06);
+}
+
+.git-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.git-status-row.is-staged .git-status-icon {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+.git-status-row.is-modified .git-status-icon {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
+}
+
+.git-status-row.is-untracked .git-status-icon {
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+}
+
+.git-status-row.is-deleted .git-status-icon {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+}
+
+.git-status-path {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.commit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.commit-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  outline: none;
+}
+
+.commit-input:focus {
+  border-color: rgba(86, 217, 255, 0.45);
+}
+
+.commit-input::placeholder {
+  color: var(--text-dim);
+}
+
+.commit-button {
+  padding: 7px 10px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.commit-button:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+}
+
+.commit-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.commit-result {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+}
+
+.commit-result.is-success {
+  color: #6ee7b7;
+}
+
+.commit-result.is-error {
+  color: #f87171;
+}
+
+.auto-commit-row {
+  padding: 8px 12px 12px;
+}
+
+.auto-commit-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  cursor: pointer;
+}
+
+.auto-commit-label input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  accent-color: #10b981;
 }
 
 /* ─── Floating Thoughts Panel ─── */

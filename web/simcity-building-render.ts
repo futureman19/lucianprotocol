@@ -1314,4 +1314,26 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
     context.stroke();
     context.restore();
   }
+
+  // File name label above the building
+  const label = entity.name ?? entity.path ?? '';
+  if (label.length > 0 && label !== '.') {
+    const labelPoint = toScreen(display.x + 0.5, display.y + 0.5, (entity.z ?? 0) + height + 0.35, layout);
+    const fontSize = Math.max(8, Math.min(13, layout.tileHeight * 0.38));
+    context.save();
+    context.font = `${fontSize}px var(--mono, monospace)`;
+    context.textAlign = 'center';
+    context.textBaseline = 'bottom';
+    const textWidth = context.measureText(label).width;
+    const padding = 5;
+    const bgHeight = fontSize + 5;
+    const bgY = labelPoint.sy - bgHeight;
+    context.fillStyle = 'rgba(8, 12, 20, 0.82)';
+    context.beginPath();
+    context.roundRect(labelPoint.sx - (textWidth / 2) - padding, bgY, textWidth + (padding * 2), bgHeight, 4);
+    context.fill();
+    context.fillStyle = 'rgba(200, 220, 255, 0.92)';
+    context.fillText(label, labelPoint.sx, labelPoint.sy - 2);
+    context.restore();
+  }
 }
