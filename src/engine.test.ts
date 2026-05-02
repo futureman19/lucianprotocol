@@ -30,6 +30,7 @@ import {
 
 interface EngineHarness {
   applyLMMDecisions(): void;
+  computeAgentActivities(): AgentActivity[];
   entities: Map<string, Entity>;
   executeBroadcast(agent: Entity, decision: AgentDecision): void;
   executeRead(agent: Entity, decision: AgentDecision): void;
@@ -279,6 +280,13 @@ test('parseOperatorDirective extracts action and target query from a prompt', ()
 
   assert.equal(directive.action, 'explain');
   assert.equal(directive.targetQuery, 'src/engine.ts');
+});
+
+test('parseOperatorDirective keeps repair dispatches targetable', () => {
+  const directive = parseOperatorDirective('Navigate to `web/App.tsx` and repair the fault.');
+
+  assert.equal(directive.action, 'navigate');
+  assert.equal(directive.targetQuery, 'web/App.tsx');
 });
 
 test('resolvePathWithinRoot rejects traversal outside the repository root', () => {
@@ -757,9 +765,11 @@ test('applyLMMDecisions keeps the lower-tier swarm moving on a quiet lattice', (
     .filter((entity) => entity.type === 'agent' && entity.lmm_rule != null);
 
   const movedAgents = finalPositions.filter((entity) => initialPositions.get(entity.id) !== `${entity.x},${entity.y}`);
+  const lmmActivities = harness.computeAgentActivities().filter((activity) => activity.agent_id.startsWith('lmm-'));
 
   assert.ok(movedOnEveryStep);
   assert.ok(movedAgents.length >= 3);
+  assert.ok(lmmActivities.some((activity) => activity.action !== null && activity.status !== 'idle'));
 });
 
 test('createInitialEntities places goal and required wall', () => {

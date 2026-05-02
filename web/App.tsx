@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
+  Bot,
+  BrainCircuit,
   ChevronDown,
   ChevronRight,
   Command,
+  Cpu,
+  Crosshair,
+  Eye,
   FileText,
   Folder,
   GitBranch,
+  MapPin,
+  MessageSquareText,
+  Radio,
+  Route,
+  Send,
+  Target,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -28,6 +40,7 @@ import {
   type AgentActivity,
   type Entity,
   type OperatorControl,
+  type Task,
   type Weather,
   type WorldState,
 } from '../src/types';
@@ -74,6 +87,29 @@ interface LogEntry {
 interface StructureFocus {
   distance: number;
   entity: Entity | null;
+}
+
+type AutomataKind = 'llm' | 'lmm';
+type AutomataSuggestionKind = 'focus-target' | 'file-action' | 'prompt';
+
+interface AutomataSuggestion {
+  action?: AdvisorAction;
+  id: string;
+  kind: AutomataSuggestionKind;
+  label: string;
+  prompt?: string;
+  targetPath?: string;
+}
+
+interface AutomataSummary {
+  activity: AgentActivity | null;
+  assignedTask: Task | null;
+  entity: Entity;
+  kind: AutomataKind;
+  role: HivemindAgentRole | null;
+  roleLabel: string;
+  status: string;
+  targetPath: string | null;
 }
 
 interface AgentPalette {
@@ -1196,6 +1232,166 @@ function formatControlStatus(value: string | null | undefined): string {
   return value.replace('-', ' ');
 }
 
+function formatShortPath(value: string | null | undefined, limit = 42): string {
+  if (!value) {
+    return 'No target';
+  }
+
+  return value.length > limit ? `...${value.slice(-(limit - 3))}` : value;
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function isLmmAutomata(entity: Entity): boolean {
+  return entity.type === 'agent' && typeof entity.lmm_rule === 'string';
+}
+
+function getAutomataRoleLabel(entity: Entity): string {
+  if (isLmmAutomata(entity)) {
+    return `${titleCase(entity.lmm_rule ?? 'swarm')} LMM`;
+  }
+
+  const role = getAgentRole(entity) ?? 'architect';
+  return getAgentRoleLabel(role);
+}
+
+function getAutomataStatus(entity: Entity, activity: AgentActivity | null): string {
+  if (activity?.status) {
+    return activity.status;
+  }
+
+  if (isLmmAutomata(entity) && (entity.cargo ?? 0) > 0) {
+    return 'hauling';
+  }
+
+  if (entity.objective_path) {
+    return 'walking';
+  }
+
+  return 'idle';
+}
+
+function quotePath(path: string): string {
+  return `\`${path.replace(/`/g, "'")}\``;
+}
+
+function getAutomataDefaultPrompt(entity: Entity, summary: AutomataSummary | null): string {
+  const name = entity.name ?? entity.id;
+  const target = summary?.targetPath;
+
+  if (target) {
+    return `${name}: inspect ${quotePath(target)} and report the next useful action.`;
+  }
+
+  if (isLmmAutomata(entity)) {
+    return `${name}: use the ${entity.lmm_rule ?? 'swarm'} marker at (${entity.x},${entity.y}) to guide nearby maintenance.`;
+  }
+
+  const role = getAgentRole(entity) ?? 'architect';
+  return `${name}: ${role === 'visionary' ? 'draft the next task plan' : role === 'critic' ? 'review the highest-risk node' : 'take the highest-priority build task'}.`;
+}
+
+function createAutomataPrompt(entity: Entity, prompt: string): string {
+  const name = entity.name ?? entity.id;
+  const roleLabel = getAutomataRoleLabel(entity);
+  const target = entity.objective_path ? ` target=${entity.objective_path}` : '';
+  return `${roleLabel} ${name} (${entity.id}) at (${entity.x},${entity.y})${target}: ${prompt.trim()}`;
+}
+
+function createAutomataSuggestions(summary: AutomataSummary): AutomataSuggestion[] {
+  const { entity, role, targetPath } = summary;
+  const name = entity.name ?? entity.id;
+  const suggestions: AutomataSuggestion[] = [];
+
+  if (targetPath) {
+    suggestions.push(
+      {
+        id: 'focus-target',
+        kind: 'focus-target',
+        label: 'Focus Target',
+        targetPath,
+      },
+      {
+        action: 'read',
+        id: 'read-target',
+        kind: 'file-action',
+        label: 'Read Target',
+        targetPath,
+      },
+      {
+        action: 'explain',
+        id: 'explain-target',
+        kind: 'file-action',
+        label: 'Explain',
+        targetPath,
+      },
+    );
+
+    if (summary.status !== 'reading') {
+      suggestions.push({
+        action: 'repair',
+        id: 'repair-target',
+        kind: 'file-action',
+        label: 'Repair',
+        targetPath,
+      });
+    }
+  }
+
+  if (isLmmAutomata(entity)) {
+    const lmmRole = entity.lmm_rule ?? 'swarm';
+    const position = `(${entity.x},${entity.y})`;
+    const prompt =
+      lmmRole === 'scout'
+        ? `Use ${name} as a scout marker at ${position}; inspect nearby structural risk.`
+        : lmmRole === 'patrol'
+          ? `Use ${name} as a patrol marker at ${position}; check broken tethers around that route.`
+          : lmmRole === 'recycler'
+            ? `Use ${name} as a recycler marker at ${position}; clear or simplify nearby unstable work.`
+            : `Use ${name} as a ${lmmRole} marker at ${position}; advance the nearest pending construction task.`;
+
+    suggestions.push({
+      id: `lmm-${lmmRole}`,
+      kind: 'prompt',
+      label: lmmRole === 'scout' ? 'Survey Area' : lmmRole === 'patrol' ? 'Check Route' : lmmRole === 'recycler' ? 'Clear Debris' : 'Build Nearby',
+      prompt,
+    });
+  } else if (role === 'visionary') {
+    suggestions.push({
+      id: 'plan-next',
+      kind: 'prompt',
+      label: 'Plan Next',
+      prompt: `${name}: draft the next three tasks from current city pressure and repo state.`,
+    });
+  } else if (role === 'critic') {
+    suggestions.push({
+      id: 'review-risk',
+      kind: 'prompt',
+      label: 'Review Risk',
+      prompt: targetPath
+        ? `${name}: review ${quotePath(targetPath)} and identify verification blockers.`
+        : `${name}: find the highest-risk asymmetry and prepare a review note.`,
+    });
+  } else {
+    suggestions.push({
+      id: 'continue-build',
+      kind: 'prompt',
+      label: 'Continue',
+      prompt: targetPath
+        ? `${name}: continue the current build task on ${quotePath(targetPath)}.`
+        : `${name}: take the highest-priority available build task.`,
+    });
+  }
+
+  return suggestions.slice(0, 5);
+}
+
 function getNearestStructure(agent: Entity | null, entities: Entity[]): StructureFocus {
   if (!agent) {
     return { distance: Number.POSITIVE_INFINITY, entity: null };
@@ -1334,6 +1530,8 @@ function App() {
   const [viewport, setViewport] = useState<Viewport>({ height: 720, width: 1280 });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
+  const [selectedAutomataId, setSelectedAutomataId] = useState<string | null>(null);
+  const [automataPromptInput, setAutomataPromptInput] = useState('');
   const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
   const [hiddenFilePaths, setHiddenFilePaths] = useState<string[]>([]);
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
@@ -1410,6 +1608,56 @@ function App() {
   }, [worldState?.sound_events, worldState?.tick]);
 
   const agents = useMemo(() => entities.filter((entity) => entity.type === 'agent'), [entities]);
+  const agentActivityById = useMemo(
+    () => new Map((worldState.agent_activities ?? []).map((activity) => [activity.agent_id, activity])),
+    [worldState.agent_activities],
+  );
+  const activeTaskByAgentId = useMemo(() => {
+    const taskMap = new Map<string, Task>();
+    for (const task of worldState.active_tasks ?? []) {
+      if (task.assigned_agent_id && task.status !== 'done') {
+        taskMap.set(task.assigned_agent_id, task);
+      }
+    }
+    return taskMap;
+  }, [worldState.active_tasks]);
+  const automataSummaries = useMemo<AutomataSummary[]>(
+    () =>
+      agents
+        .map((entity) => {
+          const activity = agentActivityById.get(entity.id) ?? null;
+          const assignedTask = activeTaskByAgentId.get(entity.id) ?? null;
+          const role = getAgentRole(entity);
+          const kind: AutomataKind = isLmmAutomata(entity) ? 'lmm' : 'llm';
+          return {
+            activity,
+            assignedTask,
+            entity,
+            kind,
+            role,
+            roleLabel: getAutomataRoleLabel(entity),
+            status: getAutomataStatus(entity, activity),
+            targetPath: activity?.target_path ?? entity.objective_path ?? assignedTask?.target_path ?? null,
+          };
+        })
+        .sort((left, right) => {
+          const kindDelta = left.kind.localeCompare(right.kind);
+          if (kindDelta !== 0) {
+            return kindDelta;
+          }
+
+          const roleDelta = left.roleLabel.localeCompare(right.roleLabel);
+          if (roleDelta !== 0) {
+            return roleDelta;
+          }
+
+          return left.entity.id.localeCompare(right.entity.id);
+        }),
+    [activeTaskByAgentId, agentActivityById, agents],
+  );
+  const activeAutomataSummary = automataSummaries.find((summary) => summary.entity.id === selectedAutomataId) ?? null;
+  const activeAutomata = activeAutomataSummary?.entity ?? null;
+  const activeAutomataSuggestions = activeAutomataSummary ? createAutomataSuggestions(activeAutomataSummary) : [];
   const primaryAgent = agents[0] ?? null;
   const primaryRole = primaryAgent ? (getAgentRole(primaryAgent) ?? 'architect') : 'architect';
   const structureNodes = useMemo(() => entities.filter((entity) => isStructureEntity(entity)), [entities]);
@@ -1510,6 +1758,76 @@ function App() {
     return { left, top };
   })();
 
+  const focusOnEntity = (entity: Entity): void => {
+    const targetZoom = 1.5;
+    const tempCamera: Camera = { ...cameraRef.current, zoom: targetZoom };
+    const layout = createIsoLayout(viewport.width, viewport.height, tempCamera);
+    const screen = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
+    const dx = screen.sx - viewport.width / 2;
+    const dy = screen.sy - viewport.height / 2;
+    setCamera({
+      ...tempCamera,
+      panX: tempCamera.panX - dx,
+      panY: tempCamera.panY - dy,
+    });
+  };
+
+  const expandTreeToPath = (targetPath: string): void => {
+    const normalizedPath = targetPath.replace(/\\/g, '/');
+    const parts = normalizedPath.split('/').filter(Boolean);
+    const ancestors = new Set<string>(['.']);
+    let current = '';
+
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const part = parts[index];
+      if (!part) {
+        continue;
+      }
+
+      current = current.length === 0 ? part : `${current}/${part}`;
+      ancestors.add(current);
+    }
+
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      for (const path of ancestors) {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const focusOnTargetPath = (targetPath: string): boolean => {
+    const entity = entityByPath.get(targetPath);
+    if (!entity) {
+      setErrorMessage(`Briefing target not found in the current lattice: ${targetPath}`);
+      return false;
+    }
+
+    if (entity.path) {
+      expandTreeToPath(entity.path);
+      setSelectedTreePath(entity.path);
+    }
+
+    setSelectedEntity(entity);
+    focusOnEntity(entity);
+    return true;
+  };
+
+  const createFileActionPrompt = (action: AdvisorAction, targetPath: string): string => {
+    const quotedTarget = `\`${targetPath.replace(/`/g, "'")}\``;
+
+    if (action === 'repair') {
+      return `Navigate to ${quotedTarget} and repair the fault.`;
+    }
+
+    if (action === 'explain') {
+      return `Explain ${quotedTarget}.`;
+    }
+
+    return `Read ${quotedTarget}.`;
+  };
+
   const handleToggleEngine = async (): Promise<void> => {
     setEngineLoading(true);
     setEngineError(null);
@@ -1597,36 +1915,48 @@ function App() {
     }
   };
 
-  const dispatchFileAction = async (action: 'read' | 'explain' | 'repair', targetPath: string): Promise<void> => {
+  const dispatchFileAction = async (action: AdvisorAction, targetPath: string): Promise<void> => {
+    const prompt = createFileActionPrompt(action, targetPath);
+    setDirectiveInput(prompt);
+
     const supabase = supabaseRef.current;
     if (!supabase) {
-      setErrorMessage('Supabase keys missing; cannot dispatch file action from browser.');
+      setErrorMessage(`Preview only: focused ${targetPath}. Configure Supabase browser keys to dispatch "${prompt}" to the engine.`);
       return;
     }
-    const prompt = `${action} ${targetPath}`;
+
     setIsSavingControl(true);
     setErrorMessage(null);
     try {
+      const nextControl = {
+        id: DEFAULT_OPERATOR_CONTROL.id,
+        repo_path: repoInput.trim(),
+        operator_prompt: prompt,
+        paused: isPaused,
+        automate: isAutomated,
+        visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
+        architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
+        critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
+        pending_edit_path: operatorControl.pending_edit_path,
+        pending_edit_content: operatorControl.pending_edit_content,
+        commit_message: operatorControl.commit_message,
+        should_push: operatorControl.should_push,
+      };
+
       const { error } = await supabase
         .from('operator_controls')
         .upsert(
-          stripUnsafeOperatorControlFields({
-            id: DEFAULT_OPERATOR_CONTROL.id,
-            repo_path: repoInput.trim(),
-            operator_prompt: prompt,
-            paused: isPaused,
-            automate: isAutomated,
-            visionary_prompt: worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '',
-            architect_prompt: worldState.architect_prompt ?? operatorControl.architect_prompt ?? '',
-            critic_prompt: worldState.critic_prompt ?? operatorControl.critic_prompt ?? '',
-            pending_edit_path: operatorControl.pending_edit_path,
-            pending_edit_content: operatorControl.pending_edit_content,
-            commit_message: operatorControl.commit_message,
-            should_push: operatorControl.should_push,
-          }),
+          stripUnsafeOperatorControlFields(nextControl),
           { onConflict: 'id' },
         );
       if (error) throw error;
+
+      controlDirtyRef.current = false;
+      setOperatorControl({
+        ...DEFAULT_OPERATOR_CONTROL,
+        ...nextControl,
+        updated_at: new Date().toISOString(),
+      });
       setErrorMessage(`Dispatched: ${prompt}. An architect will pick it up on the next tick.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1637,7 +1967,103 @@ function App() {
   };
 
   const handleAdvisorAction = (action: AdvisorAction, targetPath: string): void => {
+    focusOnTargetPath(targetPath);
     void dispatchFileAction(action, targetPath);
+  };
+
+  const handleAdvisorFocus = (targetPath: string): void => {
+    focusOnTargetPath(targetPath);
+  };
+
+  const selectAutomata = (summary: AutomataSummary): void => {
+    setSelectedAutomataId(summary.entity.id);
+    setSelectedEntity(summary.entity);
+    focusOnEntity(summary.entity);
+
+    if (selectedAutomataId !== summary.entity.id) {
+      setAutomataPromptInput(getAutomataDefaultPrompt(summary.entity, summary));
+    }
+  };
+
+  const dispatchAutomataPrompt = async (entity: Entity, prompt: string): Promise<void> => {
+    const normalizedPrompt = prompt.trim();
+    if (normalizedPrompt.length === 0) {
+      setErrorMessage('Enter an automata prompt before dispatching.');
+      return;
+    }
+
+    const directive = createAutomataPrompt(entity, normalizedPrompt);
+    const role = getAgentRole(entity);
+    setDirectiveInput(directive);
+
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      setErrorMessage(`Preview only: staged ${getAutomataRoleLabel(entity)} directive "${directive}".`);
+      return;
+    }
+
+    const existingVisionaryPrompt = worldState.visionary_prompt ?? operatorControl.visionary_prompt ?? '';
+    const existingArchitectPrompt = worldState.architect_prompt ?? operatorControl.architect_prompt ?? '';
+    const existingCriticPrompt = worldState.critic_prompt ?? operatorControl.critic_prompt ?? '';
+    const nextControl = {
+      id: DEFAULT_OPERATOR_CONTROL.id,
+      repo_path: repoInput.trim(),
+      operator_prompt: directive,
+      paused: isPaused,
+      automate: isAutomated,
+      visionary_prompt: role === 'visionary' ? directive : existingVisionaryPrompt,
+      architect_prompt: role === 'architect' ? directive : existingArchitectPrompt,
+      critic_prompt: role === 'critic' ? directive : existingCriticPrompt,
+      pending_edit_path: operatorControl.pending_edit_path,
+      pending_edit_content: operatorControl.pending_edit_content,
+      commit_message: operatorControl.commit_message,
+      should_push: operatorControl.should_push,
+    };
+
+    setIsSavingControl(true);
+    setErrorMessage(null);
+
+    try {
+      const { error } = await supabase
+        .from('operator_controls')
+        .upsert(stripUnsafeOperatorControlFields(nextControl), { onConflict: 'id' });
+
+      if (error) {
+        throw error;
+      }
+
+      controlDirtyRef.current = false;
+      setOperatorControl({
+        ...DEFAULT_OPERATOR_CONTROL,
+        ...nextControl,
+        updated_at: new Date().toISOString(),
+      });
+      setAutomataPromptInput('');
+      setErrorMessage(`Dispatched ${getAutomataRoleLabel(entity)} directive: ${directive}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setErrorMessage(`Automata dispatch failed: ${message}`);
+    } finally {
+      setIsSavingControl(false);
+    }
+  };
+
+  const handleAutomataSuggestion = (summary: AutomataSummary, suggestion: AutomataSuggestion): void => {
+    if (suggestion.kind === 'focus-target' && suggestion.targetPath) {
+      focusOnTargetPath(suggestion.targetPath);
+      return;
+    }
+
+    if (suggestion.kind === 'file-action' && suggestion.targetPath && suggestion.action) {
+      focusOnTargetPath(suggestion.targetPath);
+      void dispatchFileAction(suggestion.action, suggestion.targetPath);
+      return;
+    }
+
+    if (suggestion.kind === 'prompt' && suggestion.prompt) {
+      setAutomataPromptInput(suggestion.prompt);
+      void dispatchAutomataPrompt(summary.entity, suggestion.prompt);
+    }
   };
 
   // Poll git status when engine is running and repo is active
@@ -1777,6 +2203,13 @@ function App() {
       setSelectedEntity(null);
     }
   }, [selectedEntity, visibleStructurePathSet]);
+
+  useEffect(() => {
+    if (selectedAutomataId && !agents.some((agent) => agent.id === selectedAutomataId)) {
+      setSelectedAutomataId(null);
+      setAutomataPromptInput('');
+    }
+  }, [agents, selectedAutomataId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2730,20 +3163,6 @@ function App() {
     });
   };
 
-  const focusOnEntity = (entity: Entity): void => {
-    const targetZoom = 1.5;
-    const tempCamera: Camera = { ...cameraRef.current, zoom: targetZoom };
-    const layout = createIsoLayout(viewport.width, viewport.height, tempCamera);
-    const screen = toScreen(entity.x + 0.5, entity.y + 0.5, (entity.z ?? 0) + 0.5, layout);
-    const dx = screen.sx - viewport.width / 2;
-    const dy = screen.sy - viewport.height / 2;
-    setCamera({
-      ...tempCamera,
-      panX: tempCamera.panX - dx,
-      panY: tempCamera.panY - dy,
-    });
-  };
-
   const renderGitTreeNode = (node: GitTreeNode, depth = 0): React.ReactNode => {
     const isExpanded = expandedPaths.has(node.path);
     const isSelected = selectedTreePath === node.path;
@@ -3094,7 +3513,170 @@ function App() {
       <section className="lux-lattice" ref={latticeRef}>
         <canvas className="lux-canvas" ref={canvasRef} />
 
-        <AdvisorCouncil city={cityCouncil} onAction={handleAdvisorAction} />
+        <AdvisorCouncil
+          activeTargetPath={selectedEntity?.path ?? selectedTreePath ?? operatorTargetPath}
+          city={cityCouncil}
+          controlMode={mode}
+          isDispatching={isSavingControl}
+          onAction={handleAdvisorAction}
+          onFocusTarget={handleAdvisorFocus}
+        />
+
+        <aside className="automata-panel" aria-label="Automata roster">
+          <div className="automata-panel-header">
+            <span className="automata-panel-title">
+              <Bot size={15} />
+              Automata
+            </span>
+            <span className="automata-panel-count">
+              {automataSummaries.filter((summary) => summary.kind === 'llm').length} LLM · {automataSummaries.filter((summary) => summary.kind === 'lmm').length} LMM
+            </span>
+          </div>
+
+          <div className="automata-list">
+            {automataSummaries.map((summary) => {
+              const entity = summary.entity;
+              const isSelected = entity.id === selectedAutomataId;
+              const displayName = entity.name ?? entity.id;
+              const workLabel =
+                summary.assignedTask?.description ??
+                (summary.kind === 'lmm'
+                  ? `${summary.activity?.action ?? 'standing by'} · cargo ${entity.cargo ?? 0}`
+                  : formatShortPath(summary.targetPath, 52));
+
+              return (
+                <button
+                  className={`automata-row ${isSelected ? 'is-selected' : ''} kind-${summary.kind} status-${summary.status}`}
+                  key={entity.id}
+                  onClick={() => selectAutomata(summary)}
+                  title={`${displayName} ${summary.targetPath ?? ''}`.trim()}
+                  type="button"
+                >
+                  <span className="automata-row-icon">
+                    {summary.kind === 'lmm' ? <Cpu size={15} /> : summary.role === 'visionary' ? <BrainCircuit size={15} /> : <Bot size={15} />}
+                  </span>
+                  <span className="automata-row-main">
+                    <span className="automata-row-topline">
+                      <span className="automata-row-name">{displayName}</span>
+                      <span className="automata-row-role">{summary.roleLabel}</span>
+                    </span>
+                    <span className="automata-work">{workLabel}</span>
+                  </span>
+                  <span className="automata-row-meta">
+                    <span>{summary.status}</span>
+                    <span>{entity.x},{entity.y}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {activeAutomata && activeAutomataSummary ? (
+            <div className={`automata-interaction kind-${activeAutomataSummary.kind}`}>
+              <div className="automata-interaction-header">
+                <span className="automata-interaction-title">{activeAutomata.name ?? activeAutomata.id}</span>
+                <button
+                  className="automata-icon-button"
+                  onClick={() => {
+                    setSelectedAutomataId(null);
+                    setAutomataPromptInput('');
+                  }}
+                  title="Close"
+                  type="button"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+
+              <div className="automata-facts">
+                <span>{activeAutomataSummary.roleLabel}</span>
+                <span>{activeAutomataSummary.status}</span>
+                <span><MapPin size={11} />{activeAutomata.x},{activeAutomata.y}</span>
+                {activeAutomataSummary.kind === 'lmm' ? <span>Cargo {activeAutomata.cargo ?? 0}</span> : null}
+                {activeAutomataSummary.activity?.latency_ms != null ? <span>{activeAutomataSummary.activity.latency_ms}ms</span> : null}
+              </div>
+
+              <button
+                className="automata-target-pill"
+                disabled={!activeAutomataSummary.targetPath}
+                onClick={() => {
+                  if (activeAutomataSummary.targetPath) {
+                    focusOnTargetPath(activeAutomataSummary.targetPath);
+                  }
+                }}
+                title={activeAutomataSummary.targetPath ?? 'No target'}
+                type="button"
+              >
+                <Target size={12} />
+                <span>{formatShortPath(activeAutomataSummary.targetPath, 58)}</span>
+              </button>
+
+              <div className="automata-suggestions">
+                {activeAutomataSuggestions.map((suggestion) => (
+                  <button
+                    className={`automata-suggestion action-${suggestion.action ?? suggestion.kind}`}
+                    disabled={isSavingControl}
+                    key={suggestion.id}
+                    onClick={() => handleAutomataSuggestion(activeAutomataSummary, suggestion)}
+                    title={suggestion.prompt ?? suggestion.targetPath ?? suggestion.label}
+                    type="button"
+                  >
+                    {suggestion.kind === 'focus-target' ? (
+                      <Crosshair size={12} />
+                    ) : suggestion.action === 'repair' ? (
+                      <Wrench size={12} />
+                    ) : suggestion.action === 'explain' ? (
+                      <Eye size={12} />
+                    ) : suggestion.action === 'read' ? (
+                      <FileText size={12} />
+                    ) : (
+                      <Route size={12} />
+                    )}
+                    <span>{suggestion.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <form
+                className="automata-prompt-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void dispatchAutomataPrompt(activeAutomata, automataPromptInput);
+                }}
+              >
+                <textarea
+                  className="automata-prompt-input"
+                  onChange={(event) => setAutomataPromptInput(event.target.value)}
+                  placeholder="Directive..."
+                  value={automataPromptInput}
+                />
+                <div className="automata-prompt-actions">
+                  <button
+                    className="automata-secondary-button"
+                    onClick={() => selectAutomata(activeAutomataSummary)}
+                    type="button"
+                  >
+                    <Crosshair size={12} />
+                    <span>Focus</span>
+                  </button>
+                  <button
+                    className="automata-send-button"
+                    disabled={isSavingControl || automataPromptInput.trim().length === 0}
+                    type="submit"
+                  >
+                    {isSavingControl ? <Radio size={12} /> : <Send size={12} />}
+                    <span>{isSavingControl ? 'Sending' : 'Send'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div className="automata-empty">
+              <MessageSquareText size={15} />
+              <span>Select an automata</span>
+            </div>
+          )}
+        </aside>
 
         <div className="hud-minibar">
           <span className="hud-minibar-item">

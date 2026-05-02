@@ -3881,6 +3881,26 @@ export class LuxEngine {
       const lastAction = this.lastAgentAction.get(agent.id) ?? null;
       const lastLatency = this.lastAgentLatencyMs.get(agent.id) ?? null;
 
+      if (isLMMEntity(agent)) {
+        const lmmStatus: AgentActivity['status'] =
+          lastAction?.startsWith('move') === true
+            ? 'walking'
+            : lastAction === 'deposit' || lastAction === 'extract' || lastAction === 'recycle'
+              ? 'editing'
+              : 'idle';
+
+        activities.push({
+          agent_id: agent.id,
+          agent_role: role,
+          status: lmmStatus,
+          target_path: null,
+          tick: this.absoluteTick,
+          action: lastAction,
+          latency_ms: null,
+        });
+        continue;
+      }
+
       if (this.pendingAiAgents.has(agent.id)) {
         activities.push({
           agent_id: agent.id,
@@ -4218,6 +4238,11 @@ export class LuxEngine {
       if (!agent || !isLMMEntity(agent)) {
         continue;
       }
+
+      this.lastAgentAction.set(
+        agent.id,
+        decision.action === 'move' && decision.direction ? `move ${decision.direction}` : decision.action,
+      );
       this.executeLMMDecision(agent, decision);
     }
   }

@@ -1,14 +1,21 @@
 import { useState, type ReactElement } from 'react';
 import {
+  Activity,
+  AlertTriangle,
   Banknote,
   Bolt,
   ChevronDown,
   ChevronRight,
+  Crosshair,
   Eye,
   Factory,
+  FileText,
   GitBranch,
   Hammer,
   Landmark,
+  MapPin,
+  Radio,
+  Wrench,
 } from 'lucide-react';
 
 import type {
@@ -20,8 +27,12 @@ import type {
 } from './city-systems';
 
 interface AdvisorCouncilProps {
+  activeTargetPath?: string | null;
   city: CityCouncilState;
+  controlMode?: 'live' | 'preview';
+  isDispatching?: boolean;
   onAction: (action: AdvisorAction, targetPath: string) => void;
+  onFocusTarget: (targetPath: string) => void;
 }
 
 function systemIcon(system: CitySystemKey): ReactElement {
@@ -50,15 +61,42 @@ function advisorIcon(advisor: AdvisorReport): ReactElement {
 
 function actionIcon(action: AdvisorAction | null): ReactElement {
   if (action === 'repair') {
-    return <Hammer size={13} />;
+    return <Wrench size={13} />;
+  }
+
+  if (action === 'read') {
+    return <FileText size={13} />;
   }
 
   return <Eye size={13} />;
 }
 
-function renderSystem(report: CitySystemReport): ReactElement {
+function formatTargetPath(path: string | null): string {
+  if (!path) {
+    return 'No target';
+  }
+
+  if (path.length <= 44) {
+    return path;
+  }
+
+  return `...${path.slice(-41)}`;
+}
+
+function getPrimaryIssue(city: CityCouncilState): AdvisorReport | null {
+  return city.advisors[0] ?? null;
+}
+
+function renderSystem(
+  report: CitySystemReport,
+  onFocusTarget: AdvisorCouncilProps['onFocusTarget'],
+  activeTargetPath: string | null,
+): ReactElement {
+  const hasTarget = report.targetPath !== null;
+  const isActive = report.targetPath !== null && report.targetPath === activeTargetPath;
+
   return (
-    <div className={`city-system-card tone-${report.tone}`} key={report.key}>
+    <div className={`city-system-card tone-${report.tone} ${isActive ? 'is-active-target' : ''}`} key={report.key}>
       <div className="city-system-card-header">
         <span className="city-system-icon">{systemIcon(report.key)}</span>
         <span className="city-system-name">{report.name}</span>
@@ -76,15 +114,37 @@ function renderSystem(report: CitySystemReport): ReactElement {
       </div>
       <div className="city-system-status">{report.status}</div>
       <div className="city-system-detail">{report.detail}</div>
+      <button
+        aria-label={hasTarget ? `Focus ${report.name} target ${report.targetPath}` : `${report.name} has no target`}
+        className="city-system-focus"
+        disabled={!hasTarget}
+        onClick={() => {
+          if (report.targetPath) {
+            onFocusTarget(report.targetPath);
+          }
+        }}
+        title={report.targetPath ?? 'No target'}
+        type="button"
+      >
+        <Crosshair size={12} />
+        <span>{isActive ? 'Selected' : 'Focus'}</span>
+      </button>
     </div>
   );
 }
 
-function renderAdvisor(advisor: AdvisorReport, onAction: AdvisorCouncilProps['onAction']): ReactElement {
+function renderAdvisor(
+  advisor: AdvisorReport,
+  onAction: AdvisorCouncilProps['onAction'],
+  onFocusTarget: AdvisorCouncilProps['onFocusTarget'],
+  activeTargetPath: string | null,
+  isDispatching: boolean,
+): ReactElement {
   const canAct = advisor.action !== null && advisor.targetPath !== null;
+  const isActive = advisor.targetPath !== null && advisor.targetPath === activeTargetPath;
 
   return (
-    <article className={`advisor-card mood-${advisor.mood}`} key={advisor.id}>
+    <article className={`advisor-card mood-${advisor.mood} ${isActive ? 'is-active-target' : ''}`} key={advisor.id}>
       <div className="advisor-card-header">
         <span className="advisor-portrait">{advisorIcon(advisor)}</span>
         <span className="advisor-heading">
@@ -95,33 +155,75 @@ function renderAdvisor(advisor: AdvisorReport, onAction: AdvisorCouncilProps['on
       </div>
       <div className="advisor-headline">{advisor.headline}</div>
       <p className="advisor-counsel">{advisor.counsel}</p>
+      <div className="advisor-target-row">
+        <span className="advisor-target-label">Target</span>
+        <button
+          className="advisor-target"
+          disabled={!advisor.targetPath}
+          onClick={() => {
+            if (advisor.targetPath) {
+              onFocusTarget(advisor.targetPath);
+            }
+          }}
+          title={advisor.targetPath ?? 'No actionable target'}
+          type="button"
+        >
+          <MapPin size={12} />
+          <span>{formatTargetPath(advisor.targetPath)}</span>
+        </button>
+      </div>
       <div className="advisor-footer">
         <span className="advisor-system">
           {systemIcon(advisor.system)}
           {advisor.system}
         </span>
-        <button
-          className="advisor-action"
-          disabled={!canAct}
-          onClick={() => {
-            if (advisor.action && advisor.targetPath) {
-              onAction(advisor.action, advisor.targetPath);
-            }
-          }}
-          title={canAct ? `${advisor.actionLabel}: ${advisor.targetPath}` : 'No actionable target'}
-          type="button"
-        >
-          {actionIcon(advisor.action)}
-          <span>{advisor.actionLabel ?? 'Stand By'}</span>
-        </button>
+        <span className="advisor-actions">
+          <button
+            className="advisor-focus-action"
+            disabled={!advisor.targetPath}
+            onClick={() => {
+              if (advisor.targetPath) {
+                onFocusTarget(advisor.targetPath);
+              }
+            }}
+            title={advisor.targetPath ? `Focus ${advisor.targetPath}` : 'No actionable target'}
+            type="button"
+          >
+            <Crosshair size={13} />
+            <span>Focus</span>
+          </button>
+          <button
+            className="advisor-action"
+            disabled={!canAct || isDispatching}
+            onClick={() => {
+              if (advisor.action && advisor.targetPath) {
+                onAction(advisor.action, advisor.targetPath);
+              }
+            }}
+            title={canAct ? `${advisor.actionLabel}: ${advisor.targetPath}` : 'No actionable target'}
+            type="button"
+          >
+            {isDispatching && isActive ? <Radio size={13} /> : actionIcon(advisor.action)}
+            <span>{isDispatching && isActive ? 'Sending' : advisor.actionLabel ?? 'Stand By'}</span>
+          </button>
+        </span>
       </div>
     </article>
   );
 }
 
-export function AdvisorCouncil({ city, onAction }: AdvisorCouncilProps): ReactElement {
-  const [briefingOpen, setBriefingOpen] = useState(false);
+export function AdvisorCouncil({
+  activeTargetPath = null,
+  city,
+  controlMode = 'preview',
+  isDispatching = false,
+  onAction,
+  onFocusTarget,
+}: AdvisorCouncilProps): ReactElement {
+  const [briefingOpen, setBriefingOpen] = useState(true);
   const systems = [city.systems.power, city.systems.traffic, city.systems.pollution];
+  const primaryIssue = getPrimaryIssue(city);
+  const hasPrimaryTarget = primaryIssue?.targetPath != null;
 
   return (
     <aside className={`advisor-council ${briefingOpen ? 'is-open' : 'is-collapsed'}`} aria-label="Advisor Council">
@@ -147,8 +249,40 @@ export function AdvisorCouncil({ city, onAction }: AdvisorCouncilProps): ReactEl
 
       {briefingOpen ? (
         <div className="advisor-council-body" id="advisor-council-body">
+          <div className={`mayor-priority mood-${primaryIssue?.mood ?? 'pleased'}`}>
+            <span className="mayor-priority-icon">
+              {primaryIssue?.mood === 'alarmed' ? <AlertTriangle size={16} /> : <Activity size={16} />}
+            </span>
+            <span className="mayor-priority-copy">
+              <span className="mayor-priority-kicker">Current Priority</span>
+              <span className="mayor-priority-title">
+                {primaryIssue?.headline ?? 'No urgent council motion is pending.'}
+              </span>
+              <span className="mayor-priority-target">{formatTargetPath(primaryIssue?.targetPath ?? null)}</span>
+            </span>
+            <button
+              className="mayor-priority-action"
+              disabled={!hasPrimaryTarget}
+              onClick={() => {
+                if (primaryIssue?.targetPath) {
+                  onFocusTarget(primaryIssue.targetPath);
+                }
+              }}
+              title={primaryIssue?.targetPath ?? 'No priority target'}
+              type="button"
+            >
+              <Crosshair size={13} />
+              <span>{activeTargetPath === primaryIssue?.targetPath ? 'Selected' : 'Focus'}</span>
+            </button>
+          </div>
+
+          <div className={`mayor-mode is-${controlMode}`}>
+            <span>{controlMode === 'live' ? 'Live control link' : 'Preview controls'}</span>
+            <small>{controlMode === 'live' ? 'Commands dispatch to the engine.' : 'Buttons focus targets locally.'}</small>
+          </div>
+
           <div className="city-system-grid">
-            {systems.map((system) => renderSystem(system))}
+            {systems.map((system) => renderSystem(system, onFocusTarget, activeTargetPath))}
           </div>
 
           <div className="advisor-counts">
@@ -159,7 +293,9 @@ export function AdvisorCouncil({ city, onAction }: AdvisorCouncilProps): ReactEl
           </div>
 
           <div className="advisor-list">
-            {city.advisors.map((advisor) => renderAdvisor(advisor, onAction))}
+            {city.advisors.map((advisor) =>
+              renderAdvisor(advisor, onAction, onFocusTarget, activeTargetPath, isDispatching),
+            )}
           </div>
         </div>
       ) : null}
