@@ -387,9 +387,9 @@ function drawLotMarkings(
 function getLotPropMix(kind: string): Record<string, number> {
   switch (kind) {
     case 'factory':
-      return { loading: 0.8, pallet: 0.65, utility: 0.4, fence: 0.45 };
+      return { loading: 0.8, pallet: 0.65, utility: 0.4, fence: 0.45, crane: 0.24 };
     case 'warehouse':
-      return { loading: 0.7, pallet: 0.75, parking: 0.45, dumpster: 0.35 };
+      return { loading: 0.7, pallet: 0.75, parking: 0.45, dumpster: 0.35, container: 0.42 };
     case 'shopfront':
       return { awning: 0.75, planter: 0.45, bench: 0.35, bike: 0.28 };
     case 'campus':

@@ -1,7 +1,9 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import {
   Banknote,
   Bolt,
+  ChevronDown,
+  ChevronRight,
   Eye,
   Factory,
   GitBranch,
@@ -118,35 +120,49 @@ function renderAdvisor(advisor: AdvisorReport, onAction: AdvisorCouncilProps['on
 }
 
 export function AdvisorCouncil({ city, onAction }: AdvisorCouncilProps): ReactElement {
+  const [briefingOpen, setBriefingOpen] = useState(false);
   const systems = [city.systems.power, city.systems.traffic, city.systems.pollution];
 
   return (
-    <aside className="advisor-council" aria-label="Advisor Council">
-      <div className="advisor-council-header">
-        <div>
-          <div className="advisor-council-kicker">Council</div>
-          <h2 className="advisor-council-title">Mayor Briefing</h2>
-        </div>
-        <div className="city-integrity">
+    <aside className={`advisor-council ${briefingOpen ? 'is-open' : 'is-collapsed'}`} aria-label="Advisor Council">
+      <button
+        aria-controls="advisor-council-body"
+        aria-expanded={briefingOpen}
+        className="advisor-council-toggle"
+        onClick={() => setBriefingOpen((current) => !current)}
+        type="button"
+      >
+        <span className="advisor-council-heading">
+          <span className="advisor-council-kicker">Council</span>
+          <span className="advisor-council-title">Mayor Briefing</span>
+        </span>
+        <span className="city-integrity">
           <span>{city.integrity}</span>
           <small>Integrity</small>
+        </span>
+        <span className="advisor-council-chevron" aria-hidden="true">
+          {briefingOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+      </button>
+
+      {briefingOpen ? (
+        <div className="advisor-council-body" id="advisor-council-body">
+          <div className="city-system-grid">
+            {systems.map((system) => renderSystem(system))}
+          </div>
+
+          <div className="advisor-counts">
+            <span>{city.counts.structures} zones</span>
+            <span>{city.counts.asymmetry} faults</span>
+            <span>{city.counts.criticalMass} critical</span>
+            <span>{city.counts.queueDepth} queue</span>
+          </div>
+
+          <div className="advisor-list">
+            {city.advisors.map((advisor) => renderAdvisor(advisor, onAction))}
+          </div>
         </div>
-      </div>
-
-      <div className="city-system-grid">
-        {systems.map((system) => renderSystem(system))}
-      </div>
-
-      <div className="advisor-counts">
-        <span>{city.counts.structures} zones</span>
-        <span>{city.counts.asymmetry} faults</span>
-        <span>{city.counts.criticalMass} critical</span>
-        <span>{city.counts.queueDepth} queue</span>
-      </div>
-
-      <div className="advisor-list">
-        {city.advisors.map((advisor) => renderAdvisor(advisor, onAction))}
-      </div>
+      ) : null}
     </aside>
   );
 }

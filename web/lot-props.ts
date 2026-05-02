@@ -74,6 +74,12 @@ export function drawLotProps(
         case 'loading':
           drawLoadingDock(context, screen, layout);
           break;
+        case 'container':
+          drawContainer(context, screen, layout, seed + propIndex + i);
+          break;
+        case 'crane':
+          drawYardCrane(context, screen, layout, seed + propIndex + i);
+          break;
         case 'awning':
           drawAwning(context, screen, layout, seed + propIndex + i);
           break;
@@ -227,6 +233,57 @@ function drawLoadingDock(context: CanvasRenderingContext2D, screen: ScreenPoint,
   context.strokeStyle = 'rgba(234, 179, 8, 0.7)';
   context.lineWidth = 1;
   context.strokeRect(screen.sx - w, screen.sy - h, w * 2, h);
+}
+
+function drawContainer(context: CanvasRenderingContext2D, screen: ScreenPoint, layout: IsoLayout, seed: number): void {
+  const colors = ['#f97316', '#2563eb', '#64748b', '#dc2626'];
+  const color = colors[seed % colors.length] ?? '#64748b';
+  const w = layout.tileWidth * 0.22;
+  const h = layout.tileHeight * 0.13;
+
+  context.fillStyle = withAlpha(color, 0.82);
+  context.fillRect(screen.sx - w, screen.sy - h, w * 2, h);
+  context.strokeStyle = 'rgba(15, 23, 42, 0.7)';
+  context.lineWidth = 0.8;
+  context.strokeRect(screen.sx - w, screen.sy - h, w * 2, h);
+
+  context.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  context.lineWidth = 0.6;
+  for (let index = 1; index < 4; index += 1) {
+    const x = screen.sx - w + ((w * 2 * index) / 4);
+    context.beginPath();
+    context.moveTo(x, screen.sy - h + 1);
+    context.lineTo(x, screen.sy - 1);
+    context.stroke();
+  }
+}
+
+function drawYardCrane(context: CanvasRenderingContext2D, screen: ScreenPoint, layout: IsoLayout, seed: number): void {
+  const mastHeight = layout.tileHeight * 0.5;
+  const jibLength = layout.tileWidth * (0.34 + ((seed % 3) * 0.04));
+  const direction = seed % 2 === 0 ? 1 : -1;
+
+  context.save();
+  context.strokeStyle = 'rgba(245, 158, 11, 0.88)';
+  context.lineWidth = 1.2;
+  context.beginPath();
+  context.moveTo(screen.sx, screen.sy);
+  context.lineTo(screen.sx, screen.sy - mastHeight);
+  context.lineTo(screen.sx + (jibLength * direction), screen.sy - mastHeight - (layout.tileHeight * 0.08));
+  context.stroke();
+
+  context.strokeStyle = 'rgba(148, 163, 184, 0.78)';
+  context.lineWidth = 0.8;
+  const hookX = screen.sx + (jibLength * direction * 0.72);
+  const hookY = screen.sy - mastHeight - (layout.tileHeight * 0.06);
+  context.beginPath();
+  context.moveTo(hookX, hookY);
+  context.lineTo(hookX, hookY + (layout.tileHeight * 0.22));
+  context.stroke();
+
+  context.fillStyle = 'rgba(30, 41, 59, 0.86)';
+  context.fillRect(hookX - 2, hookY + (layout.tileHeight * 0.22), 4, 3);
+  context.restore();
 }
 
 function drawAwning(

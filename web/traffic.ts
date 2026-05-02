@@ -286,6 +286,208 @@ function drawMailbox(
   context.restore();
 }
 
+function drawInsetPaving(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  fill: string,
+  stroke: string,
+): void {
+  const paving = createPrismProjection(x + 0.16, y + 0.16, 0.065, 0.68, 0.68, 0.012, layout);
+  fillFace(context, paving.left, withAlpha(fill, 0.72), withAlpha(stroke, 0.2));
+  fillFace(context, paving.right, withAlpha(fill, 0.78), withAlpha(stroke, 0.2));
+  fillFace(context, paving.top, withAlpha(fill, 0.9), withAlpha(stroke, 0.32));
+}
+
+function drawFountain(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  phase: number,
+): void {
+  const p = toScreen(x + 0.5, y + 0.5, 0.09, layout);
+  const pulse = 0.5 + (Math.sin(phase * 0.08 + x + y) * 0.5);
+
+  context.save();
+  context.fillStyle = 'rgba(148, 163, 184, 0.82)';
+  context.beginPath();
+  context.ellipse(p.sx, p.sy, layout.tileWidth * 0.16, layout.tileHeight * 0.09, 0, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = 'rgba(71, 85, 105, 0.58)';
+  context.lineWidth = 1;
+  context.stroke();
+
+  context.fillStyle = 'rgba(96, 165, 250, 0.62)';
+  context.beginPath();
+  context.ellipse(p.sx, p.sy - 1, layout.tileWidth * 0.11, layout.tileHeight * 0.055, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = `rgba(191, 219, 254, ${0.35 + (pulse * 0.28)})`;
+  context.lineWidth = 1.1;
+  context.beginPath();
+  context.moveTo(p.sx, p.sy - 2);
+  context.quadraticCurveTo(p.sx - 5, p.sy - 10, p.sx - 1, p.sy - 15);
+  context.moveTo(p.sx, p.sy - 2);
+  context.quadraticCurveTo(p.sx + 5, p.sy - 10, p.sx + 1, p.sy - 15);
+  context.stroke();
+  context.restore();
+}
+
+function drawTransitShelter(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+): void {
+  const p = toScreen(x + 0.5, y + 0.5, 0.08, layout);
+  context.save();
+  context.fillStyle = 'rgba(15, 23, 42, 0.42)';
+  context.fillRect(p.sx - 12, p.sy - 4, 24, 4);
+
+  context.strokeStyle = 'rgba(148, 163, 184, 0.88)';
+  context.lineWidth = 1;
+  for (const offset of [-9, 9]) {
+    context.beginPath();
+    context.moveTo(p.sx + offset, p.sy - 4);
+    context.lineTo(p.sx + offset, p.sy - 22);
+    context.stroke();
+  }
+
+  context.fillStyle = 'rgba(30, 41, 59, 0.9)';
+  context.fillRect(p.sx - 14, p.sy - 24, 28, 5);
+  context.fillStyle = 'rgba(125, 211, 252, 0.62)';
+  context.fillRect(p.sx - 7, p.sy - 18, 14, 10);
+  context.fillStyle = 'rgba(249, 250, 251, 0.9)';
+  context.fillRect(p.sx + 11, p.sy - 19, 4, 8);
+  context.restore();
+}
+
+function drawMarketStall(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  seed: number,
+): void {
+  const p = toScreen(x + 0.5, y + 0.5, 0.08, layout);
+  const colors = ['#ef4444', '#f59e0b', '#06b6d4', '#22c55e'];
+  const color = colors[Math.floor(seed * 100) % colors.length] ?? '#ef4444';
+
+  context.save();
+  context.fillStyle = 'rgba(120, 53, 15, 0.86)';
+  context.fillRect(p.sx - 9, p.sy - 5, 18, 4);
+  context.fillStyle = withAlpha(color, 0.88);
+  context.beginPath();
+  context.moveTo(p.sx - 13, p.sy - 18);
+  context.lineTo(p.sx + 13, p.sy - 18);
+  context.lineTo(p.sx + 9, p.sy - 10);
+  context.lineTo(p.sx - 9, p.sy - 10);
+  context.closePath();
+  context.fill();
+
+  context.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+  context.lineWidth = 0.8;
+  for (let index = -2; index <= 2; index += 1) {
+    const stripeX = p.sx + (index * 5);
+    context.beginPath();
+    context.moveTo(stripeX, p.sy - 18);
+    context.lineTo(stripeX * 0.94 + p.sx * 0.06, p.sy - 10);
+    context.stroke();
+  }
+
+  context.fillStyle = 'rgba(251, 191, 36, 0.9)';
+  context.fillRect(p.sx - 6, p.sy - 8, 3, 3);
+  context.fillStyle = 'rgba(34, 197, 94, 0.85)';
+  context.fillRect(p.sx + 2, p.sy - 8, 3, 3);
+  context.restore();
+}
+
+function drawServiceYard(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  seed: number,
+): void {
+  drawInsetPaving(context, x, y, layout, 'rgba(92, 79, 58, 0.82)', '#0f172a');
+
+  const p = toScreen(x + 0.5, y + 0.5, 0.09, layout);
+  context.save();
+  context.strokeStyle = 'rgba(250, 204, 21, 0.58)';
+  context.lineWidth = 1;
+  context.setLineDash([4, 4]);
+  context.beginPath();
+  context.moveTo(p.sx - 13, p.sy - 7);
+  context.lineTo(p.sx + 13, p.sy + 3);
+  context.stroke();
+  context.setLineDash([]);
+
+  const barrelColor = seed > 0.86 ? 'rgba(248, 113, 113, 0.86)' : 'rgba(59, 130, 246, 0.82)';
+  context.fillStyle = barrelColor;
+  context.fillRect(p.sx - 7, p.sy - 9, 5, 8);
+  context.fillRect(p.sx - 1, p.sy - 7, 5, 7);
+  context.fillStyle = 'rgba(203, 213, 225, 0.72)';
+  context.fillRect(p.sx + 5, p.sy - 5, 8, 3);
+  context.restore();
+}
+
+function drawCargoCrane(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  seed: number,
+): void {
+  const p = toScreen(x + 0.5, y + 0.5, 0.08, layout);
+  const direction = seed > 0.5 ? 1 : -1;
+  const mastHeight = layout.tileHeight * 0.72;
+  const jibLength = layout.tileWidth * 0.48;
+
+  context.save();
+  context.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+  context.lineWidth = 1.4;
+  context.beginPath();
+  context.moveTo(p.sx, p.sy);
+  context.lineTo(p.sx, p.sy - mastHeight);
+  context.lineTo(p.sx + (jibLength * direction), p.sy - mastHeight - (layout.tileHeight * 0.14));
+  context.stroke();
+
+  context.strokeStyle = 'rgba(148, 163, 184, 0.86)';
+  context.lineWidth = 0.8;
+  const hookX = p.sx + (jibLength * direction * 0.72);
+  const hookY = p.sy - mastHeight - (layout.tileHeight * 0.1);
+  context.beginPath();
+  context.moveTo(hookX, hookY);
+  context.lineTo(hookX, hookY + (layout.tileHeight * 0.28));
+  context.stroke();
+
+  context.fillStyle = 'rgba(30, 41, 59, 0.9)';
+  context.fillRect(hookX - 2, hookY + (layout.tileHeight * 0.28), 4, 4);
+  context.restore();
+}
+
+function drawBuoy(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  layout: IsoLayout,
+  phase: number,
+): void {
+  const bob = Math.sin(phase * 0.08 + x * 0.9 + y * 0.7) * 1.5;
+  const p = toScreen(x + 0.5, y + 0.5, 0.055, layout);
+
+  context.save();
+  context.fillStyle = 'rgba(239, 68, 68, 0.9)';
+  context.beginPath();
+  context.ellipse(p.sx, p.sy + bob, 4, 6, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = 'rgba(248, 250, 252, 0.92)';
+  context.fillRect(p.sx - 3, p.sy + bob - 1, 6, 2);
+  context.restore();
+}
+
 function drawCrosswalk(
   context: CanvasRenderingContext2D,
   pt: { x: number; y: number },
@@ -404,6 +606,14 @@ function getTilePalette(
       left: 'rgba(92, 79, 58, 0.96)',
       right: 'rgba(118, 100, 74, 0.97)',
       top: 'rgba(160, 136, 101, 0.94)',
+    };
+  }
+
+  if (district?.type === 'harbor') {
+    return {
+      left: 'rgba(66, 86, 96, 0.96)',
+      right: 'rgba(86, 113, 126, 0.97)',
+      top: 'rgba(124, 150, 160, 0.94)',
     };
   }
 
@@ -1064,12 +1274,18 @@ export function drawGroundPlane(
         }
         if (seed > 0.7 && hasAdjacentLandTile(x, y, cityLayout)) {
           drawDockPost(context, x, y, layout);
+        } else if (layout.tileWidth > 16 && seed > 0.52 && seed < 0.58) {
+          drawBuoy(context, x, y, layout, phase);
         }
         continue;
       }
 
       if (district?.type === 'park' && !roadTile && !adjacentRoad) {
-        if (seed > 0.66) {
+        if (layout.tileWidth > 18 && seed > 0.46 && seed < 0.54) {
+          drawInsetPaving(context, x, y, layout, 'rgba(205, 213, 186, 0.6)', '#5f7d5f');
+        } else if (layout.tileWidth > 22 && seed > 0.54 && seed < 0.59) {
+          drawFountain(context, x, y, layout, phase);
+        } else if (seed > 0.66) {
           drawTree(context, x, y, layout, 'rgba(74, 222, 128, 0.95)');
         } else if (seed > 0.52) {
           drawBench(context, x, y, layout);
@@ -1106,6 +1322,14 @@ export function drawGroundPlane(
           drawMailbox(context, x, y, layout);
         }
 
+        if (layout.tileWidth > 20 && (district?.type === 'downtown' || district?.type === 'design')) {
+          if (seed > 0.66 && seed < 0.7) {
+            drawTransitShelter(context, x, y, layout);
+          } else if (seed > 0.7 && seed < 0.74) {
+            drawMarketStall(context, x, y, layout, seed);
+          }
+        }
+
         // Parking stripes in industrial districts
         if (district?.type === 'industrial' && seed > 0.55 && seed < 0.68) {
           drawParkingLines(context, x, y, layout);
@@ -1129,7 +1353,20 @@ export function drawGroundPlane(
       }
 
       if (district?.type === 'industrial' && !roadTile && !adjacentRoad && seed > 0.74) {
-        drawContainer(context, x, y, layout, seed > 0.86 ? '#f97316' : '#64748b');
+        if (layout.tileWidth > 18 && seed > 0.82 && seed < 0.9) {
+          drawServiceYard(context, x, y, layout, seed);
+        } else {
+          drawContainer(context, x, y, layout, seed > 0.86 ? '#f97316' : '#64748b');
+        }
+        continue;
+      }
+
+      if (district?.type === 'harbor' && !roadTile && !adjacentRoad && layout.tileWidth > 18) {
+        if (seed > 0.72 && seed < 0.8) {
+          drawContainer(context, x, y, layout, seed > 0.76 ? '#2563eb' : '#f97316');
+        } else if (seed > 0.88) {
+          drawCargoCrane(context, x, y, layout, seed);
+        }
         continue;
       }
     }
