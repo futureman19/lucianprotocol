@@ -1,5 +1,6 @@
 import 'dotenv/config';
 
+import { extractGraph } from './graphify-bridge';
 import { createRepositoryOverlay, saveRepositoryOverlay, syncRepositoryEntitiesToSupabase } from './git-parser';
 
 async function main(): Promise<void> {
@@ -11,6 +12,16 @@ async function main(): Promise<void> {
 
   const overlay = await createRepositoryOverlay(repositoryPath);
   await saveRepositoryOverlay(overlay);
+
+  void (async () => {
+    const graph = await extractGraph(overlay.repoRoot, overlay.repoName, overlay.headSha);
+    if (graph) {
+      console.log(
+        `[graphify] repo=${graph.repoName} head=${graph.headSha.slice(0, 8)} nodes=${graph.graph.nodes.length} edges=${graph.graph.edges.length}`,
+      );
+    }
+  })();
+
   await syncRepositoryEntitiesToSupabase(overlay.entities);
 
   const fileCount = overlay.entities.filter((entity) => entity.type === 'file').length;

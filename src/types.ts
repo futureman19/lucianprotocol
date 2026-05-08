@@ -106,6 +106,51 @@ export const GitStatusSchema = z.enum([
 ]);
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 
+export const KnowledgeNeighborSchema = z.object({
+  kind: z.enum(['contains', 'called_by', 'calls', 'relates_to', 'surprising']),
+  target_path: z.string(),
+  target_label: z.string(),
+  confidence: z.enum(['EXTRACTED', 'INFERRED', 'AMBIGUOUS']),
+});
+export type KnowledgeNeighbor = z.infer<typeof KnowledgeNeighborSchema>;
+
+export const KnowledgeContextSchema = z.object({
+  god_nodes: z.array(z.string()),
+  neighbors: z.array(KnowledgeNeighborSchema),
+  cluster_id: z.number().nullable().optional(),
+});
+export type KnowledgeContext = z.infer<typeof KnowledgeContextSchema>;
+
+export interface GraphifyNode {
+  id: string;
+  label: string;
+  type: string;
+  source_file?: string;
+  cluster?: number;
+  centrality?: number;
+}
+
+export interface GraphifyEdge {
+  source: string;
+  target: string;
+  type: string;
+  confidence: 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
+}
+
+export interface GraphifyGraph {
+  nodes: GraphifyNode[];
+  edges: GraphifyEdge[];
+  god_nodes?: string[];
+  surprising_connections?: Array<{ from: string; to: string; reason: string }>;
+}
+
+export interface EnrichedGraph {
+  graph: GraphifyGraph;
+  repoName: string;
+  headSha: string;
+  generatedAt: string;
+}
+
 export const TileOccupantSchema = z.enum([
   'empty',
   'boundary',
@@ -502,6 +547,30 @@ export interface Database {
         Row: OperatorControl;
         Insert: OperatorControl;
         Update: Partial<OperatorControl>;
+        Relationships: [];
+      };
+      knowledge_graphs: {
+        Row: {
+          id: string;
+          repo_name: string;
+          head_sha: string;
+          graph_json: EnrichedGraph;
+          generated_at: string;
+        };
+        Insert: {
+          id?: string;
+          repo_name: string;
+          head_sha: string;
+          graph_json: EnrichedGraph;
+          generated_at?: string;
+        };
+        Update: Partial<{
+          id: string;
+          repo_name: string;
+          head_sha: string;
+          graph_json: EnrichedGraph;
+          generated_at: string;
+        }>;
         Relationships: [];
       };
     };

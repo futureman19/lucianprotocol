@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 
 import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import path from 'node:path';
@@ -101,8 +102,13 @@ import {
   type AgentRole,
   type ControlStatus,
   type Direction,
+  type EnrichedGraph,
   type Entity,
   type ExplainStatus,
+  type GraphifyEdge,
+  type GraphifyNode,
+  type KnowledgeContext,
+  type KnowledgeNeighbor,
   type NeighborhoodScan,
   type NodeState,
   type OperatorAction,
@@ -184,6 +190,8 @@ const SUPABASE_WORLD_STATE_SYNC_INTERVAL_TICKS = 1;
 const EXPLANATION_STREAM_CHARS_PER_TICK = 220;
 const LMM_CONSTRUCTION_PROMOTE_THRESHOLD = 5;
 const LMM_CONSTRUCTION_SUBMIT_THRESHOLD = 10;
+const GRAPHIFY_CACHE_DIRECTORY = path.join(process.cwd(), '.lux-state', 'graphify');
+const INVALID_CACHE_FILENAME_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
 function isConstructionProgressNodeState(
   nodeState: NodeState | null | undefined,
@@ -230,6 +238,24 @@ function getContentHashForMemory(entity: Entity): string {
   return createHash('sha1')
     .update(entity.content ?? entity.content_preview ?? entity.path ?? entity.name ?? entity.id)
     .digest('hex');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCachedKnowledgeGraph(value: unknown): value is EnrichedGraph {
+  if (!isRecord(value) || !isRecord(value.graph)) {
+    return false;
+  }
+
+  return (
+    typeof value.repoName === 'string' &&
+    typeof value.headSha === 'string' &&
+    typeof value.generatedAt === 'string' &&
+    Array.isArray(value.graph.nodes) &&
+    Array.isArray(value.graph.edges)
+  );
 }
 
 export function findReadableTargetInEntities(
@@ -301,6 +327,11 @@ export class LuxEngine {
     () => null,
   );
   private readonly positionIndex = new Map<string, string[]>();
+  private knowledgeGraph: EnrichedGraph | null = null;
+  private nodeByFile = new Map<string, GraphifyNode[]>();
+  private edgeBySource = new Map<string, GraphifyEdge[]>();
+  private nodeById = new Map<string, GraphifyNode>();
+  private godNodeIds = new Set<string>();
   private readonly agentIds: string[] = [];
   private readonly decisionQueue = new Map<string, QueuedDecision>();
   private readonly pendingAiAgents = new Map<string, PendingAiRequest>();
@@ -410,6 +441,54 @@ export class LuxEngine {
     console.log(`[stop] ${reason}`);
   }
 
+  public getKnowledgeContext(filePath: string | null | undefined): KnowledgeContext | null {
+    const normalizedFilePath = this.normalizeKnowledgePath(filePath);
+    if (!normalizedFilePath || !this.knowledgeGraph) {
+      return null;
+    }
+
+    const semanticNodes = this.nodeByFile.get(normalizedFilePath) ?? [];
+    if (semanticNodes.length === 0) {
+      return null;
+    }
+
+    const neighbors: KnowledgeNeighbor[] = [];
+    const seenTargetPaths = new Set<string>();
+
+    for (const semanticNode of semanticNodes) {
+      const edges = this.edgeBySource.get(semanticNode.id) ?? [];
+      for (const edge of edges) {
+        const targetNode = this.nodeById.get(edge.target);
+        const targetPath = this.normalizeKnowledgePath(targetNode?.source_file);
+        if (!targetNode || !targetPath || seenTargetPaths.has(targetPath)) {
+          continue;
+        }
+
+        seenTargetPaths.add(targetPath);
+        neighbors.push({
+          kind: this.toKnowledgeNeighborKind(edge),
+          target_path: targetPath,
+          target_label: targetNode.label,
+          confidence: edge.confidence,
+        });
+
+        if (neighbors.length >= 8) {
+          break;
+        }
+      }
+
+      if (neighbors.length >= 8) {
+        break;
+      }
+    }
+
+    return {
+      god_nodes: Array.from(this.godNodeIds).slice(0, 5),
+      neighbors,
+      cluster_id: semanticNodes[0]?.cluster ?? null,
+    };
+  }
+
   private startRun(mode: 'boot' | 'reset'): void {
     const structureCount = this.getStructureEntities().length;
 
@@ -494,6 +573,8 @@ export class LuxEngine {
     if (this.goalId.length === 0) {
       throw new Error('Initial world is missing a goal entity.');
     }
+
+    this.loadKnowledgeGraph();
   }
 
   private updateActiveRepositoryMetadata(structureEntities: Entity[]): void {
@@ -581,6 +662,7 @@ export class LuxEngine {
     this.applyStructureOverlay(overlay.entities);
     this.syncOperatorIntent(overlay.entities);
     console.log(`[control] activated repository overlay repo=${overlay.repoName} path=${overlay.repoPath}`);
+    this.loadKnowledgeGraph();
   }
 
   private applyStructureOverlay(overlayEntities: Entity[]): void {
@@ -1392,6 +1474,140 @@ export class LuxEngine {
       isStructureEntity(entity),
     );
     return this.structureEntitiesCache;
+  }
+
+  private sanitizeGraphCacheSegment(value: string): string {
+    return Array.from(value, (char) => (
+      char.charCodeAt(0) < 32 || INVALID_CACHE_FILENAME_CHARS.has(char) ? '_' : char
+    )).join('');
+  }
+
+  private clearKnowledgeGraph(): void {
+    this.knowledgeGraph = null;
+    this.nodeByFile.clear();
+    this.edgeBySource.clear();
+    this.nodeById.clear();
+    this.godNodeIds.clear();
+  }
+
+  private normalizeKnowledgePath(filePath: string | null | undefined): string | null {
+    const rawPath = filePath?.trim();
+    if (!rawPath) {
+      return null;
+    }
+
+    if (this.activeRepoPath && path.isAbsolute(rawPath)) {
+      const relativePath = path.relative(this.activeRepoPath, rawPath);
+      if (relativePath.length === 0) {
+        return '.';
+      }
+      if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
+        return relativePath.replace(/\\/g, '/');
+      }
+    }
+
+    const normalizedPath = rawPath.replace(/\\/g, '/');
+    return normalizedPath.startsWith('./') ? normalizedPath.slice(2) : normalizedPath;
+  }
+
+  private toKnowledgeNeighborKind(edge: GraphifyEdge): KnowledgeNeighbor['kind'] {
+    const edgeType = edge.type.toLowerCase();
+    if (edgeType.includes('surpris')) {
+      return 'surprising';
+    }
+    if (edgeType.includes('called_by')) {
+      return 'called_by';
+    }
+    if (edgeType.includes('contains')) {
+      return 'contains';
+    }
+    if (edgeType.includes('call')) {
+      return 'calls';
+    }
+    return 'relates_to';
+  }
+
+  private getKnowledgeGodNodeIds(graph: EnrichedGraph): string[] {
+    if (graph.graph.god_nodes && graph.graph.god_nodes.length > 0) {
+      return graph.graph.god_nodes;
+    }
+
+    const degreeByNode = new Map<string, number>();
+    for (const edge of graph.graph.edges) {
+      degreeByNode.set(edge.source, (degreeByNode.get(edge.source) ?? 0) + 1);
+      degreeByNode.set(edge.target, (degreeByNode.get(edge.target) ?? 0) + 1);
+    }
+
+    return [...graph.graph.nodes]
+      .sort((left, right) => {
+        const leftCentrality = left.centrality ?? degreeByNode.get(left.id) ?? 0;
+        const rightCentrality = right.centrality ?? degreeByNode.get(right.id) ?? 0;
+        return rightCentrality - leftCentrality || left.id.localeCompare(right.id);
+      })
+      .slice(0, 10)
+      .map((node) => node.id);
+  }
+
+  private loadKnowledgeGraph(): void {
+    this.clearKnowledgeGraph();
+
+    if (!this.activeRepoName || !existsSync(GRAPHIFY_CACHE_DIRECTORY)) {
+      return;
+    }
+
+    try {
+      const cachePrefix = `${this.sanitizeGraphCacheSegment(this.activeRepoName)}-`;
+      const candidates = readdirSync(GRAPHIFY_CACHE_DIRECTORY, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.startsWith(cachePrefix) && entry.name.endsWith('.json'))
+        .map((entry) => {
+          const filePath = path.join(GRAPHIFY_CACHE_DIRECTORY, entry.name);
+          return {
+            filePath,
+            modifiedAtMs: statSync(filePath).mtimeMs,
+          };
+        })
+        .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+
+      const selectedCache = candidates[0];
+      if (!selectedCache) {
+        return;
+      }
+
+      const parsed = JSON.parse(readFileSync(selectedCache.filePath, 'utf8')) as unknown;
+      if (!isCachedKnowledgeGraph(parsed)) {
+        console.warn(`[engine] knowledge graph cache invalid: ${selectedCache.filePath}`);
+        return;
+      }
+
+      this.knowledgeGraph = parsed;
+
+      for (const node of parsed.graph.nodes) {
+        this.nodeById.set(node.id, node);
+        const sourceFile = this.normalizeKnowledgePath(node.source_file);
+        if (!sourceFile) {
+          continue;
+        }
+
+        const nodesForFile = this.nodeByFile.get(sourceFile) ?? [];
+        nodesForFile.push(node);
+        this.nodeByFile.set(sourceFile, nodesForFile);
+      }
+
+      for (const edge of parsed.graph.edges) {
+        const edgesForSource = this.edgeBySource.get(edge.source) ?? [];
+        edgesForSource.push(edge);
+        this.edgeBySource.set(edge.source, edgesForSource);
+      }
+
+      this.godNodeIds = new Set(this.getKnowledgeGodNodeIds(parsed));
+      console.log(
+        `[engine] knowledge graph loaded: ${parsed.graph.nodes.length} nodes, ${parsed.graph.edges.length} edges`,
+      );
+    } catch (error: unknown) {
+      this.clearKnowledgeGraph();
+      const message = error instanceof Error ? error.message : 'unknown load error';
+      console.warn(`[engine] knowledge graph unavailable: ${message}`);
+    }
   }
 
   private getEntityPath(entity: Entity): string {
