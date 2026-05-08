@@ -18,6 +18,7 @@ export interface DrawBuildingContext {
   cityLayout: CityLayout;
   allEntities: Entity[];
   isSelected?: boolean;
+  semanticTint?: string | null;
 }
 
 type QuadFace = [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
@@ -1277,6 +1278,9 @@ export function drawBuilding(ctx: DrawBuildingContext): void {
     randomSeed,
     Math.min(1, 0.18 + geometry.ornamentation + geometry.activityLevel * 0.28),
   );
+  if (ctx.semanticTint) {
+    fillFace(context, roofFace, withAlpha(ctx.semanticTint, 0.16), withAlpha(ctx.semanticTint, 0.26), 0.7);
+  }
   drawConditionOverlays(context, entity, projection, layout, geometry.condition, randomSeed);
   drawIvy(
     context,

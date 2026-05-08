@@ -3,6 +3,8 @@ dist
 .env
 .env.local
 .lux-state
+.venv-graphify
+graphify-out
 .DS_Store
 npm-debug.log*
 .codex-runlogs/

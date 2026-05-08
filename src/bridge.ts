@@ -1,9 +1,15 @@
 import 'dotenv/config';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import path from 'node:path';
 import { simpleGit } from 'simple-git';
 
+import type { EnrichedGraph } from './types';
+
 const PORT = Number(process.env.BRIDGE_PORT ?? 3001);
+const GRAPHIFY_CACHE_DIRECTORY = path.join(process.cwd(), '.lux-state', 'graphify');
+const INVALID_CACHE_FILENAME_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 let engineProcess: ChildProcess | null = null;
 const engineLogs: string[] = [];
 const MAX_LOGS = 500;
@@ -33,6 +39,66 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => resolve(body));
   });
+}
+
+function sanitizeGraphCacheSegment(value: string): string {
+  return Array.from(value, (char) => (
+    char.charCodeAt(0) < 32 || INVALID_CACHE_FILENAME_CHARS.has(char) ? '_' : char
+  )).join('');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCachedKnowledgeGraph(value: unknown): value is EnrichedGraph {
+  if (!isRecord(value) || !isRecord(value.graph)) {
+    return false;
+  }
+
+  return (
+    typeof value.repoName === 'string' &&
+    typeof value.headSha === 'string' &&
+    typeof value.generatedAt === 'string' &&
+    Array.isArray(value.graph.nodes) &&
+    Array.isArray(value.graph.edges)
+  );
+}
+
+function loadCachedKnowledgeGraph(repoName: string | null, headSha: string | null): EnrichedGraph | null {
+  if (!existsSync(GRAPHIFY_CACHE_DIRECTORY)) {
+    return null;
+  }
+
+  const filePrefix = repoName ? `${sanitizeGraphCacheSegment(repoName)}-` : '';
+  const exactFile = repoName && headSha
+    ? path.join(
+        GRAPHIFY_CACHE_DIRECTORY,
+        `${sanitizeGraphCacheSegment(repoName)}-${sanitizeGraphCacheSegment(headSha)}.json`,
+      )
+    : null;
+  const candidates = exactFile && existsSync(exactFile)
+    ? [{ filePath: exactFile, modifiedAtMs: statSync(exactFile).mtimeMs }]
+    : readdirSync(GRAPHIFY_CACHE_DIRECTORY, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json') && entry.name.startsWith(filePrefix))
+        .map((entry) => {
+          const filePath = path.join(GRAPHIFY_CACHE_DIRECTORY, entry.name);
+          return { filePath, modifiedAtMs: statSync(filePath).mtimeMs };
+        })
+        .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(candidate.filePath, 'utf8')) as unknown;
+      if (isCachedKnowledgeGraph(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Ignore invalid cache files and try the next candidate.
+    }
+  }
+
+  return null;
 }
 
 function startEngine(): boolean {
@@ -133,6 +199,19 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
   if (url.pathname === '/api/engine/logs' && req.method === 'GET') {
     sendJson(res, 200, { logs: engineLogs });
+    return;
+  }
+
+  if (url.pathname === '/api/knowledge-graph' && req.method === 'GET') {
+    const repoName = url.searchParams.get('repoName');
+    const headSha = url.searchParams.get('headSha');
+    const graph = loadCachedKnowledgeGraph(repoName, headSha);
+    if (!graph) {
+      sendJson(res, 404, { graph: null });
+      return;
+    }
+
+    sendJson(res, 200, { graph });
     return;
   }
 

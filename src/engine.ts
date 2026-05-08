@@ -2096,9 +2096,7 @@ export class LuxEngine {
     prompt: string,
     origin: TaskOrigin = 'operator',
   ): Promise<void> {
-    const codebaseSummary = this.getStructureEntities()
-      .map((e) => `${e.type}: ${e.path ?? e.name ?? e.id}`)
-      .join('\n');
+    const codebaseSummary = this.buildGraphAwareCodebaseSummary();
 
     const tasks = await this.aiNavigator.requestVisionaryPlan(prompt, codebaseSummary);
 
@@ -2125,6 +2123,43 @@ export class LuxEngine {
     }
     this.hasAutoCommittedForCurrentTasks = false;
     console.log(`[visionary] planned ${tasks.length} tasks from ${origin} prompt`);
+  }
+
+  private buildLegacyCodebaseSummary(): string {
+    return this.getStructureEntities()
+      .map((entity) => `${entity.type}: ${entity.path ?? entity.name ?? entity.id}`)
+      .join('\n');
+  }
+
+  private buildGraphAwareCodebaseSummary(): string {
+    const graph = this.knowledgeGraph;
+    if (!graph) {
+      return this.buildLegacyCodebaseSummary();
+    }
+
+    const rootContext = this.getKnowledgeContext('.');
+    const godNodes = graph.graph.nodes
+      .filter((node) => this.godNodeIds.has(node.id))
+      .slice(0, 10)
+      .map((node) => `- ${node.label} (${node.type}) in ${node.source_file ?? '?'}`);
+    const surprises = (graph.graph.surprising_connections ?? [])
+      .slice(0, 5)
+      .map((connection) => `- ${connection.from} -> ${connection.to}: ${connection.reason}`);
+
+    console.log(
+      `[visionary] graph-aware summary repo=${this.activeRepoName ?? graph.repoName} nodes=${graph.graph.nodes.length} edges=${graph.graph.edges.length}`,
+    );
+
+    return [
+      `Repository: ${this.activeRepoName ?? 'unknown'}`,
+      `Graph nodes: ${graph.graph.nodes.length}`,
+      `Graph edges: ${graph.graph.edges.length}`,
+      ...(rootContext?.cluster_id != null ? [`Root cluster: ${rootContext.cluster_id}`] : []),
+      'Top god nodes (architectural anchors):',
+      ...(godNodes.length > 0 ? godNodes : ['- none']),
+      'Surprising cross-module links (technical debt / hidden coupling):',
+      ...(surprises.length > 0 ? surprises : ['- none']),
+    ].join('\n');
   }
 
   private assignPendingTasks(): void {
@@ -3773,6 +3808,15 @@ export class LuxEngine {
 
   private scanNeighborhood(agent: Entity): NeighborhoodScan {
     const objective = this.getObjectiveForAgent(agent);
+    const currentEntity = this.findEntityAtPosition(
+      { x: agent.x, y: agent.y, z: getPositionZ(agent) },
+      agent.id,
+    );
+    const currentPath =
+      currentEntity && (currentEntity.type === 'file' || currentEntity.type === 'directory')
+        ? currentEntity.path
+        : null;
+    const knowledgeContext = this.getKnowledgeContext(agent.objective_path ?? objective.path ?? currentPath);
 
     return {
       current_tick: this.getCurrentPhase(),
@@ -3795,6 +3839,7 @@ export class LuxEngine {
       pheromones: this.getVisiblePheromones(agent),
       agent_memory: this.getAgentMemory(agent.id),
       full_content: this.getFullContentForAgent(agent),
+      knowledge_context: knowledgeContext,
     };
   }
 

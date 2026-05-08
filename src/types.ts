@@ -442,6 +442,7 @@ export const NeighborhoodScanSchema = z.object({
   agent_memory: AgentMemorySchema,
   task_context: z.string().nullable().optional(),
   full_content: z.string().nullable().optional(),
+  knowledge_context: KnowledgeContextSchema.nullable().optional(),
 });
 
 export type NeighborhoodScan = z.input<typeof NeighborhoodScanSchema>;

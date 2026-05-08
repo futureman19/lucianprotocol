@@ -39,6 +39,7 @@ import {
   WorldStateSchema,
   type AgentActivity,
   type Entity,
+  type EnrichedGraph,
   type OperatorControl,
   type Task,
   type Weather,
@@ -63,6 +64,13 @@ import { computeCityLayout } from './city-layout';
 import { buildGitTree, type GitTreeNode } from './git-tree';
 import { AdvisorCouncil } from './AdvisorCouncil';
 import { computeCityCouncilState, type AdvisorAction } from './city-systems';
+import {
+  createSemanticGraphIndex,
+  getSemanticClusterId,
+  hasGodNode,
+  isEnrichedGraph,
+  type SemanticGraphIndex,
+} from './semantic-graph';
 
 interface Viewport {
   height: number;
@@ -149,6 +157,17 @@ const AUTO_HIDDEN_PATH_PREFIXES = [
   '.lux-state/',
 ] as const;
 
+const SEMANTIC_CLUSTER_PALETTE = [
+  '#38bdf8',
+  '#a3e635',
+  '#f472b6',
+  '#facc15',
+  '#2dd4bf',
+  '#fb7185',
+  '#c084fc',
+  '#f97316',
+] as const;
+
 function entityMapFromList(entities: Entity[]): Map<string, Entity> {
   return new Map(entities.map((entity) => [entity.id, entity]));
 }
@@ -177,6 +196,14 @@ function _withAlpha(hexColor: string, alpha: number): string {
   const green = Number.parseInt(normalized.slice(2, 4), 16);
   const blue = Number.parseInt(normalized.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function getSemanticTint(clusterId: number | null): string | null {
+  if (clusterId === null) {
+    return null;
+  }
+
+  return SEMANTIC_CLUSTER_PALETTE[Math.abs(clusterId) % SEMANTIC_CLUSTER_PALETTE.length] ?? null;
 }
 
 // getFileFootprint and getPrismHeight are imported from ./building-geometry
@@ -655,6 +682,109 @@ function drawGoal(context: CanvasRenderingContext2D, entity: Entity, layout: Iso
   context.restore();
 }
 
+function getSemanticRenderEntity(entity: Entity, semanticGraph: SemanticGraphIndex | null): Entity {
+  if (entity.type !== 'file' || !hasGodNode(semanticGraph, entity.path)) {
+    return entity;
+  }
+
+  return {
+    ...entity,
+    building_archetype: 'landmark',
+    landmark_role: 'critical',
+    importance_tier: 3,
+  };
+}
+
+function getSemanticSkyPoint(
+  entity: Entity,
+  displayPoints: Record<string, DisplayPoint>,
+  layout: IsoLayout,
+): { sx: number; sy: number } {
+  const display = displayPoints[entity.id] ?? { x: entity.x, y: entity.y };
+  const footprint = getFileFootprint(entity);
+  const height = getPrismHeight(entity);
+  return toScreen(
+    display.x + (footprint.width / 2),
+    display.y + (footprint.depth / 2),
+    (entity.z ?? 0) + height + 0.85,
+    layout,
+  );
+}
+
+function isScreenPointVisible(
+  point: { sx: number; sy: number },
+  viewport: Viewport,
+): boolean {
+  const margin = 120;
+  return (
+    point.sx >= -margin &&
+    point.sx <= viewport.width + margin &&
+    point.sy >= -margin &&
+    point.sy <= viewport.height + margin
+  );
+}
+
+function drawSemanticSkyways(
+  context: CanvasRenderingContext2D,
+  semanticGraph: SemanticGraphIndex | null,
+  entities: Entity[],
+  layout: IsoLayout,
+  viewport: Viewport,
+  displayPoints: Record<string, DisplayPoint>,
+  phase: number,
+): void {
+  if (!semanticGraph) {
+    return;
+  }
+
+  const entityByPath = new Map(
+    entities
+      .filter((entity) => (entity.type === 'file' || entity.type === 'directory') && entity.path)
+      .map((entity) => [entity.path as string, entity]),
+  );
+  let drawn = 0;
+
+  context.save();
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+
+  for (const connection of semanticGraph.connections) {
+    if (drawn >= 28) {
+      break;
+    }
+
+    const source = entityByPath.get(connection.sourcePath);
+    const target = entityByPath.get(connection.targetPath);
+    if (!source || !target) {
+      continue;
+    }
+
+    const start = getSemanticSkyPoint(source, displayPoints, layout);
+    const end = getSemanticSkyPoint(target, displayPoints, layout);
+    if (!isScreenPointVisible(start, viewport) || !isScreenPointVisible(end, viewport)) {
+      continue;
+    }
+
+    const lift = Math.max(28, Math.min(110, Math.abs(end.sx - start.sx) * 0.12 + layout.tileHeight * 0.8));
+    const controlX = (start.sx + end.sx) / 2;
+    const controlY = Math.min(start.sy, end.sy) - lift - Math.sin((phase + drawn) / 14) * 5;
+    const color = connection.surprising ? 'rgba(168, 85, 247, 0.42)' : 'rgba(45, 212, 191, 0.26)';
+
+    context.beginPath();
+    context.moveTo(start.sx, start.sy);
+    context.quadraticCurveTo(controlX, controlY, end.sx, end.sy);
+    context.strokeStyle = color;
+    context.lineWidth = connection.surprising ? 1.8 : 1.1;
+    context.shadowBlur = connection.surprising ? 12 : 8;
+    context.shadowColor = color;
+    context.stroke();
+
+    drawn += 1;
+  }
+
+  context.restore();
+}
+
 function drawAgentTethers(
   context: CanvasRenderingContext2D,
   agents: Entity[],
@@ -1112,6 +1242,7 @@ function drawEntities(
   cityLayout: import('./city-layout').CityLayout,
   selectedEntityId: string | null,
   weather: Weather,
+  semanticGraph: SemanticGraphIndex | null,
 ): void {
   const activeIds = new Set(entities.map((entity) => entity.id));
   for (const id of Object.keys(displayPoints)) {
@@ -1170,15 +1301,20 @@ function drawEntities(
     context.globalAlpha = 1 - (haze * fogMultiplier);
 
     if (isStructureEntity(entity)) {
+      const renderEntity = getSemanticRenderEntity(entity, semanticGraph);
+      const semanticTint = entity.type === 'file'
+        ? getSemanticTint(getSemanticClusterId(semanticGraph, entity.path))
+        : null;
       drawBuilding({
         context,
-        entity,
+        entity: renderEntity,
         display,
         layout,
         phase,
         cityLayout,
         allEntities: entities,
         isSelected: selectedEntityId === entity.id,
+        semanticTint,
       });
       context.restore();
       continue;
@@ -1566,6 +1702,7 @@ function App() {
   const entityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
   const visibleEntityListRef = useRef<Entity[]>(PREVIEW_ENTITIES);
   const visibleStructureListRef = useRef<Entity[]>(PREVIEW_ENTITIES.filter((entity) => isStructureEntity(entity)));
+  const knowledgeGraphRef = useRef<SemanticGraphIndex | null>(null);
   const displayPointsRef = useRef<Record<string, DisplayPoint>>({});
   const trafficRef = useRef(createTrafficSystem());
   const cityLayoutRef = useRef(computeCityLayout(PREVIEW_ENTITIES));
@@ -1581,6 +1718,7 @@ function App() {
   const previousActiveRepoRef = useRef<string | null>(null);
   const previousFocusPathRef = useRef<string | null>(null);
   const previousLoadedPathRef = useRef<string | null>(null);
+  const previousKnowledgeRepoRef = useRef<string | null>(null);
   const previousAgentPositionRef = useRef<string | null>(null);
   const previousCriticalMassSignatureRef = useRef<string>('');
   const previousAsymmetrySignatureRef = useRef<string>('');
@@ -2861,6 +2999,7 @@ function App() {
       const weather = weatherRef.current;
       const layoutData = cityLayoutRef.current;
       const isInteracting = isInteractingRef.current;
+      const semanticGraph = knowledgeGraphRef.current;
 
       drawBackdrop(context, viewport, phase, weather);
 
@@ -2897,6 +3036,16 @@ function App() {
         layoutData,
         selectedEntityRef.current?.id ?? null,
         weather,
+        semanticGraph,
+      );
+      drawSemanticSkyways(
+        context,
+        semanticGraph,
+        currentEntities,
+        layout,
+        viewport,
+        displayPointsRef.current,
+        phase,
       );
 
       // Overhead power/utility grid
@@ -2936,8 +3085,79 @@ function App() {
     supabaseRef.current = supabase;
     let cancelled = false;
     let channelHealthy = false;
+    let knowledgeRequestId = 0;
     let pollHandle: number | null = null;
     let snapshotInFlight = false;
+
+    const loadKnowledgeGraphForRepo = async (
+      repoName: string | null | undefined,
+      refreshKey: string | null | undefined = null,
+    ): Promise<void> => {
+      const normalizedRepoName = repoName?.trim() ?? '';
+      const knowledgeKey = `${normalizedRepoName}:${refreshKey ?? ''}`;
+      if (previousKnowledgeRepoRef.current === knowledgeKey) {
+        return;
+      }
+
+      previousKnowledgeRepoRef.current = knowledgeKey;
+      knowledgeRequestId += 1;
+      const requestId = knowledgeRequestId;
+
+      if (!normalizedRepoName) {
+        knowledgeGraphRef.current = null;
+        return;
+      }
+
+      const bridgeController = new AbortController();
+      const bridgeTimeout = window.setTimeout(() => {
+        bridgeController.abort();
+      }, 1500);
+
+      try {
+        const bridgeUrl = new URL('http://localhost:3001/api/knowledge-graph');
+        bridgeUrl.searchParams.set('repoName', normalizedRepoName);
+        const bridgeResponse = await fetch(bridgeUrl, { signal: bridgeController.signal });
+        if (!cancelled && requestId === knowledgeRequestId && bridgeResponse.ok) {
+          const bridgePayload = await bridgeResponse.json() as { graph?: unknown };
+          if (isEnrichedGraph(bridgePayload.graph)) {
+            knowledgeGraphRef.current = createSemanticGraphIndex(bridgePayload.graph);
+            return;
+          }
+        }
+      } catch {
+        // The local bridge is optional; Supabase remains the fallback.
+      } finally {
+        window.clearTimeout(bridgeTimeout);
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('knowledge_graphs')
+          .select('graph_json')
+          .eq('repo_name', normalizedRepoName)
+          .order('generated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (cancelled || requestId !== knowledgeRequestId) {
+          return;
+        }
+
+        if (error) {
+          knowledgeGraphRef.current = null;
+          return;
+        }
+
+        const graphJson = data?.graph_json as EnrichedGraph | null | undefined;
+        knowledgeGraphRef.current = isEnrichedGraph(graphJson)
+          ? createSemanticGraphIndex(graphJson)
+          : null;
+      } catch {
+        if (!cancelled && requestId === knowledgeRequestId) {
+          knowledgeGraphRef.current = null;
+        }
+      }
+    };
 
     const scheduleSnapshot = (delayMs: number): void => {
       if (cancelled) {
@@ -3016,7 +3236,13 @@ function App() {
         const parsedWorldState = WorldStateSchema.safeParse(worldRow);
         if (parsedWorldState.success) {
           setWorldState(parsedWorldState.data);
+          void loadKnowledgeGraphForRepo(
+            parsedWorldState.data.active_repo_name,
+            parsedWorldState.data.import_finished_at,
+          );
         }
+      } else {
+        void loadKnowledgeGraphForRepo(null);
       }
 
       if (controlRow) {
@@ -3089,6 +3315,10 @@ function App() {
           const parsedWorldState = WorldStateSchema.safeParse(payload.new);
           if (parsedWorldState.success) {
             setWorldState(parsedWorldState.data);
+            void loadKnowledgeGraphForRepo(
+              parsedWorldState.data.active_repo_name,
+              parsedWorldState.data.import_finished_at,
+            );
           }
         }
       })

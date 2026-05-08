@@ -92,6 +92,13 @@ const ARCHITECT_SYSTEM_PROMPT = [
   '  patch (target, old_text, new_text) — find old_text and replace with new_text. Use for renames, typo fixes, changing function signatures, updating constants.',
   '  insert (target, after_line, text) — insert text after the given 1-indexed line. after_line: 0 prepends to start. Use for adding imports, new functions, or test cases.',
   '  delete (target, start_line, end_line) — delete lines start_line through end_line inclusive (1-indexed). Use for removing dead code, unused imports, or old implementations.',
+  'KNOWLEDGE GRAPH LAYER:',
+  'knowledge_context reveals semantic relationships for the file you are standing on or targeting.',
+  'neighbors show functions, classes, or concepts that call, are called by, or relate to code in this file.',
+  'god_nodes are the most-connected concepts in the entire repo; prioritize exploring them.',
+  "A neighbor with kind 'surprising' indicates a non-obvious cross-module link worth investigating.",
+  'Use this layer to choose objectives and navigation targets that are semantically relevant, even if physically distant.',
+  'Do not let the knowledge graph override the Laws of the Hivemind or grid physics.',
   'Return JSON only.',
 ].join(' ');
 
@@ -102,6 +109,10 @@ const VISIONARY_SYSTEM_PROMPT = [
   'Given a user prompt and a codebase summary, output a JSON array of tasks.',
   'Each task must have: id (short string like "t1"), description (clear instruction), target_path (the file or directory to modify).',
   'Tasks should be specific and granular. Prefer 2-5 tasks per request.',
+  'codebase_summary now includes god_nodes (high-centrality concepts) and surprising_connections (unexpected cross-module links).',
+  'Use god_nodes to identify the architectural core.',
+  'Use surprising_connections to find hidden coupling that may need refactoring.',
+  'Tasks should target files involved in surprising connections or god node implementations.',
   'Return JSON only.',
 ].join(' ');
 

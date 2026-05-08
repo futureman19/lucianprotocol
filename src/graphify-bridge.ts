@@ -11,6 +11,7 @@ const GRAPHIFY_CACHE_DIRECTORY = path.join(process.cwd(), '.lux-state', 'graphif
 const GRAPHIFY_RUN_DIRECTORY = path.join(GRAPHIFY_CACHE_DIRECTORY, 'runs');
 const GRAPHIFY_PACKAGE = 'graphifyy[gemini]';
 const GRAPHIFY_OUTPUT_DIRECTORY = 'graphify-out';
+const SUPABASE_GRAPH_UPSERT_TIMEOUT_MS = 15_000;
 const INVALID_CACHE_FILENAME_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
 interface ProcessResult {
@@ -458,20 +459,40 @@ async function upsertKnowledgeGraph(graph: EnrichedGraph): Promise<void> {
     return;
   }
 
-  const { error } = await supabase
-    .from('knowledge_graphs')
-    .upsert(
-      {
-        repo_name: graph.repoName,
-        head_sha: graph.headSha,
-        graph_json: graph,
-        generated_at: graph.generatedAt,
-      },
-      { onConflict: 'repo_name,head_sha' },
-    );
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`knowledge_graphs upsert timed out after ${SUPABASE_GRAPH_UPSERT_TIMEOUT_MS}ms`));
+    }, SUPABASE_GRAPH_UPSERT_TIMEOUT_MS);
+    timeout.unref?.();
+  });
 
-  if (error) {
-    console.warn(`[graphify] Supabase knowledge_graphs upsert failed: ${error.message}`);
+  try {
+    const response = await Promise.race([
+      supabase
+        .from('knowledge_graphs')
+        .upsert(
+          {
+            repo_name: graph.repoName,
+            head_sha: graph.headSha,
+            graph_json: graph,
+            generated_at: graph.generatedAt,
+          },
+          { onConflict: 'repo_name,head_sha' },
+        ),
+      timeoutPromise,
+    ]);
+
+    if (response.error) {
+      console.warn(`[graphify] Supabase knowledge_graphs upsert failed: ${response.error.message}`);
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[graphify] Supabase knowledge_graphs upsert failed: ${message}`);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -511,7 +532,9 @@ export async function extractGraph(
 
     const venvPython = getVenvPythonExecutable();
     const runRoot = getRunRoot(repoName, headSha);
+    const graphifyOut = path.join(runRoot, GRAPHIFY_OUTPUT_DIRECTORY);
     await mkdir(runRoot, { recursive: true });
+    env.GRAPHIFY_OUT = graphifyOut;
 
     await runProcess(
       venvPython,
@@ -519,8 +542,8 @@ export async function extractGraph(
       { cwd: path.resolve(repoRoot), env },
     );
 
-    const graphPath = path.join(runRoot, GRAPHIFY_OUTPUT_DIRECTORY, 'graph.json');
-    const analysisPath = path.join(runRoot, GRAPHIFY_OUTPUT_DIRECTORY, '.graphify_analysis.json');
+    const graphPath = path.join(graphifyOut, 'graph.json');
+    const analysisPath = path.join(graphifyOut, '.graphify_analysis.json');
     if (!existsSync(graphPath)) {
       console.warn(`[graphify] Graphify completed but did not write ${graphPath}.`);
       return null;
