@@ -3908,6 +3908,28 @@ function App() {
           )}
         </aside>
 
+        {(worldState.explanation_status ?? 'idle') !== 'idle' ? (
+          <aside className="explanation-frame" aria-label="Operator explanation">
+            <header style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className={`explanation-status status-${worldState.explanation_status ?? 'idle'}`}>
+                {worldState.explanation_status ?? 'idle'}
+              </span>
+              {worldState.explanation_target_path ? (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  {worldState.explanation_target_path}
+                </span>
+              ) : null}
+            </header>
+            {worldState.explanation_error ? (
+              <p className="explanation-placeholder is-error">{worldState.explanation_error}</p>
+            ) : worldState.explanation_text ? (
+              <div className="explanation-body">{worldState.explanation_text}</div>
+            ) : (worldState.explanation_status === 'pending' || worldState.explanation_status === 'streaming') ? (
+              <p className="explanation-placeholder">Generating explanation…</p>
+            ) : null}
+          </aside>
+        ) : null}
+
         <div className="hud-minibar">
           <span className="hud-minibar-item">
             T{worldState.tick}:{worldState.phase}
