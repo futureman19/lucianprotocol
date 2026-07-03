@@ -420,6 +420,10 @@ export class LuxEngine {
     recycler: recyclerRule,
   };
 
+  // ──────────────────────────────────────────────────────────────────
+  //  Section 1: Lifecycle & Run Control
+  // ──────────────────────────────────────────────────────────────────
+
   public constructor(
     private readonly seed: string,
     private readonly tickIntervalMs = TICK_INTERVAL_MS,
@@ -501,6 +505,10 @@ export class LuxEngine {
       this.tickLoop();
     }, this.tickIntervalMs);
   }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  Section 2: World & Repository Sync
+  // ──────────────────────────────────────────────────────────────────
 
   private clearScheduledWork(): void {
     if (this.intervalHandle !== null) {
@@ -730,6 +738,10 @@ export class LuxEngine {
       this.beginDemolition(existing);
     }
   }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  Section 3: Structure Lifecycle & Mutation
+  // ──────────────────────────────────────────────────────────────────
 
   private createLifecycleEntity(entity: Entity): Entity {
     if (!isStructureEntity(entity)) {
@@ -1197,6 +1209,10 @@ export class LuxEngine {
     };
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 4: Cache, Mutation & Persistence
+  // ───────────────────────────────────────────────────────────────────────────────
+
   private nextMutationVersion(): number {
     this.mutationVersion += 1;
     return this.mutationVersion;
@@ -1476,6 +1492,10 @@ export class LuxEngine {
     return this.structureEntitiesCache;
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 6: Knowledge Graph
+  // ───────────────────────────────────────────────────────────────────────────────
+
   private sanitizeGraphCacheSegment(value: string): string {
     return Array.from(value, (char) => (
       char.charCodeAt(0) < 32 || INVALID_CACHE_FILENAME_CHARS.has(char) ? '_' : char
@@ -1638,6 +1658,10 @@ export class LuxEngine {
     });
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 5: Entity Registration & Indexing
+  // ───────────────────────────────────────────────────────────────────────────────
+
   private getNeighborhoodPositions(position: Position): Position[] {
     const z = getPositionZ(position);
 
@@ -1696,6 +1720,10 @@ export class LuxEngine {
 
     return null;
   }
+
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 7: Hivemind Targets & Selection
+  // ───────────────────────────────────────────────────────────────────────────────
 
   private selectClosestStructure(agent: Entity, candidates: Entity[]): Entity | null {
     const sorted = [...candidates].sort((left, right) => {
@@ -1763,6 +1791,10 @@ export class LuxEngine {
   }
 
   private idleSkipCount = 0;
+
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 8: Tick Loop & Idle Detection
+  // ───────────────────────────────────────────────────────────────────────────────
 
   private hasActiveLifecycleWork(): boolean {
     for (const entity of this.entities.values()) {
@@ -1977,6 +2009,10 @@ export class LuxEngine {
     this.processAutoCommit();
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 10: Visionary Planning
+  // ───────────────────────────────────────────────────────────────────────────────
+
   private triggerVisionaryPlanningIfNeeded(): void {
     if (this.visionaryPlanningPromise !== null) {
       return;
@@ -2161,6 +2197,10 @@ export class LuxEngine {
       ...(surprises.length > 0 ? surprises : ['- none']),
     ].join('\n');
   }
+
+  // ───────────────────────────────────────────────────────────────────────────────
+  //  Section 9: Task Pipeline & Reviews
+  // ───────────────────────────────────────────────────────────────────────────────
 
   private assignPendingTasks(): void {
     const architects = this.agentIds
