@@ -1,7 +1,0 @@
-[bridge] Engine bridge running on http://localhost:3001
-[bridge] POST http://localhost:3001/api/engine/start  → start engine
-[bridge] POST http://localhost:3001/api/engine/stop   → stop engine
-[bridge] GET  http://localhost:3001/api/engine/status → check status
-[bridge] POST http://localhost:3001/api/git/status  → git status
-[bridge] POST http://localhost:3001/api/git/diff    → git diff
-[bridge] POST http://localhost:3001/api/git/commit  → git commit

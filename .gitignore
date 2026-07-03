@@ -4,10 +4,23 @@ dist
 .env.local
 .lux-state
 .venv-graphify
+.venv-pdf
 graphify-out
 .DS_Store
 npm-debug.log*
 .codex-runlogs/
+
+# Loose extracted-paper assets from a prior Codex session — keep on disk
+# (under books/, notes/) if useful, never in the repo root.
+book_page_*_img_0.png
+page_*_img_0.png
+doc_extract.txt
+tmp-replace.cjs
+
+# Throwaway credential-loading / migration helpers land here.
+# Real scripts go under src/ instead.
+scripts/*.cjs
+
 .agents/
 .claude/
 .codebuddy/
