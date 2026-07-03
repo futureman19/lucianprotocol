@@ -28,6 +28,19 @@ import {
   type Task,
 } from './types';
 
+import type { ExplanationState } from './engine';
+import { createEmptyExplanationState } from './engine';
+
+test('ExplanationState is exported and createEmptyExplanationState is callable', () => {
+  const state = createEmptyExplanationState();
+  assert.equal(state.status, 'idle');
+  assert.equal(state.text, null);
+  assert.equal(state.error, null);
+  // Compile-time check: the type is importable and structurally usable.
+  const typed: ExplanationState = state;
+  assert.equal(typed.fullText, null);
+});
+
 interface EngineHarness {
   applyLMMDecisions(): void;
   computeAgentActivities(): AgentActivity[];

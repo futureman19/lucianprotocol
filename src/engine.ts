@@ -129,7 +129,7 @@ interface PendingAiRequest {
   startedAtMs: number;
 }
 
-interface ExplanationState {
+export interface ExplanationState {
   status: ExplainStatus;
   targetPath: string | null;
   agentId: string | null;
@@ -199,7 +199,7 @@ function isConstructionProgressNodeState(
   return nodeState === 'task' || nodeState === 'in-progress';
 }
 
-function createEmptyExplanationState(): ExplanationState {
+export function createEmptyExplanationState(): ExplanationState {
   return {
     status: 'idle',
     targetPath: null,
