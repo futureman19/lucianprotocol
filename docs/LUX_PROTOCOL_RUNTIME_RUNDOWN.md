@@ -127,8 +127,7 @@ Current behavior:
 
 Current limitation:
 
-- `explain` does not yet produce a natural-language explanation stream from the engine.
-- Today, `explain` means "navigate to the target and read it."
+When the Architect reaches the file target on an `explain` directive, the engine dispatches a Gemini Flash call using the `EXPLAIN_SYSTEM_PROMPT` at `src/ai.ts:129`, which streams prose into `explanationState.text`. Status flows `pending → streaming → complete` (or `error` on failure) and is broadcast to `world_state` for the UI to consume.
 
 ## What The Webpage Is Showing
 
@@ -239,7 +238,7 @@ At the moment, these states are driven by the Hivemind rules and deterministic e
 ### Scaffolded or Partial Today
 
 - `edit` actions exist in the schema but are ignored by the engine
-- `explain` resolves a target and triggers `read`, but no prose explanation is emitted
+- `explain` reaches the file target and emits a Gemini Flash explanation stream, surfaced in the UI's `.explanation-frame` panel
 - Critic verification is a deterministic rule pass, not full lint/test execution
 - Visionary fission taxonomy is represented visually and behaviorally, but not yet as a full refactor pipeline
 
